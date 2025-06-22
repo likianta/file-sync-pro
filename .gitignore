@@ -1,0 +1,9 @@
+/.idea/
+/data/cache/conflicts/*
+/data/cache/deleted/*
+/data/remote_snapshot.json
+
+__pycache__/
+dist/
+
+!**/.gitkeep
