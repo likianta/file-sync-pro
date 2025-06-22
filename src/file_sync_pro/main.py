@@ -34,7 +34,9 @@ def create_snapshot(root: str) -> None:
 
 
 @cli
-def update_snapshot(root: str, rebuild: bool = False) -> None:
+def update_snapshot(
+    root: str, subfolder: str = None, rebuild: bool = False
+) -> None:
     """
     note: ftp work takes more time, depends on network traffic.
     params:
@@ -46,8 +48,11 @@ def update_snapshot(root: str, rebuild: bool = False) -> None:
         fs = LocalFileSystem(root)
     root = fs.root  # a normalized path.
     
+    if subfolder:
+        assert subfolder.startswith(root) and subfolder != root
+    
     data = {}
-    for f, t in fs.findall_files():
+    for f, t in fs.findall_files(subfolder or root):
         if f == f'{root}/snapshot.json':
             continue
         print(':i', _fs.relpath(f, root))
@@ -55,6 +60,8 @@ def update_snapshot(root: str, rebuild: bool = False) -> None:
     
     if rebuild:
         fs.rebuild_snapshot(data)
+    elif subfolder:
+        fs.partial_update_snapshot(data)
     else:
         fs.update_snapshot(data)
     
@@ -96,6 +103,7 @@ def sync_documents(root_a: str, root_b: str, dry_run: bool = False) -> None:
     snap_base_hash_a0, snap_base_time_a0 = snap_a['base']['version'].split('-')
     snap_base_hash_b0, snap_base_time_b0 = snap_b['base']['version'].split('-')
     if snap_base_hash_a0 == snap_base_hash_b0:
+        print('same base snap', ':v4')
         snap_data_base = snap_a['base']['data']
     else:
         # note: we prefer assuming snap_b to be the old one.

@@ -45,7 +45,16 @@ class BaseFileSystem:
             self.dump(full, self.snapshot_file)
         else:
             self.rebuild_snapshot(data)
-        
+    
+    def partial_update_snapshot(self, data: T.SnapshotData) -> None:
+        assert self.exist(self.snapshot_file)
+        full = self.load_snapshot()
+        full['current']['data'].update(data)
+        full['current']['version'] = '{}-{}'.format(
+            self._hash_snapshot(full['current']['data']), int(time())
+        )
+        self.dump(full, self.snapshot_file)
+    
     def rebuild_snapshot(self, data: T.SnapshotData) -> None:
         full = {
             'base'   : (x := {
@@ -66,7 +75,9 @@ class BaseFileSystem:
     def exist(self, path: T.Path) -> bool:
         raise NotImplementedError
     
-    def findall_files(self) -> t.Iterable[t.Tuple[T.Path, int]]:
+    def findall_files(
+        self, root: T.Path = None
+    ) -> t.Iterable[t.Tuple[T.Path, int]]:
         raise NotImplementedError
     
     def load(self, file: T.Path) -> t.Any:
@@ -99,8 +110,10 @@ class LocalFileSystem(BaseFileSystem):
     def exist(self, path: T.Path) -> bool:
         return fs.exist(path)
     
-    def findall_files(self) -> t.Iterator[t.Tuple[T.Path, int]]:
-        for f in fs.findall_files(self.root):
+    def findall_files(
+        self, root: T.Path = None
+    ) -> t.Iterator[t.Tuple[T.Path, int]]:
+        for f in fs.findall_files(root or self.root):
             yield f.path, fs.filetime(f.path)
     
     def load(self, file: T.Path, binary: bool = False) -> t.Any:
@@ -147,7 +160,7 @@ class FtpFileSystem(BaseFileSystem):
         data = self.load(file_i)
         fs.dump(data, file_o, 'binary')
         if mtime is None:  # TODO
-            print(':v6', 'please manually pass mtime of {}'.format(file_i))
+            print(':v6p', 'please manually pass mtime of {}'.format(file_i))
             return
         os.utime(file_o, (mtime, mtime))
     
@@ -193,7 +206,9 @@ class FtpFileSystem(BaseFileSystem):
                     return True
         return False
     
-    def findall_files(self) -> t.Iterator[t.Tuple[T.Path, int]]:
+    def findall_files(
+        self, root: T.Path = None
+    ) -> t.Iterator[t.Tuple[T.Path, int]]:
         def get_modify_time_of_hidden_file(file: T.Path) -> int:
             with self._temp_rename_file(file) as file_x:
                 a, b = fs.split(file_x)
@@ -203,8 +218,13 @@ class FtpFileSystem(BaseFileSystem):
                 else:
                     raise Exception(file)
         
+        if root:
+            assert root.startswith(self.root)
+        else:
+            root = self.root
+        
         hidden_files = []
-        for file, info in self._findall_files(self.root):
+        for file, info in self._findall_files(root):
             if info is None:
                 hidden_files.append(file)
             else:
