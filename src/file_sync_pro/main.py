@@ -1,5 +1,5 @@
 if __name__ == '__main__':
-    __package__ = 'projects.local_file_sync'
+    __package__ = 'src.file_sync_pro'
 
 import typing as t
 from argsense import cli
@@ -393,23 +393,23 @@ def sync_documents(root_a: str, root_b: str, dry_run: bool = False) -> None:
 
 
 if __name__ == '__main__':
-    # pox projects/local_file_sync/main.py -h
+    # pox src/file_sync_pro/main.py -h
     
-    # pox projects/local_file_sync/main.py create_snapshot
+    # pox src/file_sync_pro/main.py create_snapshot
     #   C:/Likianta/documents/gitbook
-    # pox projects/local_file_sync/main.py clone_project
+    # pox src/file_sync_pro/main.py clone_project
     #   C:/Likianta/documents/gitbook
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook
     
-    # pox projects/local_file_sync/main.py update_snapshot
+    # pox src/file_sync_pro/main.py update_snapshot
     #   C:/Likianta/documents/gitbook
-    # pox projects/local_file_sync/main.py update_snapshot
+    # pox src/file_sync_pro/main.py update_snapshot
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook
     
-    # pox projects/local_file_sync/main.py sync_documents
+    # pox src/file_sync_pro/main.py sync_documents
     #   C:/Likianta/documents/gitbook
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook -d
-    # pox projects/local_file_sync/main.py sync_documents
+    # pox src/file_sync_pro/main.py sync_documents
     #   C:/Likianta/documents/gitbook
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook
     cli.run()
