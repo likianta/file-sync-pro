@@ -51,9 +51,15 @@ def update_snapshot(
     if subfolder:
         assert subfolder.startswith(root) and subfolder != root
     
+    filtered_paths = () if subfolder else (
+        fs.snapshot_file, f'{root}/.obsidian/', f'{root}/.trash/'
+    )
+    
     data = {}
     for f, t in fs.findall_files(subfolder or root):
-        if f == f'{root}/snapshot.json':
+        # if f == f'{root}/snapshot.json':
+        #     continue
+        if f.startswith(filtered_paths):
             continue
         print(':i', _fs.relpath(f, root))
         data[f.removeprefix(root + '/')] = t
@@ -404,20 +410,20 @@ if __name__ == '__main__':
     # pox src/file_sync_pro/main.py -h
     
     # pox src/file_sync_pro/main.py create_snapshot
-    #   C:/Likianta/documents/gitbook
+    #   C:/Likianta/documents/gitbook/source-docs
     # pox src/file_sync_pro/main.py clone_project
-    #   C:/Likianta/documents/gitbook
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook
+    #   C:/Likianta/documents/gitbook/source-docs
+    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
     
     # pox src/file_sync_pro/main.py update_snapshot
-    #   C:/Likianta/documents/gitbook
+    #   C:/Likianta/documents/gitbook/source-docs
     # pox src/file_sync_pro/main.py update_snapshot
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook
+    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
     
     # pox src/file_sync_pro/main.py sync_documents
-    #   C:/Likianta/documents/gitbook
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook -d
+    #   C:/Likianta/documents/gitbook/source-docs
+    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs -d
     # pox src/file_sync_pro/main.py sync_documents
-    #   C:/Likianta/documents/gitbook
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook
+    #   C:/Likianta/documents/gitbook/source-docs
+    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
     cli.run()
