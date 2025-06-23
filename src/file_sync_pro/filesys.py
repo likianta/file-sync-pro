@@ -46,12 +46,21 @@ class BaseFileSystem:
         else:
             self.rebuild_snapshot(data)
     
-    def partial_update_snapshot(self, data: T.SnapshotData) -> None:
+    def partial_update_snapshot(
+        self, data: T.SnapshotData, relpath: T.Path
+    ) -> None:
         assert self.exist(self.snapshot_file)
         full = self.load_snapshot()
-        full['current']['data'].update(data)
+        
+        temp = {}
+        for k, v in full['current']['data'].items():
+            if not k.startswith(relpath):
+                temp[k] = v
+        temp.update(data)
+        
+        full['current']['data'] = temp
         full['current']['version'] = '{}-{}'.format(
-            self._hash_snapshot(full['current']['data']), int(time())
+            self._hash_snapshot(temp), int(time())
         )
         self.dump(full, self.snapshot_file)
     

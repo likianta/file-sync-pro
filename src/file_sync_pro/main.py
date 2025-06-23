@@ -61,7 +61,7 @@ def update_snapshot(
     if rebuild:
         fs.rebuild_snapshot(data)
     elif subfolder:
-        fs.partial_update_snapshot(data)
+        fs.partial_update_snapshot(data, _fs.relpath(subfolder, root))
     else:
         fs.update_snapshot(data)
     
