@@ -141,7 +141,7 @@ def sync_documents(root_a: str, root_b: str, dry_run: bool = False) -> None:
                 if time_new > time_old:
                     yield k, '=>', time_new
                 elif time_new < time_old:
-                    print(':v6', k, time_new, time_old)
+                    print(':v5i', k, time_new, time_old)
                     # yield k, '<=?', time_old
             else:
                 yield k, '+>', time_new
@@ -400,6 +400,7 @@ def sync_documents(root_a: str, root_b: str, dry_run: bool = False) -> None:
             _deleted_dir
         ), ':v8')
     
+    print(':v3', 'lock snapshot')
     _delete_file_a(fs_a.snapshot_file)
     _delete_file_b(fs_b.snapshot_file)
     fs_a.rebuild_snapshot(snap_new)

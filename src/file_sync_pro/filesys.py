@@ -328,13 +328,16 @@ class FtpFileSystem(BaseFileSystem):
                     _outward_path=f'{_outward_path or root}/{name}'
                 )
     
-    # def _normpath(self, path: T.Path) -> T.Path:
-    #     if path == '.':
-    #         return self.root
-    #     elif path.startswith(('./', '../')):
-    #         return fs.normpath('{}/{}'.format(self.root, path))
-    #     else:
-    #         return path
+    # @staticmethod
+    # def _is_hidden_file(path: T.Path) -> bool:
+    #     return path.rsplit('/', 1)[-1][0] == '.'
+    #
+    # def _is_normal_path(self, path: str) -> bool:
+    #     return (
+    #         False
+    #         if '[' in path or ']' in path or self._is_hidden_file(path) else
+    #         True
+    #     )
     
     @contextmanager
     def _temp_rename(self, a: T.Path, b: T.Path) -> t.Iterator[T.Path]:
