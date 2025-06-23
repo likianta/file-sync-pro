@@ -337,20 +337,13 @@ class FtpFileSystem(BaseFileSystem):
         finally:
             self._ftp.rename(b, a)
     
-    # _temp_rename_dir = partial(
-    #     _temp_rename, b='/Likianta/test/_local_file_sync/_temp_dir'
-    # )
-    # _temp_rename_file = partial(
-    #     _temp_rename, b='/Likianta/test/_local_file_sync/_temp_file'
-    # )
-    
     @contextmanager
     def _temp_rename_dir(
         self, a: T.Path, b: T.Path = None
     ) -> t.Iterator[T.Path]:
         if b is None:
             b = (
-                '/Likianta/test/_local_file_sync/'
+                '/Likianta/documents/appdata/file-sync-pro/temp/'
                 '._temp_dir_{}'.format(uuid1().hex)
             )
         with self._temp_rename(a, b) as x:
@@ -362,7 +355,7 @@ class FtpFileSystem(BaseFileSystem):
     ) -> t.Iterator[T.Path]:
         if b is None:
             b = (
-                '/Likianta/test/_local_file_sync/'
+                '/Likianta/documents/appdata/file-sync-pro/temp/'
                 '_temp_file_{}'.format(uuid1().hex)
             )
         with self._temp_rename(a, b) as x:
