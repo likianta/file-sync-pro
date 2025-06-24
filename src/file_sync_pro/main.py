@@ -10,9 +10,16 @@ from .filesys import FtpFileSystem
 from .filesys import LocalFileSystem
 from .filesys import T as T0
 from .init import clone_project
+from .snapshot import Snapshot
+from .snapshot import T as T1
+from .snapshot import get_snapshot_file_for_target_root
 
 
-class T(T0):
+class T:
+    Path = T0.Path
+    SnapshotData = T1.SnapshotData
+    Time = T0.Time
+    
     Key = str  # a relpath
     Movement = t.Literal['+>', '=>', '->', '<+', '<=', '<-']
     #   +>  add to right
@@ -22,7 +29,7 @@ class T(T0):
     #   <=  overwrite to left
     #   <-  delete to left
     #   ==  no change
-    ComposedAction = t.Tuple[Key, Movement, T0.Time]
+    ComposedAction = t.Tuple[Key, Movement, Time]
 
 
 cli.add_cmd(clone_project)
@@ -42,51 +49,44 @@ def update_snapshot(
     params:
         rebuild (-r):
     """
-    if root.startswith('ftp://'):
-        fs = FtpFileSystem(root)
-    else:
-        fs = LocalFileSystem(root)
-    root = fs.root  # a normalized path.
+    snap = Snapshot(root)
+    root = snap.fs.root  # a normalized path.
     
     if subfolder:
         assert subfolder.startswith(root) and subfolder != root
     
-    filtered_paths = () if subfolder else (
-        fs.snapshot_file, f'{root}/.obsidian/', f'{root}/.trash/'
-    )
-    
     data = {}
-    for f, t in fs.findall_files(subfolder or root):
-        # if f == f'{root}/snapshot.json':
-        #     continue
-        if f.startswith(filtered_paths):
-            continue
+    for f, t in snap.fs.findall_files(subfolder or root):
         print(':i', _fs.relpath(f, root))
         data[f.removeprefix(root + '/')] = t
     
     if rebuild:
-        fs.rebuild_snapshot(data)
+        snap.rebuild_snapshot(data)
     elif subfolder:
-        fs.partial_update_snapshot(data, _fs.relpath(subfolder, root))
+        snap.partial_update_snapshot(data, _fs.relpath(subfolder, root))
     else:
-        fs.update_snapshot(data)
+        snap.update_snapshot(data)
     
-    if isinstance(fs, FtpFileSystem):
-        fs.download_file(fs.snapshot_file, 'data/remote_snapshot.json')
+    if isinstance(snap.fs, FtpFileSystem):
+        snap.fs.download_file(snap.snapshot_file, 'data/remote_snapshot.json')
     print(':t', 'done')
 
 
 @cli
 def fetch_remote_snapshot(root: str) -> None:
     fs = FtpFileSystem(root)
-    fs.download_file(fs.snapshot_file, 'data/remote_snapshot.json')
+    fs.download_file(
+        get_snapshot_file_for_target_root(root), 'data/remote_snapshot.json'
+    )
 
 
 @cli
 def force_sync_snapshot(root_a: str, root_b: str) -> None:
-    fs_a = LocalFileSystem(root_a)
     fs_b = FtpFileSystem(root_b)
-    fs_b.upload_file(fs_a.snapshot_file, fs_b.snapshot_file)
+    fs_b.upload_file(
+        get_snapshot_file_for_target_root(root_a),
+        get_snapshot_file_for_target_root(root_b)
+    )
 
 
 @cli
@@ -99,29 +99,35 @@ def sync_documents(root_a: str, root_b: str, dry_run: bool = False) -> None:
     """
     assert not root_a.startswith('ftp://') and root_b.startswith('ftp://')
     
-    fs_a = LocalFileSystem(root_a)
-    fs_b = FtpFileSystem(root_b)
+    snap_a = Snapshot(root_a)
+    snap_b = Snapshot(root_b)
+    # fs_a = LocalFileSystem(root_a)
+    # fs_b = FtpFileSystem(root_b)
+    fs_a: LocalFileSystem = snap_a.fs
+    fs_b: FtpFileSystem = snap_b.fs
     
-    snap_a = fs_a.load_snapshot()
-    snap_b = fs_b.load_snapshot()
+    snap_full_a = Snapshot(fs_a).load_snapshot()
+    snap_full_b = Snapshot(fs_b).load_snapshot()
     
     # decide snap_data_base
-    snap_base_hash_a0, snap_base_time_a0 = snap_a['base']['version'].split('-')
-    snap_base_hash_b0, snap_base_time_b0 = snap_b['base']['version'].split('-')
+    snap_base_hash_a0, snap_base_time_a0 = \
+        snap_full_a['base']['version'].split('-')
+    snap_base_hash_b0, snap_base_time_b0 = \
+        snap_full_b['base']['version'].split('-')
     if snap_base_hash_a0 == snap_base_hash_b0:
         print('same base snap', ':v4')
-        snap_data_base = snap_a['base']['data']
+        snap_data_base = snap_full_a['base']['data']
     else:
-        # note: we prefer assuming snap_b to be the old one.
+        # note: we prefer assuming snap_full_b to be the old one.
         if snap_base_time_b0 <= snap_base_time_a0:
             print('use snap_b0 as base')  # use the "old" one.
-            snap_data_base = snap_b['base']['data']
+            snap_data_base = snap_full_b['base']['data']
         else:
             print('use snap_a0 as base')
-            snap_data_base = snap_a['base']['data']
+            snap_data_base = snap_full_a['base']['data']
     
-    snap_data_a = snap_a['current']['data']
-    snap_data_b = snap_b['current']['data']
+    snap_data_a = snap_full_a['current']['data']
+    snap_data_b = snap_full_b['current']['data']
     
     # noinspection PyTypeChecker
     def compare_new_to_old(
@@ -401,10 +407,10 @@ def sync_documents(root_a: str, root_b: str, dry_run: bool = False) -> None:
         ), ':v8')
     
     print(':v3', 'lock snapshot')
-    _delete_file_a(fs_a.snapshot_file)
-    _delete_file_b(fs_b.snapshot_file)
-    fs_a.rebuild_snapshot(snap_new)
-    fs_b.rebuild_snapshot(snap_new)
+    _delete_file_a(snap_a.snapshot_file)
+    _delete_file_b(snap_b.snapshot_file)
+    snap_a.rebuild_snapshot(snap_new)
+    snap_b.rebuild_snapshot(snap_new)
 
 
 if __name__ == '__main__':

@@ -2,6 +2,7 @@
 /data/cache/conflicts/*
 /data/cache/deleted/*
 /data/remote_snapshot.json
+/data/snapshots/*
 
 __pycache__/
 dist/

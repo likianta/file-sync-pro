@@ -1,5 +1,4 @@
 import ftplib
-import hashlib
 import io
 import json
 import os
@@ -7,76 +6,19 @@ import re
 import typing as t
 from contextlib import contextmanager
 from datetime import datetime
-from lk_utils import fs
-from time import time
 from uuid import uuid1
+
+from lk_utils import fs
 
 
 class T:
     Path = str
     Time = int
-    SnapshotData = t.Dict[Path, Time]  # {relpath: modified_time, ...}
-    SnapshotItem = t.TypedDict('SnapshotItem', {
-        'version': str,  # `<hash>-<time>`
-        'data'   : SnapshotData,
-    })
-    SnapshotFull = t.TypedDict('SnapshotFull', {
-        'base'   : SnapshotItem,
-        'current': SnapshotItem,
-    })
 
 
 class BaseFileSystem:
     def __init__(self, root: T.Path) -> None:
         self.root = root
-        self.snapshot_file = f'{root}/snapshot.json'
-    
-    def load_snapshot(self) -> T.SnapshotFull:
-        return self.load(self.snapshot_file)
-    
-    def update_snapshot(self, data: T.SnapshotData) -> None:
-        full: T.SnapshotFull
-        if self.exist(self.snapshot_file):
-            full = self.load_snapshot()
-            full['current']['version'] = '{}-{}'.format(
-                self._hash_snapshot(data), int(time())
-            )
-            full['current']['data'] = data
-            self.dump(full, self.snapshot_file)
-        else:
-            self.rebuild_snapshot(data)
-    
-    def partial_update_snapshot(
-        self, data: T.SnapshotData, relpath: T.Path
-    ) -> None:
-        assert self.exist(self.snapshot_file)
-        full = self.load_snapshot()
-        
-        temp = {}
-        for k, v in full['current']['data'].items():
-            if not k.startswith(relpath):
-                temp[k] = v
-        temp.update(data)
-        
-        full['current']['data'] = temp
-        full['current']['version'] = '{}-{}'.format(
-            self._hash_snapshot(temp), int(time())
-        )
-        self.dump(full, self.snapshot_file)
-    
-    def rebuild_snapshot(self, data: T.SnapshotData) -> None:
-        full = {
-            'base'   : (x := {
-                'version': '{}-{}'.format(
-                    self._hash_snapshot(data), int(time())
-                ),
-                'data'   : data,
-            }),
-            'current': x
-        }
-        self.dump(full, self.snapshot_file)
-    
-    # -------------------------------------------------------------------------
     
     def dump(self, data: t.Any, file: T.Path) -> None:
         raise NotImplementedError
@@ -86,7 +28,7 @@ class BaseFileSystem:
     
     def findall_files(
         self, root: T.Path = None
-    ) -> t.Iterable[t.Tuple[T.Path, int]]:
+    ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:
         raise NotImplementedError
     
     def load(self, file: T.Path) -> t.Any:
@@ -97,16 +39,6 @@ class BaseFileSystem:
     
     def remove(self, file: T.Path) -> None:
         raise NotImplementedError
-    
-    @staticmethod
-    def _hash_snapshot(data: T.SnapshotData) -> str:
-        return hashlib.md5(
-            json.dumps(data, sort_keys=True).encode()
-            #                ~~~~~~~~~~~~~~ recursively sort.
-            #   the order of keys affects hash result. since -
-            #   `FtpFileSystem.findall_files` has a random order, we need to -
-            #   sort them.
-        ).hexdigest()
 
 
 class LocalFileSystem(BaseFileSystem):
@@ -115,13 +47,13 @@ class LocalFileSystem(BaseFileSystem):
     
     def dump(self, data: t.Any, file: T.Path, binary: bool = False) -> None:
         fs.dump(data, file, type='binary' if binary else 'auto')
-        
+    
     def exist(self, path: T.Path) -> bool:
         return fs.exist(path)
     
     def findall_files(
         self, root: T.Path = None
-    ) -> t.Iterator[t.Tuple[T.Path, int]]:
+    ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
         for f in fs.findall_files(root or self.root):
             yield f.path, fs.filetime(f.path)
     
@@ -153,18 +85,15 @@ class FtpFileSystem(BaseFileSystem):
         )
         
         super().__init__(root)
+        self.url = 'ftp://{}:{}'.format(host, port)
         
         self._ftp = ftplib.FTP()
         self._ftp.connect(host, port)
         self._ftp.login()
         self._ftp.cwd(root)
     
-    def load_snapshot(self) -> T.SnapshotFull:
-        data_bytes = self.load(self.snapshot_file)
-        return json.loads(data_bytes)
-    
     def download_file(
-        self, file_i: T.Path, file_o: T.Path, mtime: int = None
+        self, file_i: T.Path, file_o: T.Path, mtime: T.Time = None
     ) -> None:
         data = self.load(file_i)
         fs.dump(data, file_o, 'binary')
@@ -217,8 +146,8 @@ class FtpFileSystem(BaseFileSystem):
     
     def findall_files(
         self, root: T.Path = None
-    ) -> t.Iterator[t.Tuple[T.Path, int]]:
-        def get_modify_time_of_hidden_file(file: T.Path) -> int:
+    ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
+        def get_modify_time_of_hidden_file(file: T.Path) -> T.Time:
             with self._temp_rename_file(file) as file_x:
                 a, b = fs.split(file_x)
                 for name, info in self._ftp.mlsd(a):
@@ -259,7 +188,7 @@ class FtpFileSystem(BaseFileSystem):
         self._ftp.delete(file)
     
     def upload_file(
-        self, file_i: T.Path, file_o: T.Path, mtime: int = None
+        self, file_i: T.Path, file_o: T.Path, mtime: T.Time = None
     ) -> None:
         # this method similar to `self.dump`, but keeps origin file's modify -
         # time for target.
@@ -305,7 +234,7 @@ class FtpFileSystem(BaseFileSystem):
                 subdirs.append(name)
             else:
                 raise Exception((_outward_path, root), name, info)
-            
+        
         for name, type in self._find_hidden_names(root):
             if type == 'file':
                 files.append((name, None))
@@ -374,12 +303,12 @@ class FtpFileSystem(BaseFileSystem):
             yield x
     
     @staticmethod
-    def _time_int_2_str(mtime: int) -> str:
+    def _time_int_2_str(mtime: T.Time) -> str:
         dt = datetime.fromtimestamp(mtime)
         return dt.strftime('%Y%m%d%H%M%S')
     
     @staticmethod
-    def _time_str_2_int(mtime: str) -> int:
+    def _time_str_2_int(mtime: str) -> T.Time:
         """
         mtime: e.g. '20250619064438.504'
         """

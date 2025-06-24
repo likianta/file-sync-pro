@@ -1,6 +1,8 @@
 from lk_utils import fs
 from .filesys import FtpFileSystem
 from .filesys import LocalFileSystem
+from .snapshot import Snapshot
+from .snapshot import get_snapshot_file_for_target_root
 
 
 def clone_project(root_i: str, root_o: str) -> None:
@@ -12,13 +14,12 @@ def clone_project(root_i: str, root_o: str) -> None:
             create an empty folder first.
     """
     assert not root_i.startswith('ftp://') and root_o.startswith('ftp://')
-    assert fs.exist(f'{root_i}/snapshot.json')
     
     fs_i = LocalFileSystem(root_i)
     fs_o = FtpFileSystem(root_o)
     
     # make empty dirs
-    snap_i = fs_i.load_snapshot()['current']['data']
+    snap_i = Snapshot(fs_i).load_snapshot()['current']['data']
     tobe_created_dirs = set()
     for relpath in snap_i:
         if '/' in relpath:
@@ -35,4 +36,10 @@ def clone_project(root_i: str, root_o: str) -> None:
         file_i = f'{fs_i.root}/{relpath}'
         file_o = f'{fs_o.root}/{relpath}'
         fs_o.upload_file(file_i, file_o, mtime)
-    fs_o.upload_file(fs_i.snapshot_file, fs_o.snapshot_file)
+    
+    fs.copy_file(
+        get_snapshot_file_for_target_root(root_i),
+        get_snapshot_file_for_target_root(root_o),
+        overwrite=True,
+        reserve_metadata=True,
+    )
