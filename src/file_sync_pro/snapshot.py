@@ -60,31 +60,32 @@ class Snapshot:
             self.snapshot_file = _fs.abspath(snapshot_file)
         # self.root = _fs.parent(self.snapshot_file)
     
-    def load_snapshot(self) -> T.SnapshotFull:
+    def load_snapshot(self, _absroot: bool = True) -> T.SnapshotFull:
+        out: T.SnapshotFull
         x = self.fs.load(self.snapshot_file)
         if isinstance(self.fs, LocalFileSystem):
-            return x
+            out = x
         else:
-            return json.loads(x)
+            out = json.loads(x)
+        if _absroot:
+            if out['root'] in ('.', '..') or out['root'].startswith('../'):
+                out['root'] = _fs.normpath('{}/{}'.format(
+                    _fs.parent(self.snapshot_file), out['root']
+                ))
+        return out
     
     def update_snapshot(self, data: T.SnapshotData) -> None:
-        full: T.SnapshotFull
-        if self.fs.exist(self.snapshot_file):
-            full = self.load_snapshot()
-            full['current']['version'] = '{}-{}'.format(
-                self._hash_snapshot(data), int(time())
-            )
-            full['current']['data'] = data
-            self.fs.dump(full, self.snapshot_file)
-        else:
-            # self.rebuild_snapshot(data)
-            raise FileNotFoundError(self.snapshot_file)
+        full = self.load_snapshot(_absroot=False)
+        full['current']['version'] = '{}-{}'.format(
+            self._hash_snapshot(data), int(time())
+        )
+        full['current']['data'] = data
+        self.fs.dump(full, self.snapshot_file)
     
     def partial_update_snapshot(
         self, data: T.SnapshotData, relpath: str
     ) -> None:
-        assert self.fs.exist(self.snapshot_file)
-        full = self.load_snapshot()
+        full = self.load_snapshot(_absroot=False)
         
         temp = {}
         for k, v in full['current']['data'].items():
@@ -105,11 +106,8 @@ class Snapshot:
             stored in an isolated place, which is not `data:keys` relative to, -
             then using `self.fs.root` would be definitely wrong.
         """
-        # if self.snapshot_file.startswith(root + '/'):
-        #     # better use relative path for source root.
-        #     root = _fs.relpath(root, _fs.parent(self.snapshot_file))
         full = {
-            'root'   : root,
+            'root'   : self._prefer_relpath(root) or root,
             'base'   : (x := {
                 'version': '{}-{}'.format(
                     self._hash_snapshot(data), int(time())
@@ -129,6 +127,15 @@ class Snapshot:
             #   `FtpFileSystem.findall_files` has a random order, we need to -
             #   sort them.
         ).hexdigest()
+    
+    def _prefer_relpath(self, target: T.Path) -> t.Optional[T.Path]:
+        relpath = _fs.relpath(target, _fs.parent(self.snapshot_file))
+        if relpath.count('../') < 3:
+            return relpath
+        else:
+            print('cannot use relpath format: the turning point is too long',
+                  target, relpath, ':pv6')
+            return None
 
 
 # -----------------------------------------------------------------------------
@@ -142,7 +149,7 @@ def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
         source_root = _fs.parent(snap.snapshot_file)
     else:
         source_root = _fs.abspath(source_root)
-        snap_inside = snap_file.startswith(source_root + '/')
+        snap_inside = snap.snapshot_file.startswith(source_root + '/')
     
     data = {}
     for f, t in snap.fs.findall_files(source_root):
@@ -150,7 +157,7 @@ def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
         data[f.removeprefix(source_root + '/')] = t
     if snap_inside:
         key = _fs.relpath(snap.snapshot_file, source_root)
-        print('pop self from snap data', key)
+        print('pop self from snap data', key, ':v')
         data.pop(key)
     
     snap.rebuild_snapshot(data, root=source_root)
@@ -172,6 +179,7 @@ def update_snapshot(snap_file: T.Path, subfolder: str = None):
     if snap.snapshot_file.startswith(src_root + '/'):
         key = _fs.relpath(snap.snapshot_file, src_root)
         if full_update or key in data:
+            print('pop self from snap data', key, ':v')
             data.pop(key)
     
     if full_update:
@@ -375,7 +383,7 @@ def sync_snapshot(
             print(table, ':r2')
             print(action_count, ':r2')
         else:
-            print('no change', ':v3')
+            print('no change', ':v4')
         return
     
     fs_a = snap_a.fs
