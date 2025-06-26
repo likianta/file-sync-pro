@@ -386,8 +386,9 @@ def sync_snapshot(
             print('no change', ':v4')
         return
     
-    fs_a = snap_a.fs
-    fs_b = snap_b.fs
+    fs_a: LocalFileSystem = snap_a.fs
+    fs_b: FtpFileSystem = snap_b.fs
+    
     root_a = snap_alldata_a['root']
     root_b = snap_alldata_b['root']
     
@@ -472,10 +473,8 @@ def sync_snapshot(
             fs_b.make_dirs(dirpath)
             _created_dirs_b.add(dirpath)
     
-    _conflicts_dir = 'data/cache/conflicts/{}'.format(x := timestamp('ymd_hns'))
-    _deleted_dir = 'data/cache/deleted/{}'.format(x)
+    _conflicts_dir = 'data/cache/conflicts/{}'.format(timestamp('ymd_hns'))
     _fs.make_dir(_conflicts_dir)
-    _fs.make_dir(_deleted_dir)
     
     def _backup_conflict_file_a(file: T.Path) -> None:
         file_i = file
@@ -486,23 +485,23 @@ def sync_snapshot(
     def _backup_conflict_file_b(file: T.Path, mtime: int) -> None:
         file_i = file
         m, n, o = _fs.split(file_i, 3)
-        file_o = '{}/{}.b.{}'.format(_deleted_dir, n, o)
+        file_o = '{}/{}.b.{}'.format(_conflicts_dir, n, o)
         fs_b.download_file(file_i, file_o, mtime)
     
     def _delete_file_a(file: T.Path) -> None:
-        file_i = file
-        m, n, o = _fs.split(file_i, 3)
-        file_o = '{}/{}.a.{}'.format(_deleted_dir, n, o)
-        _fs.move(file_i, file_o)
-        # fs_a.remove(file)
+        # file_i = file
+        # m, n, o = _fs.split(file_i, 3)
+        # file_o = '{}/{}.a.{}'.format(_deleted_dir, n, o)
+        # _fs.move(file_i, file_o)
+        fs_a.remove(file)
     
     def _delete_file_b(file: T.Path) -> None:
-        file_i = file
-        m, n, o = _fs.split(file_i, 3)
-        file_o = '{}/{}.b.{}'.format(_deleted_dir, n, o)
-        data_i = fs_b.load(file_i)
-        _fs.dump(data_i, file_o, 'binary')
-        fs_b.remove(file_i)
+        # file_i = file
+        # m, n, o = _fs.split(file_i, 3)
+        # file_o = '{}/{}.b.{}'.format(_deleted_dir, n, o)
+        # data_i = fs_b.load(file_i)
+        # _fs.dump(data_i, file_o, 'binary')
+        fs_b.remove(file)
     
     def _update_file_a2b(relpath: T.Path) -> None:
         file_i = '{}/{}'.format(root_a, relpath)
@@ -523,17 +522,9 @@ def sync_snapshot(
             len(_fs.find_file_names(_conflicts_dir)),
             _conflicts_dir
         ), ':v6')
-    if _fs.empty(_deleted_dir):
-        # _fs.remove_tree(_deleted_dir)
-        pass
-    else:
-        print('deleted {} files, see in {}'.format(
-            len(_fs.find_file_names(_deleted_dir)),
-            _deleted_dir
-        ), ':v8')
     
     print(':v3', 'lock snapshot')
-    _delete_file_a(snap_a.snapshot_file)
-    _delete_file_b(snap_b.snapshot_file)
+    # _delete_file_a(snap_a.snapshot_file)
+    # _delete_file_b(snap_b.snapshot_file)
     snap_a.rebuild_snapshot(snap_new, root_a)
     snap_b.rebuild_snapshot(snap_new, root_b)
