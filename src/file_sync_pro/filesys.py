@@ -17,9 +17,6 @@ class T:
 
 
 class BaseFileSystem:
-    def __init__(self, root: T.Path) -> None:
-        self.root = root
-    
     def dump(self, data: t.Any, file: T.Path) -> None:
         raise NotImplementedError
     
@@ -42,9 +39,6 @@ class BaseFileSystem:
 
 
 class LocalFileSystem(BaseFileSystem):
-    def __init__(self, root: T.Path) -> None:
-        super().__init__(fs.abspath(root))
-    
     def dump(self, data: t.Any, file: T.Path, binary: bool = False) -> None:
         fs.dump(data, file, type='binary' if binary else 'auto')
     
@@ -54,14 +48,14 @@ class LocalFileSystem(BaseFileSystem):
     def findall_files(
         self, root: T.Path = None
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
-        for f in fs.findall_files(root or self.root):
+        for f in fs.findall_files(root):
             yield f.path, fs.filetime(f.path)
     
     def load(self, file: T.Path, binary: bool = False) -> t.Any:
         return fs.load(file, type='binary' if binary else 'auto')
     
     def make_dirs(self, dirpath: T.Path) -> None:
-        assert dirpath.startswith(self.root)
+        # assert dirpath.startswith(self.root)
         if not fs.exist(dirpath):
             fs.make_dirs(dirpath)
     
@@ -70,27 +64,23 @@ class LocalFileSystem(BaseFileSystem):
 
 
 class FtpFileSystem(BaseFileSystem):
-    def __init__(self, url: str) -> None:
-        # e.g. url = 'ftp://192.168.8.31:2024/Likianta/documents'
-        #   ->  host = '192.168.8.31'
-        #       port = 2024
-        #       path = '/Likianta/documents'
-        a, b, c, d = url.split('/', 3)
-        assert a == 'ftp:' and b == '' and d.startswith('Likianta/')
-        e, f = c.rsplit(':', 1)
-        host, port, root = e, int(f), f'/{d}'
-        assert '[' not in root and ']' not in root, (
-            'ftp cannot list files if square bracket characters in the root '
-            'path', root
-        )
-        
-        super().__init__(root)
-        self.url = 'ftp://{}:{}'.format(host, port)
-        
+    @classmethod
+    def create_from_url(cls, url: str) -> 'FtpFileSystem':
+        a, b, c, d = (url + '/').split('/', 3)
+        #   e.g. 'ftp://172.20.128.123:2160/Likianta/test/snapshot.json'
+        #       a = 'ftp:'
+        #       b = ''
+        #       c = '172.20.128.123:2160'
+        #       d = 'Likianta/test/snapshot.json'
+        assert a == 'ftp:' and b == '' and ':' in c
+        e, f = c.split(':')
+        return FtpFileSystem(host=e, port=int(f))
+    
+    def __init__(self, host: str, port: int) -> None:
+        self.url = f'ftp://{host}:{port}'
         self._ftp = ftplib.FTP()
         self._ftp.connect(host, port)
         self._ftp.login()
-        self._ftp.cwd(root)
     
     def download_file(
         self, file_i: T.Path, file_o: T.Path, mtime: T.Time = None
@@ -98,7 +88,7 @@ class FtpFileSystem(BaseFileSystem):
         data = self.load(file_i)
         fs.dump(data, file_o, 'binary')
         if mtime is None:  # TODO
-            print(':v6p', 'please manually pass mtime of {}'.format(file_i))
+            # print(':v6p', 'please manually pass mtime of {}'.format(file_i))
             return
         os.utime(file_o, (mtime, mtime))
     
@@ -156,11 +146,6 @@ class FtpFileSystem(BaseFileSystem):
                 else:
                     raise Exception(file)
         
-        if root:
-            assert root.startswith(self.root)
-        else:
-            root = self.root
-        
         hidden_files = []
         for file, info in self._findall_files(root):
             if info is None:
@@ -178,7 +163,6 @@ class FtpFileSystem(BaseFileSystem):
             return f.read()
     
     def make_dirs(self, dirpath: T.Path, precheck: bool = True) -> None:
-        assert dirpath.startswith(self.root)
         if not precheck or not self.exist(dirpath):
             self._ftp.mkd(dirpath)
     

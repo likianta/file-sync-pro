@@ -1,45 +1,42 @@
 from lk_utils import fs
-from .filesys import FtpFileSystem
-from .filesys import LocalFileSystem
 from .snapshot import Snapshot
-from .snapshot import get_snapshot_file_for_target_root
 
 
-def clone_project(root_i: str, root_o: str) -> None:
+def clone_project(
+    snapshot_file_i: str, snapshot_file_o: str, root_o: str = None
+) -> None:
     """
     note:
         1. make sure `<root_i>/snapshot.json` exists. if not, use -
             `.main.create_snapshot()` to create one.
-        2. FIXME: make sure root_o preexists. i.e. you may need to manually -
-            create an empty folder first.
+        2. make sure `fs.parent(snapshot_file_o)` does not exist.
     """
-    assert not root_i.startswith('ftp://') and root_o.startswith('ftp://')
+    snap_i = Snapshot(snapshot_file_i)
+    snap_o = Snapshot(snapshot_file_o)
     
-    fs_i = LocalFileSystem(root_i)
-    fs_o = FtpFileSystem(root_o)
+    snap_full_i = snap_i.load_snapshot()
+    root_i = snap_full_i['root']
+    root_o = root_o or fs.parent(snap_o.snapshot_file)
+    print('{} -> {}'.format(root_i, root_o))
     
     # make empty dirs
-    snap_i = Snapshot(fs_i).load_snapshot()['current']['data']
-    tobe_created_dirs = set()
-    for relpath in snap_i:
+    # tobe_created_dirs = set()
+    tobe_created_dirs = {root_o}
+    snap_data_i = snap_full_i['current']['data']
+    for relpath in snap_data_i:
         if '/' in relpath:
-            d = fs_o.root
+            d = root_o
             for x in relpath.split('/')[:-1]:
                 d += '/' + x
                 tobe_created_dirs.add(d)
     for d in sorted(tobe_created_dirs):
-        fs_o.make_dir(d, precheck=False)
+        snap_o.fs.make_dir(d, precheck=False)
     
     # copy files
-    for relpath, mtime in snap_i.items():
+    for relpath, mtime in snap_data_i.items():
         print(':i', relpath)
-        file_i = f'{fs_i.root}/{relpath}'
-        file_o = f'{fs_o.root}/{relpath}'
-        fs_o.upload_file(file_i, file_o, mtime)
+        file_i = f'{root_i}/{relpath}'
+        file_o = f'{root_o}/{relpath}'
+        snap_o.fs.upload_file(file_i, file_o, mtime)
     
-    fs.copy_file(
-        get_snapshot_file_for_target_root(root_i),
-        get_snapshot_file_for_target_root(root_o),
-        overwrite=True,
-        reserve_metadata=True,
-    )
+    snap_o.rebuild_snapshot(snap_data_i, root_o)
