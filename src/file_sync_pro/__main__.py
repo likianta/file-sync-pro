@@ -414,23 +414,23 @@ def sync_documents(root_a: str, root_b: str, dry_run: bool = False) -> None:
 
 
 if __name__ == '__main__':
-    # pox src/file_sync_pro/main.py -h
+    # pox -m file_sync_pro -h
     
-    # pox src/file_sync_pro/main.py create_snapshot
+    # pox -m file_sync_pro create_snapshot
     #   C:/Likianta/documents/gitbook/source-docs
-    # pox src/file_sync_pro/main.py clone_project
+    # pox -m file_sync_pro clone_project
     #   C:/Likianta/documents/gitbook/source-docs
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
     
-    # pox src/file_sync_pro/main.py update_snapshot
+    # pox -m file_sync_pro update_snapshot
     #   C:/Likianta/documents/gitbook/source-docs
-    # pox src/file_sync_pro/main.py update_snapshot
+    # pox -m file_sync_pro update_snapshot
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
     
-    # pox src/file_sync_pro/main.py sync_documents
+    # pox -m file_sync_pro sync_documents
     #   C:/Likianta/documents/gitbook/source-docs
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs -d
-    # pox src/file_sync_pro/main.py sync_documents
+    # pox -m file_sync_pro sync_documents
     #   C:/Likianta/documents/gitbook/source-docs
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
     cli.run()
