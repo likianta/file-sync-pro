@@ -1,6 +1,7 @@
 from argsense import cli
 from lk_utils import fs as _fs
 
+from . import filesys
 from . import snapshot
 from .filesys import FtpFileSystem
 from .init import clone_project
@@ -41,6 +42,9 @@ def force_sync_snapshot(snapshot_file_a: str, snapshot_file_b: str) -> None:
     fs_b = FtpFileSystem.create_from_url(snapshot_file_b)
     snapshot_file_b = snapshot_file_b.removeprefix(fs_b.url)
     fs_b.upload_file(snapshot_file_a, snapshot_file_b)
+
+
+cli.add_cmd(filesys.send_file_to_remote)
 
 
 if __name__ == '__main__':

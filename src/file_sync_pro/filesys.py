@@ -81,6 +81,8 @@ class FtpFileSystem(BaseFileSystem):
         self._ftp = ftplib.FTP()
         self._ftp.connect(host, port)
         self._ftp.login()
+        self._time_shift = 8 * 3600  # we are living in utc8
+        #   TODO: detect current timezone
     
     def download_file(
         self, file_i: T.Path, file_o: T.Path, mtime: T.Time = None
@@ -95,8 +97,6 @@ class FtpFileSystem(BaseFileSystem):
     def dump(
         self, data: t.Any, file: T.Path, overwrite: t.Optional[True] = None
     ) -> None:
-        # file = self._normpath(file)
-        
         if isinstance(data, bytes):
             data_bytes = data
         elif isinstance(data, dict):
@@ -110,7 +110,7 @@ class FtpFileSystem(BaseFileSystem):
         if target already exists. this means if an existing file "foo.txt" -
         contained "abcde", and we want to write "123" to it, it finally -
         becomes "123de". to resolve this problem, we need to check-and-delete -
-        the exiting file.
+        the existing file.
         """
         
         if overwrite or self.exist(file):
@@ -142,7 +142,9 @@ class FtpFileSystem(BaseFileSystem):
                 a, b = fs.split(file_x)
                 for name, info in self._ftp.mlsd(a):
                     if name == b:
-                        return self._time_str_2_int(info['modify'])
+                        return self._time_str_2_int(
+                            info['modify'], shift=self._time_shift
+                        )
                 else:
                     raise Exception(file)
         
@@ -151,7 +153,9 @@ class FtpFileSystem(BaseFileSystem):
             if info is None:
                 hidden_files.append(file)
             else:
-                yield file, self._time_str_2_int(info['modify'])
+                yield file, self._time_str_2_int(
+                    info['modify'], shift=self._time_shift
+                )
         for file in hidden_files:
             print(file, ':v6i')
             yield file, get_modify_time_of_hidden_file(file)
@@ -178,8 +182,10 @@ class FtpFileSystem(BaseFileSystem):
         # time for target.
         with open(file_i, 'rb') as f:
             self.dump(f.read(), file_o)
+        if mtime is None:
+            mtime = fs.filetime(file_i)
         self._ftp.sendcmd('MFMT {} {}'.format(
-            self._time_int_2_str(mtime or fs.filetime(file_i)), file_o
+            self._time_int_2_str(mtime, -self._time_shift), file_o
         ))
     
     # noinspection PyTypeChecker
@@ -206,6 +212,13 @@ class FtpFileSystem(BaseFileSystem):
     def _findall_files(
         self, root: T.Path, _outward_path: T.Path = None
     ) -> t.Iterator[t.Tuple[T.Path, t.Optional[dict]]]:
+        """
+        yields: ((file, info | None), ...)
+            field: absolute path
+            info: {'time': str, ...}
+                time for example: '20250619064438.504'
+                be noticed the time is in utc0 format!
+        """
         assert root.startswith('/') and '[' not in root and ']' not in root
         
         files = []
@@ -287,12 +300,12 @@ class FtpFileSystem(BaseFileSystem):
             yield x
     
     @staticmethod
-    def _time_int_2_str(mtime: T.Time) -> str:
-        dt = datetime.fromtimestamp(mtime)
+    def _time_int_2_str(mtime: T.Time, shift: int) -> str:
+        dt = datetime.fromtimestamp(mtime + shift)
         return dt.strftime('%Y%m%d%H%M%S')
     
     @staticmethod
-    def _time_str_2_int(mtime: str) -> T.Time:
+    def _time_str_2_int(mtime: str, shift: int) -> T.Time:
         """
         mtime: e.g. '20250619064438.504'
         """
@@ -306,4 +319,10 @@ class FtpFileSystem(BaseFileSystem):
                 mtime[12:14],
             ))
         )
-        return int(dt.timestamp())
+        return int(dt.timestamp()) + shift
+
+
+def send_file_to_remote(file_i: T.Path, file_o: T.Path) -> None:
+    fs = FtpFileSystem.create_from_url(file_o)
+    file_o = file_o.removeprefix(fs.url)
+    fs.upload_file(file_i, file_o)
