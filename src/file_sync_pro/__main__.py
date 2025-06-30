@@ -51,20 +51,23 @@ if __name__ == '__main__':
     # pox -m file_sync_pro -h
     
     # pox -m file_sync_pro create_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs
+    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
     # pox -m file_sync_pro clone_project
     #   C:/Likianta/documents/gitbook/source-docs
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
     
     # pox -m file_sync_pro update_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs
+    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
     # pox -m file_sync_pro update_snapshot
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
+    #   /snapshot.json
     
     # pox -m file_sync_pro sync_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs -d
-    # pox -m file_sync_pro sync_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs
+    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
+    #   /snapshot.json -d
+    # pox -m file_sync_pro sync_snapshot
+    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
+    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
+    #   /snapshot.json
     cli.run()
