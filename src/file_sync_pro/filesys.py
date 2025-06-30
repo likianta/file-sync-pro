@@ -1,14 +1,15 @@
+import airmise as air
 import ftplib
 import io
 import json
 import os
 import re
+import requests
 import typing as t
 from contextlib import contextmanager
 from datetime import datetime
-from uuid import uuid1
-
 from lk_utils import fs
+from uuid import uuid1
 
 
 class T:
@@ -24,7 +25,7 @@ class BaseFileSystem:
         raise NotImplementedError
     
     def findall_files(
-        self, root: T.Path = None
+        self, root: T.Path
     ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:
         raise NotImplementedError
     
@@ -38,20 +39,21 @@ class BaseFileSystem:
         raise NotImplementedError
 
 
+@air.wrap
 class LocalFileSystem(BaseFileSystem):
-    def dump(self, data: t.Any, file: T.Path, binary: bool = False) -> None:
+    def dump(self, data: t.Any, file: T.Path, *, binary: bool = False) -> None:
         fs.dump(data, file, type='binary' if binary else 'auto')
     
     def exist(self, path: T.Path) -> bool:
         return fs.exist(path)
     
     def findall_files(
-        self, root: T.Path = None
+        self, root: T.Path
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
         for f in fs.findall_files(root):
             yield f.path, fs.filetime(f.path)
     
-    def load(self, file: T.Path, binary: bool = False) -> t.Any:
+    def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return fs.load(file, type='binary' if binary else 'auto')
     
     def make_dirs(self, dirpath: T.Path) -> None:
@@ -61,6 +63,119 @@ class LocalFileSystem(BaseFileSystem):
     
     def remove(self, file: T.Path) -> None:
         fs.remove_file(file)
+
+
+# noinspection PyMethodMayBeStatic
+class AirFileSystem(BaseFileSystem):
+    
+    def __init__(self, host: str, port: int = 2160) -> None:
+        air.connect(host, port)
+        with air.non_native():
+            self._fs = LocalFileSystem()
+    
+    # -------------------------------------------------------------------------
+    # overrides
+    
+    def dump(self, data: t.Any, file: T.Path) -> None:
+        self._fs.dump(self._serialize_data(data), file, binary=True)
+    
+    def exist(self, path: T.Path) -> bool:
+        return self._fs.exist(path)
+    
+    def findall_files(
+        self, root: T.Path
+    ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
+        # PERF
+        # yield from self._fs.findall_files(root)
+        yield from air.exec(
+            '''
+            from lk_utils import fs
+            for f in fs.findall_files(root):
+                yield f.path, fs.filetime(f.path)
+            ''',
+            _iter=True,
+            root=root,
+        )
+    
+    def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
+        return self._fs.load(file, binary=binary)
+    
+    def make_dirs(self, dirpath: T.Path) -> None:
+        if not self._fs.exist(dirpath):
+            self._fs.make_dirs(dirpath)
+    
+    def remove(self, file: T.Path) -> None:
+        self._fs.remove(file)
+    
+    # -------------------------------------------------------------------------
+    
+    def download_file(
+        self, file_i: T.Path, file_o: T.Path, mtime: T.Time = None
+    ) -> None:
+        data = self._fs.load(file_i, binary=True)
+        fs.dump(data, file_o, 'binary')
+        
+        if mtime is None:
+            mtime = air.exec('fs.filetime(file)', file=file_i)
+        os.utime(file_o, (mtime, mtime))
+    
+    def upload_file(
+        self, file_i: T.Path, file_o: T.Path, mtime: T.Time = None
+    ) -> None:
+        data = fs.load(file_i, 'binary')
+        self._fs.dump(data, file_o, binary=True)
+        air.exec(
+            '''
+            import os
+            os.utime(file, (mtime, mtime))
+            ''',
+            file=file_o,
+            mtime=mtime or fs.filetime(file_i),
+        )
+    
+    # -------------------------------------------------------------------------
+    
+    def _serialize_data(self, data: t.Any) -> bytes:
+        if isinstance(data, bytes):
+            return data
+        elif isinstance(data, dict):
+            text = json.dumps(data, indent=2, ensure_ascii=False)
+            return text.encode('utf-8')
+        else:
+            raise NotImplementedError
+
+
+class DufsFileSystem(AirFileSystem):
+    """
+    in android termux:
+        pkg search dufs
+        pkg install dufs
+        dufs -A -p 2160 ~/storage/shared/Likianta
+    """
+    
+    # noinspection PyMissingConstructor
+    def __init__(self, host: str, port: int = 2160) -> None:
+        self.url = f'http://{host}:{port}'
+    
+    def download_file(
+        self, file_i: T.Path, file_o: T.Path, mtime: T.Time = None
+    ) -> None:
+        data = self.load(file_i)
+        fs.dump(data, file_o, 'binary')
+        if mtime is None:  # TODO
+            # print(':v6p', 'please manually pass mtime of {}'.format(file_i))
+            return
+        os.utime(file_o, (mtime, mtime))
+    
+    def dump(
+        self, data: t.Any, file: T.Path, overwrite: t.Optional[True] = None
+    ) -> None:
+        requests.put(self._make_url(file), data=self._serialize_data(data))
+    
+    ...  # TODO
+    
+    def _make_url(self, path) -> str:
+        return '{}/{}'.format(self.url, path.lstrip('/'))
 
 
 class FtpFileSystem(BaseFileSystem):
@@ -76,7 +191,7 @@ class FtpFileSystem(BaseFileSystem):
         e, f = c.split(':')
         return FtpFileSystem(host=e, port=int(f))
     
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int = 2160) -> None:
         self.url = f'ftp://{host}:{port}'
         self._ftp = ftplib.FTP()
         self._ftp.connect(host, port)
@@ -206,8 +321,6 @@ class FtpFileSystem(BaseFileSystem):
             a, b = m.groups()
             if b[0] == '.':
                 yield b, 'dir' if a == 'd' else 'file'
-            else:
-                break
     
     def _findall_files(
         self, root: T.Path, _outward_path: T.Path = None
