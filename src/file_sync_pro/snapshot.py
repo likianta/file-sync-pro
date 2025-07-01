@@ -12,12 +12,13 @@ from collections import defaultdict
 from lk_utils import fs as _fs
 from lk_utils import timestamp
 from time import time
+from .filesys import AirFileSystem
 from .filesys import FtpFileSystem
 from .filesys import LocalFileSystem
 
 
 class T:
-    FileSystem = t.Union[FtpFileSystem, LocalFileSystem]
+    FileSystem = t.Union[AirFileSystem, FtpFileSystem, LocalFileSystem]
     
     Key = str  # a relpath
     Movement = t.Literal['+>', '=>', '->', '<+', '<=', '<-']
@@ -52,7 +53,10 @@ class Snapshot:
     
     def __init__(self, snapshot_file: T.Path) -> None:
         assert snapshot_file.endswith('.json')
-        if snapshot_file.startswith('ftp://'):
+        if snapshot_file.startswith('air://'):
+            self.fs, x = AirFileSystem.create_from_url(snapshot_file)
+            self.snapshot_file = x
+        elif snapshot_file.startswith('ftp://'):
             self.fs = FtpFileSystem.create_from_url(snapshot_file)
             self.snapshot_file = snapshot_file.removeprefix(self.fs.url)
         else:
@@ -63,10 +67,10 @@ class Snapshot:
     def load_snapshot(self, _absroot: bool = True) -> T.SnapshotFull:
         out: T.SnapshotFull
         x = self.fs.load(self.snapshot_file)
-        if isinstance(self.fs, LocalFileSystem):
-            out = x
-        else:
+        if isinstance(self.fs, FtpFileSystem):
             out = json.loads(x)
+        else:
+            out = x
         if _absroot:
             if out['root'] in ('.', '..') or out['root'].startswith('../'):
                 out['root'] = _fs.normpath('{}/{}'.format(
@@ -106,8 +110,17 @@ class Snapshot:
             stored in an isolated place, which is not `data:keys` relative to, -
             then using `self.fs.root` would be definitely wrong.
         """
+        # check if snapshot file stored inside file-sync-pro project.
+        # if so, no need to convert root path from absolute to relative.
+        is_snapshot_inside = (
+            isinstance(self.fs, LocalFileSystem) and
+            self.snapshot_file.startswith(_fs.xpath('../../data/snapshots'))
+        )
+        
         full = {
-            'root'   : self._prefer_relpath(root) or root,
+            'root'   :
+                root if is_snapshot_inside else
+                (self._prefer_relpath(root) or root),
             'base'   : (x := {
                 'version': '{}-{}'.format(
                     self._hash_snapshot(data), int(time())
@@ -147,15 +160,29 @@ class Snapshot:
 def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
     snap = Snapshot(snap_file)
     
-    if source_root is None:
-        snap_inside = True
-        source_root = _fs.parent(snap.snapshot_file)
+    fs0 = snap.fs
+    # create `fs1`, update `source_root`, create `snap_inside`
+    if source_root:
+        if source_root.startswith('air://'):
+            fs1, x = AirFileSystem.create_from_url(source_root)
+            source_root = x
+            snap_inside = False
+        elif source_root.startswith('ftp://'):
+            fs1 = FtpFileSystem.create_from_url(source_root)
+            source_root = source_root.removeprefix(fs1.url)
+            assert source_root.startswith('/Likianta')
+            snap_inside = snap.snapshot_file.startswith(source_root + '/')
+        else:
+            fs1 = fs0
+            source_root = _fs.abspath(source_root)
+            snap_inside = snap.snapshot_file.startswith(source_root + '/')
     else:
-        source_root = _fs.abspath(source_root)
-        snap_inside = snap.snapshot_file.startswith(source_root + '/')
+        fs1 = fs0
+        source_root = _fs.parent(snap.snapshot_file)
+        snap_inside = True
     
     data = {}
-    for f, t in snap.fs.findall_files(source_root):
+    for f, t in fs1.findall_files(source_root):
         print(':i', _fs.relpath(f, source_root))
         data[f.removeprefix(source_root + '/')] = t
     if snap_inside:

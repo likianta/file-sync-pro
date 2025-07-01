@@ -152,13 +152,13 @@ reference = "tsinghua"
 
 [[package]]
 name = "airmise"
-version = "0.3.0a19"
+version = "0.3.0a22"
 description = "The native experience of calling remote functions, like local ones."
 optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 files = [
-    {file = "airmise-0.3.0a19-py3-none-any.whl", hash = "sha256:1c05f4821eef95b19a43d8e85ccdc6ef2aedba2d6aae1fad9acee127b83bde36"},
+    {file = "airmise-0.3.0a22-py3-none-any.whl", hash = "sha256:b2fda87571fe67ed36e0bc05efdb083b4789ca8a08fe5d47634057c504656745"},
 ]
 
 [package.dependencies]
@@ -3151,4 +3151,4 @@ reference = "tsinghua"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "a9d52f106045d36d712e21f4102af5bfed6d2670a365ef657bac285c8bfc7cc9"
+content-hash = "5794ef2c9473960097de155e9105a9a071909c38ec96473f2d16ce894fd8b035"

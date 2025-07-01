@@ -39,7 +39,6 @@ class BaseFileSystem:
         raise NotImplementedError
 
 
-# @air.wrap
 class LocalFileSystem(BaseFileSystem):
     def dump(self, data: t.Any, file: T.Path, *, binary: bool = False) -> None:
         fs.dump(data, file, type='binary' if binary else 'auto')
@@ -68,16 +67,36 @@ class LocalFileSystem(BaseFileSystem):
 # noinspection PyMethodMayBeStatic
 class AirFileSystem(BaseFileSystem):
     """
-    in android termux
-        cd ~/storage/shared/Likianta/work/file-sync-pro/src
-        pip install airmise
-        python -m airmise run-server --port 2160
+    # --- android termux ---
+    sshd
+    # --- pc ---
+    ssh 172.20.128.123 -p 8022
+    # --- ssh ---
+    cd ~/storage/shared/Likianta/work/file-sync-pro
+    pip install -r requirements.lock
+    #   or: pip install -r http://172.20.128.132:2135/reqlock/airmise.txt
+    cd ~/storage/shared
+    python -m airmise run-server --port 2160
     """
+    
+    @classmethod
+    def create_from_url(cls, url: str) -> t.Tuple['AirFileSystem', T.Path]:
+        a, b, c, d = (url + '/').split('/', 3)
+        #   e.g. 'air://172.20.128.123:2160/storage/emulated/0/Likianta/test
+        #   /snapshot.json'
+        #       a = 'air:'
+        #       b = ''
+        #       c = '172.20.128.123:2160'
+        #       d = 'storage/emulated/0/Likianta/test/snapshot.json'
+        assert a == 'air:' and b == '' and ':' in c
+        assert d == '' or d.startswith('storage/emulated/0/Likianta')
+        e, f = c.split(':')
+        return AirFileSystem(host=e, port=int(f)), '/' + d
     
     def __init__(self, host: str, port: int = 2160) -> None:
         air.connect(host, port)
-        with air.non_native():
-            self._fs = LocalFileSystem()
+        self.url = f'air://{host}:{port}'
+        self._fs = air.delegate(LocalFileSystem)
     
     # -------------------------------------------------------------------------
     # overrides
@@ -91,17 +110,7 @@ class AirFileSystem(BaseFileSystem):
     def findall_files(
         self, root: T.Path
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
-        # PERF
-        # yield from self._fs.findall_files(root)
-        yield from air.exec(
-            '''
-            from lk_utils import fs
-            for f in fs.findall_files(root):
-                yield f.path, fs.filetime(f.path)
-            ''',
-            _iter=True,
-            root=root,
-        )
+        yield from self._fs.findall_files(root)
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return self._fs.load(file, binary=binary)
@@ -156,11 +165,11 @@ class DufsFileSystem(AirFileSystem):
     in android termux:
         pkg search dufs
         pkg install dufs
-        dufs -A -p 2160 ~/storage/shared/Likianta
+        dufs -A -p 2161 ~/storage/shared/Likianta
     """
     
     # noinspection PyMissingConstructor
-    def __init__(self, host: str, port: int = 2160) -> None:
+    def __init__(self, host: str, port: int = 2161) -> None:
         self.url = f'http://{host}:{port}'
     
     def download_file(
@@ -188,16 +197,16 @@ class FtpFileSystem(BaseFileSystem):
     @classmethod
     def create_from_url(cls, url: str) -> 'FtpFileSystem':
         a, b, c, d = (url + '/').split('/', 3)
-        #   e.g. 'ftp://172.20.128.123:2160/Likianta/test/snapshot.json'
+        #   e.g. 'ftp://172.20.128.123:2161/Likianta/test/snapshot.json'
         #       a = 'ftp:'
         #       b = ''
-        #       c = '172.20.128.123:2160'
+        #       c = '172.20.128.123:2161'
         #       d = 'Likianta/test/snapshot.json'
         assert a == 'ftp:' and b == '' and ':' in c
         e, f = c.split(':')
         return FtpFileSystem(host=e, port=int(f))
     
-    def __init__(self, host: str, port: int = 2160) -> None:
+    def __init__(self, host: str, port: int = 2161) -> None:
         self.url = f'ftp://{host}:{port}'
         self._ftp = ftplib.FTP()
         self._ftp.connect(host, port)

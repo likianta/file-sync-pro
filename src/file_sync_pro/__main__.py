@@ -1,6 +1,6 @@
+import airmise as air
 from argsense import cli
 from lk_utils import fs as _fs
-
 from . import filesys
 from . import snapshot
 from .filesys import FtpFileSystem
@@ -45,6 +45,12 @@ def force_sync_snapshot(snapshot_file_a: str, snapshot_file_b: str) -> None:
 
 
 cli.add_cmd(filesys.send_file_to_remote)
+
+
+@cli
+def run_air_server() -> None:
+    air.register(filesys.LocalFileSystem)
+    air.run_server({'fs': _fs}, port=2160)
 
 
 if __name__ == '__main__':

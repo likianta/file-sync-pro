@@ -3,6 +3,7 @@
 /data/cache/deleted/*
 /data/remote_snapshot.json
 /data/snapshots/*
+/lib/
 
 __pycache__/
 dist/

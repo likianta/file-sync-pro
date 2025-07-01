@@ -1,6 +1,6 @@
 [project]
 name = "file-sync-pro"
-version = "0.0.0a3"
+version = "0.0.0a4"
 description = ""
 # readme = "README.md"
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
@@ -14,7 +14,7 @@ dynamic = ["dependencies"]
 
 [tool.poetry.dependencies]
 python = "^3.12"
-airmise = { version = "^0.3.0a18", source = "likianta" }
+airmise = { version = "^0.3.0a22", source = "likianta" }
 argsense = { version = "^1.0.1b0", source = "likianta" }
 lk-utils = { version = "^3.3.0a15", source = "likianta" }
 
