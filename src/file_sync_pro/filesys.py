@@ -39,7 +39,7 @@ class BaseFileSystem:
         raise NotImplementedError
 
 
-@air.wrap
+# @air.wrap
 class LocalFileSystem(BaseFileSystem):
     def dump(self, data: t.Any, file: T.Path, *, binary: bool = False) -> None:
         fs.dump(data, file, type='binary' if binary else 'auto')
@@ -67,6 +67,12 @@ class LocalFileSystem(BaseFileSystem):
 
 # noinspection PyMethodMayBeStatic
 class AirFileSystem(BaseFileSystem):
+    """
+    in android termux
+        cd ~/storage/shared/Likianta/work/file-sync-pro/src
+        pip install airmise
+        python -m airmise run-server --port 2160
+    """
     
     def __init__(self, host: str, port: int = 2160) -> None:
         air.connect(host, port)

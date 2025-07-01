@@ -133,8 +133,11 @@ class Snapshot:
         if relpath.count('../') < 3:
             return relpath
         else:
-            print('cannot use relpath format: the turning point is too long',
-                  target, relpath, ':pv6')
+            print(
+                'cannot use relpath for `root` key: '
+                'the turning point is too far',
+                target, relpath, ':pv5'
+            )
             return None
 
 
@@ -158,7 +161,7 @@ def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
     if snap_inside:
         key = _fs.relpath(snap.snapshot_file, source_root)
         print('pop self from snap data', key, ':v')
-        data.pop(key)
+        data.pop(key, None)
     
     snap.rebuild_snapshot(data, root=source_root)
 
@@ -207,6 +210,7 @@ def sync_snapshot(
     
     snap_alldata_a = snap_a.load_snapshot()
     snap_alldata_b = snap_b.load_snapshot()
+    # print(snap_alldata_a['root'], snap_alldata_b['root'], ':lv')
     
     def compare_version(ver_a: str, ver_b: str) -> int:
         """
