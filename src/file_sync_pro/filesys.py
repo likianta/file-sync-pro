@@ -81,7 +81,7 @@ class AirFileSystem(BaseFileSystem):
     
     @classmethod
     def create_from_url(cls, url: str) -> t.Tuple['AirFileSystem', T.Path]:
-        a, b, c, d = (url + '/').split('/', 3)
+        a, b, c, d = url.split('/', 3)
         #   e.g. 'air://172.20.128.123:2160/storage/emulated/0/Likianta/test
         #   /snapshot.json'
         #       a = 'air:'
@@ -94,7 +94,7 @@ class AirFileSystem(BaseFileSystem):
         return AirFileSystem(host=e, port=int(f)), '/' + d
     
     def __init__(self, host: str, port: int = 2160) -> None:
-        air.connect(host, port)
+        air.config(host, port, verbose=True).connect()
         self.url = f'air://{host}:{port}'
         self._fs = air.delegate(LocalFileSystem)
     
@@ -130,6 +130,15 @@ class AirFileSystem(BaseFileSystem):
         data = self._fs.load(file_i, binary=True)
         fs.dump(data, file_o, 'binary')
         
+        # assert file_i.startswith('/storage/emulated/0/Likianta/')
+        # url = 'http://{}:{}/{}'.format(
+        #     re.search(r'air://([.\d]+):', self.url).group(1),
+        #     2161,
+        #     file_i.replace('/storage/emulated/0/Likianta/', '', 1)
+        # )
+        # data = requests.get(url).content
+        # fs.dump(data, file_o, 'binary')
+        
         if mtime is None:
             mtime = air.exec('fs.filetime(file)', file=file_i)
         os.utime(file_o, (mtime, mtime))
@@ -139,6 +148,15 @@ class AirFileSystem(BaseFileSystem):
     ) -> None:
         data = fs.load(file_i, 'binary')
         self._fs.dump(data, file_o, binary=True)
+        
+        # assert file_o.startswith('/storage/emulated/0/Likianta/')
+        # url = 'http://{}:{}/{}'.format(
+        #     re.search(r'air://([.\d]+):', self.url).group(1),
+        #     2161,
+        #     file_o.replace('/storage/emulated/0/Likianta/', '', 1)
+        # )
+        # requests.put(url, fs.load(file_i, 'binary'))
+        
         air.exec(
             '''
             import os
@@ -195,7 +213,7 @@ class DufsFileSystem(AirFileSystem):
 
 class FtpFileSystem(BaseFileSystem):
     @classmethod
-    def create_from_url(cls, url: str) -> 'FtpFileSystem':
+    def create_from_url(cls, url: str) -> t.Tuple['FtpFileSystem', T.Path]:
         a, b, c, d = (url + '/').split('/', 3)
         #   e.g. 'ftp://172.20.128.123:2161/Likianta/test/snapshot.json'
         #       a = 'ftp:'
@@ -204,9 +222,9 @@ class FtpFileSystem(BaseFileSystem):
         #       d = 'Likianta/test/snapshot.json'
         assert a == 'ftp:' and b == '' and ':' in c
         e, f = c.split(':')
-        return FtpFileSystem(host=e, port=int(f))
+        return FtpFileSystem(host=e, port=int(f)), '/' + d
     
-    def __init__(self, host: str, port: int = 2161) -> None:
+    def __init__(self, host: str, port: int = 2162) -> None:
         self.url = f'ftp://{host}:{port}'
         self._ftp = ftplib.FTP()
         self._ftp.connect(host, port)
@@ -371,6 +389,7 @@ class FtpFileSystem(BaseFileSystem):
         
         for name in sorted(subdirs):
             if '[' in name or ']' in name:
+                # noinspection PyUnresolvedReferences
                 with self._temp_rename_dir(f'{root}/{name}') as temp_dir:
                     yield from self._findall_files(
                         root=temp_dir,
@@ -451,6 +470,5 @@ class FtpFileSystem(BaseFileSystem):
 
 
 def send_file_to_remote(file_i: T.Path, file_o: T.Path) -> None:
-    fs = FtpFileSystem.create_from_url(file_o)
-    file_o = file_o.removeprefix(fs.url)
+    fs, file_o = FtpFileSystem.create_from_url(file_o)
     fs.upload_file(file_i, file_o)

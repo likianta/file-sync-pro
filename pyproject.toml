@@ -1,6 +1,6 @@
 [project]
 name = "file-sync-pro"
-version = "0.0.0a4"
+version = "0.0.0a10"
 description = ""
 # readme = "README.md"
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
@@ -14,7 +14,7 @@ dynamic = ["dependencies"]
 
 [tool.poetry.dependencies]
 python = "^3.12"
-airmise = { version = "^0.3.0a22", source = "likianta" }
+airmise = { version = "^0.4.0a9", source = "likianta" }
 argsense = { version = "^1.0.1b0", source = "likianta" }
 lk-utils = { version = "^3.3.0a15", source = "likianta" }
 
@@ -24,9 +24,9 @@ ipython = "^9.3.0"
 # --- local computer only
 # qmlease = { version = "^3.1.0a31", source = "likianta", extras = ["ui"], python = ">=3.12,<3.14" }
 requests = "^2.32.3"
-streamlit = { version = "^1.46.1" }
-# streamlit = { version = "<1.46.0" }
-streamlit-canary = { version = "^0.1.0b8", source = "likianta" }
+# streamlit = { version = "^1.46.1" }
+streamlit = { version = "<1.46.0" }
+streamlit-canary = { version = "^0.1.0b9", source = "likianta" }
 
 [[tool.poetry.source]]
 name = "tsinghua"

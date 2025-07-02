@@ -54,14 +54,15 @@ class Snapshot:
     def __init__(self, snapshot_file: T.Path) -> None:
         assert snapshot_file.endswith('.json')
         if snapshot_file.startswith('air://'):
-            self.fs, x = AirFileSystem.create_from_url(snapshot_file)
-            self.snapshot_file = x
+            self.fs, self.snapshot_file = \
+                AirFileSystem.create_from_url(snapshot_file)
         elif snapshot_file.startswith('ftp://'):
-            self.fs = FtpFileSystem.create_from_url(snapshot_file)
-            self.snapshot_file = snapshot_file.removeprefix(self.fs.url)
+            self.fs, self.snapshot_file = \
+                FtpFileSystem.create_from_url(snapshot_file)
         else:
             self.fs = LocalFileSystem()
             self.snapshot_file = _fs.abspath(snapshot_file)
+        # print(self.snapshot_file, ':iv')
         # self.root = _fs.parent(self.snapshot_file)
     
     def load_snapshot(self, _absroot: bool = True) -> T.SnapshotFull:
@@ -112,15 +113,17 @@ class Snapshot:
         """
         # check if snapshot file stored inside file-sync-pro project.
         # if so, no need to convert root path from absolute to relative.
-        is_snapshot_inside = (
-            isinstance(self.fs, LocalFileSystem) and
-            self.snapshot_file.startswith(_fs.xpath('../../data/snapshots'))
-        )
+        # is_snapshot_inside = (
+        #     isinstance(self.fs, LocalFileSystem) and
+        #     self.snapshot_file.startswith(_fs.xpath('../../data/snapshots'))
+        # )
         
         full = {
-            'root'   :
-                root if is_snapshot_inside else
-                (self._prefer_relpath(root) or root),
+            # 'root'   :
+            #     # root if root.startswith(('air://', 'ftp://')) else
+            #     root if is_snapshot_inside else
+            #     (self._prefer_relpath(root) or root),
+            'root'   : root,
             'base'   : (x := {
                 'version': '{}-{}'.format(
                     self._hash_snapshot(data), int(time())
@@ -168,8 +171,8 @@ def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
             source_root = x
             snap_inside = False
         elif source_root.startswith('ftp://'):
-            fs1 = FtpFileSystem.create_from_url(source_root)
-            source_root = source_root.removeprefix(fs1.url)
+            fs1, x = FtpFileSystem.create_from_url(source_root)
+            source_root = x
             assert source_root.startswith('/Likianta')
             snap_inside = snap.snapshot_file.startswith(source_root + '/')
         else:
@@ -221,23 +224,20 @@ def update_snapshot(snap_file: T.Path, subfolder: str = None):
     
     
 def sync_snapshot(
-    snap_file_a: T.Path, snap_file_b: T.Path, dry_run: bool = False
+    snap_file_a: T.Path,
+    snap_file_b: T.Path,
+    dry_run: bool = False,
+    no_doubt: bool = False,
 ) -> None:
     """
     params:
         dry_run (-d):
     """
-    assert (
-        not snap_file_a.startswith('ftp://') and
-        snap_file_b.startswith('ftp://')
-    )
-    
     snap_a = Snapshot(snap_file_a)
     snap_b = Snapshot(snap_file_b)
     
     snap_alldata_a = snap_a.load_snapshot()
     snap_alldata_b = snap_b.load_snapshot()
-    # print(snap_alldata_a['root'], snap_alldata_b['root'], ':lv')
     
     def compare_version(ver_a: str, ver_b: str) -> int:
         """
@@ -302,46 +302,6 @@ def sync_snapshot(
             if k not in snap_new:
                 yield k, '->', time_old
     
-    # noinspection PyTypeChecker
-    def compare_changelists(
-        changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
-        changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
-    ) -> t.Iterator[T.ComposedAction]:
-        for k, (ma, ta) in changes_a.items():
-            if k in changes_b:
-                mb, tb = changes_b[k]
-                if ma == '+>' or ma == '=>':
-                    if mb == '+>' or mb == '=>':
-                        if ta >= tb:
-                            # b created/updated -> a created/updated
-                            yield k, '=>?', ta
-                        else:  # ta < tb
-                            # a created/updated -> b created/updated
-                            yield k, '<=?', tb
-                    else:
-                        # 1. ta > tb:
-                        #   b created -> b deleted -> a created/updated
-                        # 2. ta < tb:
-                        #   a created/updated -> b created -> b deleted
-                        # 3. ta < tb:
-                        #   b created -> a created/updated -> b deleted
-                        # 4. ta == tb:
-                        #   a b created/updated at same time -> b deleted
-                        yield k, '+>', ta
-                else:  # ma == '->'
-                    if mb == '+>' or mb == '=>':
-                        yield k, '<+', tb
-            else:
-                yield k, ma, ta
-        for k, (mb, tb) in changes_b.items():
-            if k not in changes_a:
-                if mb == '+>':
-                    yield k, '<+', tb
-                elif mb == '=>':
-                    yield k, '<=', tb
-                else:  # mb == '->'
-                    yield k, '<-', tb
-    
     # changes_a = {
     #     k: (m, t_) for k, m, t_ in
     #     compare_new_to_old(snap_data_a, snap_data_base)
@@ -363,15 +323,130 @@ def sync_snapshot(
         compare_new_to_old(snap_data_b, snap_data_base)
     }
     
-    final_changes = compare_changelists(changes_a, changes_b)
+    final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
     
-    # -------------------------------------------------------------------------
+    snap_data_new = _apply_changes(
+        final_changes,
+        snap_data_base,
+        snap_data_a,
+        snap_data_b,
+        snap_a.fs,
+        snap_b.fs,
+        snap_alldata_a['root'],
+        snap_alldata_b['root'],
+        dry_run,
+    )
+    if not dry_run:
+        print(':v3', 'lock snapshot')
+        snap_a.rebuild_snapshot(snap_data_new, snap_alldata_a['root'])
+        snap_b.rebuild_snapshot(snap_data_new, snap_alldata_b['root'])
+
+
+def merge_snapshot(
+    snap_file_a: T.Path,
+    snap_file_b: T.Path,
+    dry_run: bool = False,
+    no_doubt: bool = False,
+) -> None:
+    """
+    params:
+        dry_run (-d):
+    """
+    snap_a = Snapshot(snap_file_a)
+    snap_b = Snapshot(snap_file_b)
     
+    snap_alldata_a = snap_a.load_snapshot()
+    snap_alldata_b = snap_b.load_snapshot()
+    
+    # noinspection PyTypeChecker
+    changes = _compare_changelists(
+        {k: ('+>', t_) for k, t_ in snap_alldata_a['current']['data'].items()},
+        {k: ('+>', t_) for k, t_ in snap_alldata_b['current']['data'].items()},
+        no_doubt
+    )
+    
+    snap_data_new = _apply_changes(
+        changes,
+        {},
+        snap_alldata_a['current']['data'],
+        snap_alldata_b['current']['data'],
+        snap_a.fs,
+        snap_b.fs,
+        snap_alldata_a['root'],
+        snap_alldata_b['root'],
+        dry_run
+    )
+    
+    if not dry_run:
+        print(':v3', 'lock snapshot')
+        snap_a.rebuild_snapshot(snap_data_new, snap_alldata_a['root'])
+        snap_b.rebuild_snapshot(snap_data_new, snap_alldata_b['root'])
+
+    
+# noinspection PyTypeChecker
+def _compare_changelists(
+    changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
+    changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
+    no_doubt: bool = False,
+) -> t.Iterator[T.ComposedAction]:
+    for k, (ma, ta) in changes_a.items():
+        if k in changes_b:
+            mb, tb = changes_b[k]
+            if ma == '+>' or ma == '=>':
+                if mb == '+>' or mb == '=>':
+                    if ta >= tb:
+                        # b created/updated -> a created/updated
+                        if no_doubt:
+                            yield k, '=>', ta
+                        else:
+                            yield k, '=>?', ta
+                    else:  # ta < tb
+                        # a created/updated -> b created/updated
+                        if no_doubt:
+                            yield k, '<=', tb
+                        else:
+                            yield k, '<=?', tb
+                else:
+                    # 1. ta > tb:
+                    #   b created -> b deleted -> a created/updated
+                    # 2. ta < tb:
+                    #   a created/updated -> b created -> b deleted
+                    # 3. ta < tb:
+                    #   b created -> a created/updated -> b deleted
+                    # 4. ta == tb:
+                    #   a b created/updated at same time -> b deleted
+                    yield k, '+>', ta
+            else:  # ma == '->'
+                if mb == '+>' or mb == '=>':
+                    yield k, '<+', tb
+        else:
+            yield k, ma, ta
+    for k, (mb, tb) in changes_b.items():
+        if k not in changes_a:
+            if mb == '+>':
+                yield k, '<+', tb
+            elif mb == '=>':
+                yield k, '<=', tb
+            else:  # mb == '->'
+                yield k, '<-', tb
+
+
+def _apply_changes(
+    changes: t.Iterator[T.ComposedAction],
+    snap_data_base: T.SnapshotData,
+    snap_data_a: T.SnapshotData,
+    snap_data_b: T.SnapshotData,
+    fs_a: LocalFileSystem,
+    fs_b: AirFileSystem,
+    root_a: str,
+    root_b: str,
+    dry_run: bool = False,
+) -> t.Optional[T.SnapshotData]:
     if dry_run:
         i = 0
         table = [('index', 'left', 'action', 'right')]
         action_count = defaultdict(int)
-        for k, m, _ in final_changes:
+        for k, m, _ in changes:
             i += 1
             colored_key = '[{}]{}[/]'.format(
                 'yellow' if '?' in m else
@@ -417,65 +492,7 @@ def sync_snapshot(
             print('no change', ':v4')
         return
     
-    fs_a: LocalFileSystem = snap_a.fs
-    fs_b: FtpFileSystem = snap_b.fs
-    
-    root_a = snap_alldata_a['root']
-    root_b = snap_alldata_b['root']
-    
-    def apply_changes(changes: t.Iterator[T.ComposedAction]) -> T.SnapshotData:
-        # snap_new = snap_data_base.copy()
-        snap_new: T.SnapshotData = snap_data_base
-        
-        for k, m, t in changes:
-            # resolve conflict
-            if m.endswith('?'):  # '=>?', '<=?'
-                assert m in ('=>?', '<=?')
-                if m == '=>?':
-                    _backup_conflict_file_b('{}/{}'.format(root_b, k), t)
-                else:
-                    _backup_conflict_file_a('{}/{}'.format(root_a, k))
-                m = m[:-1]
-            # assert '?' not in m
-            
-            colored_key = '[{}]{}[/]'.format(
-                'green' if '+' in m else
-                'blue' if '=' in m else
-                'red',
-                k.replace('[', '\\[')
-            )
-            # noinspection PyStringFormat
-            print(':ir', '{} {} {}'.format(
-                *(
-                    (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
-                    (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
-                    ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
-                    ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
-                    ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
-                    (colored_key, '<-', '[dim]<deleted>[/]')  # '<-'
-                )
-            ))
-            
-            # TODO: how to remove empty dirs which have no files inside?
-            # FIXME: how to sync modify time in `_update_file_a2b/b2a()`?
-            if m in ('+>', '=>'):
-                _make_dirs_b('{}/{}'.format(root_b, k))
-                _update_file_a2b(k)
-                snap_new[k] = t
-            elif m == '->':
-                _delete_file_b('{}/{}'.format(root_b, k))
-                snap_new.pop(k)
-            elif m in ('<+', '<='):
-                _make_dirs_a('{}/{}'.format(root_a, k))
-                _update_file_b2a(k, t)
-                snap_new[k] = t
-            elif m == '<-':
-                _delete_file_a('{}/{}'.format(root_a, k))
-                snap_new.pop(k)
-            else:
-                raise Exception(k, m, t)
-        
-        return snap_new
+    # -------------------------------------------------------------------------
     
     _created_dirs_a = set()
     for p in snap_data_a:
@@ -490,14 +507,14 @@ def sync_snapshot(
             d += '/' + x
             _created_dirs_b.add(d)
     
-    def _make_dirs_a(filepath: str) -> None:
+    def make_dirs_a(filepath: str) -> None:
         i = filepath.rfind('/')
         dirpath = filepath[:i]
         if dirpath not in _created_dirs_a:
             fs_a.make_dirs(dirpath)
             _created_dirs_a.add(dirpath)
     
-    def _make_dirs_b(filepath: str) -> None:
+    def make_dirs_b(filepath: str) -> None:
         i = filepath.rfind('/')
         dirpath = filepath[:i]
         if dirpath not in _created_dirs_b:
@@ -507,26 +524,26 @@ def sync_snapshot(
     _conflicts_dir = 'data/cache/conflicts/{}'.format(timestamp('ymd_hns'))
     _fs.make_dir(_conflicts_dir)
     
-    def _backup_conflict_file_a(file: T.Path) -> None:
+    def backup_conflict_file_a(file: T.Path) -> None:
         file_i = file
         m, n, o = _fs.split(file_i, 3)
         file_o = '{}/{}.a.{}'.format(_conflicts_dir, n, o)
         _fs.copy_file(file_i, file_o, reserve_metadata=True)
     
-    def _backup_conflict_file_b(file: T.Path, mtime: int) -> None:
+    def backup_conflict_file_b(file: T.Path, mtime: int) -> None:
         file_i = file
         m, n, o = _fs.split(file_i, 3)
         file_o = '{}/{}.b.{}'.format(_conflicts_dir, n, o)
         fs_b.download_file(file_i, file_o, mtime)
     
-    def _delete_file_a(file: T.Path) -> None:
+    def delete_file_a(file: T.Path) -> None:
         # file_i = file
         # m, n, o = _fs.split(file_i, 3)
         # file_o = '{}/{}.a.{}'.format(_deleted_dir, n, o)
         # _fs.move(file_i, file_o)
         fs_a.remove(file)
     
-    def _delete_file_b(file: T.Path) -> None:
+    def delete_file_b(file: T.Path) -> None:
         # file_i = file
         # m, n, o = _fs.split(file_i, 3)
         # file_o = '{}/{}.b.{}'.format(_deleted_dir, n, o)
@@ -534,17 +551,66 @@ def sync_snapshot(
         # _fs.dump(data_i, file_o, 'binary')
         fs_b.remove(file)
     
-    def _update_file_a2b(relpath: T.Path) -> None:
+    def update_file_a2b(relpath: T.Path) -> None:
         file_i = '{}/{}'.format(root_a, relpath)
         file_o = '{}/{}'.format(root_b, relpath)
         fs_b.upload_file(file_i, file_o)
     
-    def _update_file_b2a(relpath: T.Path, mtime: int) -> None:
+    def update_file_b2a(relpath: T.Path, mtime: int) -> None:
         file_i = '{}/{}'.format(root_b, relpath)
         file_o = '{}/{}'.format(root_a, relpath)
         fs_b.download_file(file_i, file_o, mtime)
     
-    snap_new = apply_changes(final_changes)
+    # snap_new = snap_data_base.copy()
+    snap_new: T.SnapshotData = snap_data_base
+    
+    for k, m, t in changes:
+        # resolve conflict
+        if m.endswith('?'):  # '=>?', '<=?'
+            assert m in ('=>?', '<=?')
+            if m == '=>?':
+                backup_conflict_file_b('{}/{}'.format(root_b, k), t)
+            else:
+                backup_conflict_file_a('{}/{}'.format(root_a, k))
+            m = m[:-1]
+        # assert '?' not in m
+        
+        colored_key = '[{}]{}[/]'.format(
+            'green' if '+' in m else
+            'blue' if '=' in m else
+            'red',
+            k.replace('[', '\\[')
+        )
+        # noinspection PyStringFormat
+        print(':ir', '{} {} {}'.format(
+            *(
+                (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
+                (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
+                ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
+                ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
+                ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
+                (colored_key, '<-', '[dim]<deleted>[/]')  # '<-'
+            )
+        ))
+        
+        # TODO: how to remove empty dirs which have no files inside?
+        # FIXME: how to sync modify time in `update_file_a2b/b2a()`?
+        if m in ('+>', '=>'):
+            make_dirs_b('{}/{}'.format(root_b, k))
+            update_file_a2b(k)
+            snap_new[k] = t
+        elif m == '->':
+            delete_file_b('{}/{}'.format(root_b, k))
+            snap_new.pop(k)
+        elif m in ('<+', '<='):
+            make_dirs_a('{}/{}'.format(root_a, k))
+            update_file_b2a(k, t)
+            snap_new[k] = t
+        elif m == '<-':
+            delete_file_a('{}/{}'.format(root_a, k))
+            snap_new.pop(k)
+        else:
+            raise Exception(k, m, t)
     
     if _fs.empty(_conflicts_dir):
         _fs.remove_tree(_conflicts_dir)
@@ -554,8 +620,4 @@ def sync_snapshot(
             _conflicts_dir
         ), ':v6')
     
-    print(':v3', 'lock snapshot')
-    # _delete_file_a(snap_a.snapshot_file)
-    # _delete_file_b(snap_b.snapshot_file)
-    snap_a.rebuild_snapshot(snap_new, root_a)
-    snap_b.rebuild_snapshot(snap_new, root_b)
+    return snap_new

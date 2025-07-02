@@ -23,8 +23,7 @@ cli.add_cmd(snapshot.sync_snapshot)
 
 @cli
 def fetch_remote_file(path_i: str, path_o: str = None) -> None:
-    fs = FtpFileSystem.create_from_url(path_i)
-    path_i = path_i.removeprefix(fs.url)
+    fs, path_i = filesys.AirFileSystem.create_from_url(path_i)
     if path_o is None:
         path_o = 'data/downloads/{}'.format(_fs.basename(path_i))
     fs.download_file(path_i, path_o)
@@ -39,8 +38,7 @@ def fetch_remote_snapshot(target: str) -> None:
 
 @cli
 def force_sync_snapshot(snapshot_file_a: str, snapshot_file_b: str) -> None:
-    fs_b = FtpFileSystem.create_from_url(snapshot_file_b)
-    snapshot_file_b = snapshot_file_b.removeprefix(fs_b.url)
+    fs_b, snapshot_file_b = FtpFileSystem.create_from_url(snapshot_file_b)
     fs_b.upload_file(snapshot_file_a, snapshot_file_b)
 
 
@@ -49,8 +47,18 @@ cli.add_cmd(filesys.send_file_to_remote)
 
 @cli
 def run_air_server() -> None:
+    import lk_logger
+    lk_logger.update(path_style='filename')
+    
+    # from lk_utils import run_cmd_args
+    # run_cmd_args(
+    #     'dufs', '-A', '-p', '2161', '/storage/emulated/0/Likianta',
+    #     blocking=False,
+    #     # verbose=True,
+    # )
+    
     air.register(filesys.LocalFileSystem)
-    air.run_server({'fs': _fs}, port=2160)
+    air.run_server({'fs': _fs}, port=2160, verbose=True)
 
 
 if __name__ == '__main__':
