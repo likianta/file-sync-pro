@@ -2,41 +2,76 @@
 
 ...
 
-## 使用
+## 安装
 
-### PC 端
+### PC
 
 ...
 
-## 移动端
+### Android
 
-Android 下载 Termux, 配置好 SSH, 开启 SSH 服务:
+1. 下载 Termux
+
+2. 配置 Termux
+
+   1. 允许访问所有文件
+
+   2. 安装 Python 及其依赖
+
+      ```sh
+      ...
+      pip install -r http://172.20.128.132:2135/reqlock/file_sync_pro.txt
+      ```
+
+   3. 开启 SSH
+
+      ```sh
+      # setup password
+      passwd
+      #   ...
+      
+      # start service
+      sshd
+      
+      # if kill service
+      pkill sshd
+      ```
+
+      注意: 请保持 Termux 应用在前台, 否则 PC 端可能会连不上.
+
+## 使用
+
+### PC
+
+...
+
+通过 WebUI:
 
 ```sh
-# setup password
-passwd
-#   ...
-
-# start service
-sshd
-
-# if kill service
-pkill sshd
+strun 2162 src/file_sync_pro/ui.py
 ```
 
-注意: 需要保持 Termux 应用在前台, 否则有可能断开服务.
+界面:
 
-PC 端连接 SSH, 并在远端更新快照:
+![](./images/151653.png)
 
-```sh
-ssh <android_ip> -p 8022
-#   first time connection, type "yes" when console asks if continue connecting.
-#   prompt to input password.
-# --- ssh ---
-# cd storage/shared/<sdcard_destination_to_file_sync_pro_project>
-cd storage/shared/Likianta/work/file-sync-pro
-python -m src.file_sync_pro update_snapshot ../../documents/gitbook/source-docs/snapshot.json
-```
+## Android
+
+1. 打开 Termux, 开启 SSH
+
+2. PC 端连接 SSH:
+
+   ```sh
+   ssh <android_ip> -p 8022
+   #   first time connection, type "yes" when console asks if continue connecting.
+   #   prompt to input password.
+   # --- ssh ---
+   # if file-sync-pro package has updated, redo pip install:
+   #   pip install -r http://172.20.128.132:2135/reqlock/file_sync_pro.txt
+   # run server
+   python -m file_sync_pro run_air_server
+   #   server running at 0.0.0.0:2160
+   ```
 
 同步快照:
 
@@ -56,7 +91,17 @@ pox -m file_sync_pro sync_snapshot \
     ftp://192.168.8.31:2160/Likianta/documents/gitbook/source-docs/snapshot.json
 ```
 
-## 特殊情况
+## 问题解答
+
+### 局域网中的传输速度非常慢
+
+- 尝试切换网络, 例如从公共网络切换到手机热点 (建议使用 5GHz 频段).
+
+  笔者自己的经历是, 使用公共网络速度只有 40KB/s, 改用手机共享热点速度 10MB/s (百兆带宽级别).
+
+  此外, 建议在设置中查看当前网络的传输能力:
+
+  ![](./images/171928.png)
 
 ### 文件没变化, 但是却提示大量覆盖操作
 

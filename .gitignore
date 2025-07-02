@@ -1,6 +1,7 @@
 /.idea/
 /data/cache/conflicts/*
 /data/cache/deleted/*
+/data/downloads/*
 /data/remote_snapshot.json
 /data/snapshots/*
 /lib/
