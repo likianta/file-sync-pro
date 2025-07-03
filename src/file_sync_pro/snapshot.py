@@ -196,7 +196,7 @@ def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
     snap.rebuild_snapshot(data, root=source_root)
 
 
-def update_snapshot(snap_file: T.Path, subfolder: str = None):
+def update_snapshot(snap_file: T.Path, subfolder: str = None) -> Snapshot:
     snap = Snapshot(snap_file)
     snap_data = snap.load_snapshot()
     src_root = snap_data['root']
@@ -484,7 +484,7 @@ def _apply_changes(
                     (colored_key, '<-', '[dim]<deleted>[/]')  # '<-'
                 )
             ))
-            action_count[m.rstrip('?')] += 1
+            action_count[m] += 1
         if len(table) > 1:
             print(table, ':r2')
             print(action_count, ':r2')
@@ -594,7 +594,6 @@ def _apply_changes(
         ))
         
         # TODO: how to remove empty dirs which have no files inside?
-        # FIXME: how to sync modify time in `update_file_a2b/b2a()`?
         if m in ('+>', '=>'):
             make_dirs_b('{}/{}'.format(root_b, k))
             update_file_a2b(k)

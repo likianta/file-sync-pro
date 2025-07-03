@@ -5,6 +5,7 @@
 /data/remote_snapshot.json
 /data/snapshots/*
 /lib/
+/readme.b64.html
 
 __pycache__/
 dist/

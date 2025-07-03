@@ -1,0 +1,28 @@
+{
+    "appid": "file_sync_pro_0xc827",
+    "name": "File Sync Pro",
+    "version": "0.1.0a0",
+    "start_directory": "..",
+    "readme": {
+        "file": "readme.b64.html",
+        "name": "README"
+    },
+    "assets": {
+        "data": "only_folders",
+        "src/file_sync_pro": "all",
+        "poetry.lock": "all"
+    },
+    "dependencies": "poetry.lock",
+    "launcher": {
+        "command": "python src/file_sync_pro/ui.py --native-window",
+        "icon": "",
+        "enable_cli": false,
+        "add_to_desktop": true,
+        "add_to_start_menu": false,
+        "show_console": false
+    },
+    "experiments": {
+        "package_provider": "oss"
+    },
+    "depsland_version": "0.9.0"
+}

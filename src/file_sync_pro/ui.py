@@ -1,6 +1,7 @@
 if __name__ == '__main__':
     __package__ = 'src.file_sync_pro'
 
+import airmise as air
 import streamlit as st
 import streamlit_canary as sc
 import typing as t
@@ -125,6 +126,11 @@ def main(remote_ip: str) -> None:
         snapshot.sync_snapshot(left_path, right_path, dry_run, no_doubt)
     if st.button('Merge'):
         snapshot.merge_snapshot(left_path, right_path, dry_run, no_doubt)
+        
+    if _data['snap_right']:
+        if st.button('Close right connection'):
+            air.default_client.close()
+            _data['snap_right'] = None
 
 
 # -------------------------------------------------------------------------
