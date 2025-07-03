@@ -32,6 +32,9 @@ class BaseFileSystem:
     def load(self, file: T.Path) -> t.Any:
         raise NotImplementedError
     
+    def make_dir(self, dirpath: T.Path) -> None:
+        raise NotImplementedError
+    
     def make_dirs(self, dirpath: T.Path) -> None:
         raise NotImplementedError
     
@@ -54,6 +57,9 @@ class LocalFileSystem(BaseFileSystem):
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return fs.load(file, type='binary' if binary else 'auto')
+    
+    def make_dir(self, dirpath: T.Path) -> None:
+        fs.make_dir(dirpath)
     
     def make_dirs(self, dirpath: T.Path) -> None:
         # assert dirpath.startswith(self.root)
@@ -115,6 +121,9 @@ class AirFileSystem(BaseFileSystem):
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return self._fs.load(file, binary=binary)
+    
+    def make_dir(self, dirpath: T.Path) -> None:
+        self._fs.make_dir(dirpath)
     
     def make_dirs(self, dirpath: T.Path) -> None:
         if not self._fs.exist(dirpath):
@@ -210,7 +219,7 @@ class DufsFileSystem(AirFileSystem):
         return '{}/{}'.format(self.url, path.lstrip('/'))
 
 
-class FtpFileSystem(BaseFileSystem):
+class FtpFileSystem(AirFileSystem):
     @classmethod
     def create_from_url(cls, url: str) -> t.Tuple['FtpFileSystem', T.Path]:
         a, b, c, d = (url + '/').split('/', 3)
@@ -223,6 +232,7 @@ class FtpFileSystem(BaseFileSystem):
         e, f = c.split(':')
         return FtpFileSystem(host=e, port=int(f)), '/' + d
     
+    # noinspection PyMissingConstructor
     def __init__(self, host: str, port: int = 2162) -> None:
         self.url = f'ftp://{host}:{port}'
         self._ftp = ftplib.FTP()
@@ -307,17 +317,18 @@ class FtpFileSystem(BaseFileSystem):
             print(file, ':v6i')
             yield file, get_modify_time_of_hidden_file(file)
     
-    def load(self, file: T.Path) -> bytes:
+    def load(self, file: T.Path, **_) -> bytes:
         with io.BytesIO() as f:
             self._ftp.retrbinary(f'RETR {file}', f.write)
             f.seek(0)
             return f.read()
     
+    def make_dir(self, dirpath: T.Path) -> None:
+        self.make_dirs(dirpath, precheck=False)
+    
     def make_dirs(self, dirpath: T.Path, precheck: bool = True) -> None:
         if not precheck or not self.exist(dirpath):
             self._ftp.mkd(dirpath)
-    
-    make_dir = make_dirs
     
     def remove(self, file: T.Path) -> None:
         self._ftp.delete(file)

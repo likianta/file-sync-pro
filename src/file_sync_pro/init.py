@@ -32,7 +32,7 @@ def clone_project(
                 d += '/' + x
                 tobe_created_dirs.add(d)
     for d in sorted(tobe_created_dirs):
-        snap_o.fs.make_dirs(d)  # FIXME: use `make_dir`
+        snap_o.fs.make_dir(d)
     
     # copy files
     for relpath, mtime in snap_data_i.items():
