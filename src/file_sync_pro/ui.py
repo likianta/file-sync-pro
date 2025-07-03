@@ -4,15 +4,20 @@ if __name__ == '__main__':
 import streamlit as st
 import streamlit_canary as sc
 import typing as t
+from argsense import cli
 from lk_utils import fs
 from . import filesys
 from . import snapshot
+from .init import clone_project
 
-if not (_data := sc.session.get_data(version=10)):
-    remote_ip = '172.20.128.123'
-    # remote_ip = '10.236.7.32'
-    _data.update({
-        'records': {
+_data = {}
+
+
+def _init_session(remote_ip: str):
+    snap_left = snapshot.Snapshot('data/snapshots/file_sync_pro.json')
+    setattr(snap_left, 'data', None)
+    return {
+        'records'   : {
             'file-sync-pro': (
                 'C:/Likianta/workspace/dev.master.likianta/file-sync-pro/data'
                 '/snapshots/file_sync_pro.json',
@@ -26,6 +31,13 @@ if not (_data := sc.session.get_data(version=10)):
                 '/file-sync-pro/data/snapshots/gitbook_(android).json'
                 .format(remote_ip)
             ),
+            'photolens'    : (
+                'C:/Likianta/workspace/dev.master.likianta/file-sync-pro/data'
+                '/snapshots/photolens.json',
+                'air://{}:2160/storage/emulated/0/Likianta/work'
+                '/file-sync-pro/data/snapshots/photolens.json'
+                .format(remote_ip)
+            ),
             'pictures'     : (
                 'C:/Likianta/workspace/dev.master.likianta/file-sync-pro/data'
                 '/snapshots/pictures_(pc).json',
@@ -33,15 +45,28 @@ if not (_data := sc.session.get_data(version=10)):
                 '/file-sync-pro/data/snapshots/pictures_(android).json'
                 .format(remote_ip)
             ),
-            'new...': ()
+            'new...'       : ()
         },
-        'snap_left': snapshot.Snapshot('data/snapshots/file_sync_pro.json'),
+        'snap_left' : snap_left,
         'snap_right': None,
-    })
-    setattr(_data['snap_left'], 'data', None)
+    }
 
 
-def main():
+@cli
+def main(remote_ip: str) -> None:
+    """
+    params:
+        remote_ip:
+            - 192.168.8.31
+            - 172.20.128.123
+            - 10.236.7.32
+            - ...
+    """
+    if not (x := sc.session.get_data(version=15)):
+        x.update(_init_session(remote_ip))
+    global _data
+    _data = x
+    
     records = _data['records']
     key = sc.radio('Host and remote paths', records.keys(), horizontal=False)
     if key == 'new...':
@@ -152,25 +177,34 @@ def _create_snapshot(side: t.Literal['left', 'right']):
                 'but you can recreate it.]'
             )
         # noinspection PyUnresolvedReferences
-        x = st.text_input(
+        root = st.text_input(
             'Source root',
             placeholder=(
-                p :=
+                placeholder :=
                 snap.data['root'] if snap.data else
                 fs.parent(snap.snapshot_file)
             ),
             key=f'source_root_{side}'
-        ) or p
+        ) or placeholder
         if st.button('Create', key=f'create_{side}'):
-            assert snap.fs.exist(x)
+            assert snap.fs.exist(root)
             if isinstance(snap.fs, filesys.LocalFileSystem):
-                snapshot.create_snapshot(snap.snapshot_file, x)
+                snapshot.create_snapshot(snap.snapshot_file, root)
             else:
                 with st.spinner('This may take a while, please wait...'):
                     snapshot.create_snapshot(
-                        snap.fs.url + snap.snapshot_file, x
+                        snap.fs.url + snap.snapshot_file, root
                     )
             _preload_snap_data(snap)
+        if side == 'right' and snap.data is None:
+            if st.button('Clone from left', disabled=root == placeholder):
+                snap_left = _data['snap_left']
+                snap_right = _data['snap_right']
+                clone_project(
+                    snap_left.snapshot_file,
+                    snap_right.fs.url + snap_right.snapshot_file,
+                    root
+                )
 
 
 def _guess_right_path(left_path: str):
@@ -207,6 +241,10 @@ def _preload_snap_data(snap: snapshot.Snapshot) -> None:
 
 
 if __name__ == '__main__':
-    # strun 2163 src/file_sync_pro/ui.py
+    # ssh:
+    #   ssh 192.168.8.31 -p 8022
+    #   <input ssh_password>
+    #   python -m file_sync_pro run_air_server
+    # strun 2163 src/file_sync_pro/ui.py 192.168.8.31
     st.set_page_config('File Sync Pro')
-    main()
+    cli.run(main)

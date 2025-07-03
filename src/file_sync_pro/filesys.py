@@ -94,7 +94,8 @@ class AirFileSystem(BaseFileSystem):
         return AirFileSystem(host=e, port=int(f)), '/' + d
     
     def __init__(self, host: str, port: int = 2160) -> None:
-        air.config(host, port, verbose=True).connect()
+        air.config(host, port, verbose=True)
+        air.connect()
         self.url = f'air://{host}:{port}'
         self._fs = air.delegate(LocalFileSystem)
     
@@ -165,8 +166,6 @@ class AirFileSystem(BaseFileSystem):
             file=file_o,
             mtime=mtime or fs.filetime(file_i),
         )
-    
-    # -------------------------------------------------------------------------
     
     def _serialize_data(self, data: t.Any) -> bytes:
         if isinstance(data, bytes):

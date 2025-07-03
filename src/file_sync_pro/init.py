@@ -1,4 +1,5 @@
 from lk_utils import fs
+from .filesys import LocalFileSystem
 from .snapshot import Snapshot
 
 
@@ -13,6 +14,7 @@ def clone_project(
     """
     snap_i = Snapshot(snapshot_file_i)
     snap_o = Snapshot(snapshot_file_o)
+    assert not isinstance(snap_o.fs, LocalFileSystem)
     
     snap_full_i = snap_i.load_snapshot()
     root_i = snap_full_i['root']
@@ -30,7 +32,7 @@ def clone_project(
                 d += '/' + x
                 tobe_created_dirs.add(d)
     for d in sorted(tobe_created_dirs):
-        snap_o.fs.make_dir(d, precheck=False)
+        snap_o.fs.make_dirs(d)  # FIXME: use `make_dir`
     
     # copy files
     for relpath, mtime in snap_data_i.items():
