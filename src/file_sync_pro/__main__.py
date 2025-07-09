@@ -19,6 +19,7 @@ def update_snapshot(snap_file: str, subfolder: str = None) -> None:
 
 
 cli.add_cmd(snapshot.sync_snapshot)
+cli.add_cmd(snapshot.merge_snapshot)
 
 
 @cli

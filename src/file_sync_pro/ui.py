@@ -14,7 +14,7 @@ from .init import clone_project
 _data = {}
 
 
-def _init_session(remote_ip: str):
+def _init_session(remote_ip: str) -> dict:
     snap_left = snapshot.Snapshot('data/snapshots/file_sync_pro.json')
     setattr(snap_left, 'data', None)
     return {
@@ -63,7 +63,7 @@ def main(remote_ip: str) -> None:
             - 10.236.7.32
             - ...
     """
-    if not (x := sc.session.get_data(version=15)):
+    if not (x := sc.session.get_data(version=16)):
         x.update(_init_session(remote_ip))
     global _data
     _data = x
