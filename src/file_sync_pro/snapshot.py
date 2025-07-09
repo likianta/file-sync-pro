@@ -42,6 +42,7 @@ class T:
     
     SnapshotFull = t.TypedDict('SnapshotFull', {
         'root'   : Path,
+        'ignores': t.FrozenSet[Path],
         'base'   : SnapshotItem,
         'current': SnapshotItem,
     })
@@ -66,18 +67,20 @@ class Snapshot:
         # self.root = _fs.parent(self.snapshot_file)
     
     def load_snapshot(self, _absroot: bool = True) -> T.SnapshotFull:
-        out: T.SnapshotFull
+        data: T.SnapshotFull
         x = self.fs.load(self.snapshot_file)
         if isinstance(self.fs, FtpFileSystem):
-            out = json.loads(x)
+            data = json.loads(x)
         else:
-            out = x
+            data = x
+        if x := data.get('ignores'):
+            data['ignores'] = frozenset(x)
         if _absroot:
-            if out['root'] in ('.', '..') or out['root'].startswith('../'):
-                out['root'] = _fs.normpath('{}/{}'.format(
-                    _fs.parent(self.snapshot_file), out['root']
+            if data['root'] in ('.', '..') or data['root'].startswith('../'):
+                data['root'] = _fs.normpath('{}/{}'.format(
+                    _fs.parent(self.snapshot_file), data['root']
                 ))
-        return out
+        return data
     
     def update_snapshot(self, data: T.SnapshotData) -> None:
         full = self.load_snapshot(_absroot=False)
@@ -124,6 +127,7 @@ class Snapshot:
             #     root if is_snapshot_inside else
             #     (self._prefer_relpath(root) or root),
             'root'   : root,
+            'ignores': [],  # you can manually edit this later.
             'base'   : (x := {
                 'version': '{}-{}'.format(
                     self._hash_snapshot(data), int(time())
@@ -521,7 +525,7 @@ def _apply_changes(
             fs_b.make_dirs(dirpath)
             _created_dirs_b.add(dirpath)
     
-    _conflicts_dir = 'data/cache/conflicts/{}'.format(timestamp('ymd_hns'))
+    _conflicts_dir = 'data/conflicts/{}'.format(timestamp('ymd_hns'))
     _fs.make_dir(_conflicts_dir)
     
     def backup_conflict_file_a(file: T.Path) -> None:

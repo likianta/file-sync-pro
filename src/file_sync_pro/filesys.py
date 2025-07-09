@@ -15,6 +15,7 @@ from uuid import uuid1
 class T:
     Path = str
     Time = int
+    Ignores = t.FrozenSet[Path]
 
 
 class BaseFileSystem:
@@ -25,7 +26,7 @@ class BaseFileSystem:
         raise NotImplementedError
     
     def findall_files(
-        self, root: T.Path
+        self, root: T.Path, ignores: T.Ignores = None,
     ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:
         raise NotImplementedError
     
@@ -50,10 +51,17 @@ class LocalFileSystem(BaseFileSystem):
         return fs.exist(path)
     
     def findall_files(
-        self, root: T.Path
+        self, root: T.Path, ignores: T.Ignores = None
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
         for f in fs.findall_files(root):
             yield f.path, fs.filetime(f.path)
+        # TODO
+        # for f in fs.find_files(root):
+        #     yield f.path, fs.filetime(f.path)
+        # for d in fs.findall_dirs(root):
+        #     if ignores and d.relpath not in ignores:
+        #         for f in fs.find_files(d.path):
+        #             yield f.path, fs.filetime(f.path)
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return fs.load(file, type='binary' if binary else 'auto')
@@ -115,9 +123,9 @@ class AirFileSystem(BaseFileSystem):
         return self._fs.exist(path)
     
     def findall_files(
-        self, root: T.Path
+        self, root: T.Path, ignores: T.Ignores = None
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
-        yield from self._fs.findall_files(root)
+        yield from self._fs.findall_files(root, ignores)
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return self._fs.load(file, binary=binary)
@@ -292,7 +300,7 @@ class FtpFileSystem(AirFileSystem):
         return False
     
     def findall_files(
-        self, root: T.Path = None
+        self, root: T.Path = None, ignores: T.Ignores = None  # TODO
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
         def get_modify_time_of_hidden_file(file: T.Path) -> T.Time:
             with self._temp_rename_file(file) as file_x:
