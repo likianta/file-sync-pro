@@ -11,7 +11,7 @@ from . import filesys
 from . import snapshot
 from .init import clone_project
 
-_data = {}
+_data = sc.session.get_state(version=17)
 
 
 def _init_session(remote_ip: str) -> dict:
@@ -58,15 +58,15 @@ def main(remote_ip: str) -> None:
     """
     params:
         remote_ip:
-            - 192.168.8.31
-            - 172.20.128.123
-            - 10.236.7.32
+            - 172.20.128.101
+            - 192.168.8.101
             - ...
     """
-    if not (x := sc.session.get_data(version=16)):
-        x.update(_init_session(remote_ip))
-    global _data
-    _data = x
+    if not _data:
+        _data.update(_init_session(remote_ip))
+    
+    if st.button('Reconnect to remote'):
+        air.connect(remote_ip, 2160)
     
     records = _data['records']
     key = sc.radio('Host and remote paths', records.keys(), horizontal=False)

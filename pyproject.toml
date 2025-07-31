@@ -1,6 +1,6 @@
 [project]
 name = "file-sync-pro"
-version = "0.1.0a2"
+version = "0.1.0a4"
 description = ""
 # readme = "README.md"
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
@@ -16,16 +16,16 @@ dynamic = ["dependencies"]
 python = "^3.12"
 
 # --- essentials
-airmise = { version = "^0.4.0b1", source = "likianta" }
-argsense = { version = "^1.0.1b0", source = "likianta" }
-lk-utils = { version = "^3.3.0a15", source = "likianta" }
+airmise = { version = "^0.4.0", source = "likianta" }
+argsense = { version = "^1.0.1", source = "likianta" }
+lk-utils = { version = "^3.3.0a18", source = "likianta" }
 
 # --- addons
-ipython = "^9.3.0"
-requests = "^2.32.3"
-# streamlit = { version = "^1.46.1" }
-streamlit = { version = "<1.46.0" }
-streamlit-canary = { version = "^0.1.0b10", source = "likianta" }
+ipython = "^9.4.0"
+requests = { version = "^2.32.3", platform = "!=linux" }
+# streamlit = { version = "^1.46.1", platform = "!=linux" }
+streamlit = { version = ">=1.45.0,<1.46.0", platform = "!=linux" }
+streamlit-canary = { version = "^0.1.0", source = "likianta", platform = "!=linux" }
 
 [tool.poetry.group.dev.dependencies]
 # qmlease = { 
@@ -43,7 +43,7 @@ priority = "primary"
 
 [[tool.poetry.source]]
 name = "likianta"
-url = "http://47.102.108.149:2131/"
+url = "http://localhost:2131/"
 priority = "supplemental"
 
 [build-system]
