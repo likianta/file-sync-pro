@@ -11,10 +11,11 @@ from . import filesys
 from . import snapshot
 from .init import clone_project
 
-_data = sc.session.get_state(version=17)
+_data = sc.session.get_state(version=18)
 
 
 def _init_session(remote_ip: str) -> dict:
+    air.config(remote_ip, 2160)
     snap_left = snapshot.Snapshot('data/snapshots/file_sync_pro.json')
     setattr(snap_left, 'data', None)
     return {
@@ -66,7 +67,10 @@ def main(remote_ip: str) -> None:
         _data.update(_init_session(remote_ip))
     
     if st.button('Reconnect to remote'):
-        air.connect(remote_ip, 2160)
+        # air.connect(remote_ip, 2160)
+        air.default_client.reopen()
+    # if not air.default_client.is_opened:
+    #     return
     
     records = _data['records']
     key = sc.radio('Host and remote paths', records.keys(), horizontal=False)
