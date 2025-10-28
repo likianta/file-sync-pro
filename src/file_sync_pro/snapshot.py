@@ -232,10 +232,14 @@ def sync_snapshot(
     snap_file_b: T.Path,
     dry_run: bool = False,
     no_doubt: bool = False,
+    manual_select_base_side: t.Literal['a', 'b'] = '',
 ) -> None:
     """
     params:
         dry_run (-d):
+        manual_select_base_side (-b):
+            if set, suggest setting 'b'. it means that `snap_file_b` is -
+            passive side.
     """
     snap_a = Snapshot(snap_file_a)
     snap_b = Snapshot(snap_file_b)
@@ -255,25 +259,33 @@ def sync_snapshot(
             return 1
         else:
             return 2
-        
-    match compare_version(
-        snap_alldata_a['base']['version'],
-        snap_alldata_b['base']['version'],
-    ):
-        case 0:
-            print('same base snap', ':v4')
+    
+    if manual_select_base_side:
+        if manual_select_base_side == 'a':
             snap_ver_base = snap_alldata_a['base']['version']
             snap_data_base = snap_alldata_a['base']['data']
-        case 1:
-            print('use snap_b0 as base')  # use the "old" one.
+        else:
             snap_ver_base = snap_alldata_b['base']['version']
             snap_data_base = snap_alldata_b['base']['data']
-        case 2:
-            print('use snap_a0 as base')
-            snap_ver_base = snap_alldata_a['base']['version']
-            snap_data_base = snap_alldata_a['base']['data']
-        case _:
-            raise Exception
+    else:
+        match compare_version(
+            snap_alldata_a['base']['version'],
+            snap_alldata_b['base']['version'],
+        ):
+            case 0:
+                print('same base snap', ':v4')
+                snap_ver_base = snap_alldata_a['base']['version']
+                snap_data_base = snap_alldata_a['base']['data']
+            case 1:
+                print('use snap_b0 as base')  # use the "old" one.
+                snap_ver_base = snap_alldata_b['base']['version']
+                snap_data_base = snap_alldata_b['base']['data']
+            case 2:
+                print('use snap_a0 as base')
+                snap_ver_base = snap_alldata_a['base']['version']
+                snap_data_base = snap_alldata_a['base']['data']
+            case _:
+                raise Exception
     
     snap_data_a = snap_alldata_a['current']['data']
     snap_data_b = snap_alldata_b['current']['data']

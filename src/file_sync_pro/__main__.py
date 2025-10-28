@@ -63,10 +63,33 @@ def run_air_server() -> None:
 
 
 if __name__ == '__main__':
-    # pox -m file_sync_pro -h
+    """
+    # get help
+    pox -m file_sync_pro -h
     
-    # pox -m file_sync_pro create_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
+    # create snapshot in local disk
+    mkdir data/snapshots/likianta-rider-r2  # optional
+    pox -m file_sync_pro create_snapshot \
+        data/snapshots/likianta-rider-r2/gitbook-source-docs.json \
+        C:/Likianta/documents/gitbook/source-docs
+    
+    # create snapshot in remote side
+    # --- android termux
+    sshd
+    # --- pc terminal
+    ssh 172.20.128.101 -p 8022
+    <input ssh passphrase>
+    # --- ssh
+    pox -m file_sync_pro run_air_server
+    # --- pc terminal
+    mkdir data/snapshots/likianta-xiaomi-12s-pro  # optional
+    pox -m file_sync_pro create_snapshot \
+        data/snapshots/likianta-xiaomi-12s-pro/gitbook-source-docs.json \
+        air://172.20.128.101:2160/storage/emulated/0/Likianta/documents \
+        /gitbook/source-docs
+    
+    ...
+    """
     # pox -m file_sync_pro clone_project
     #   C:/Likianta/documents/gitbook/source-docs
     #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
