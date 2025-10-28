@@ -45,7 +45,10 @@ class BaseFileSystem:
     def make_dirs(self, dirpath: T.Path) -> None:
         raise NotImplementedError
     
-    def remove(self, file: T.Path) -> None:
+    def remove_dir(self, dir: T.Path) -> None:
+        raise NotImplementedError
+    
+    def remove_file(self, file: T.Path) -> None:
         raise NotImplementedError
 
 
@@ -99,7 +102,8 @@ class LocalFileSystem(BaseFileSystem):
         return fs.load(file, type='binary' if binary else 'auto')
     
     def make_dir(self, dirpath: T.Path) -> None:
-        fs.make_dir(dirpath)
+        if not fs.exist(dirpath):
+            fs.make_dir(dirpath)
     
     def make_dirs(self, dirpath: T.Path) -> None:
         # assert dirpath.startswith(self.root)
@@ -111,7 +115,11 @@ class LocalFileSystem(BaseFileSystem):
         atime = os.path.getatime(path)
         os.utime(path, (atime, mtime))
     
-    def remove(self, file: T.Path) -> None:
+    def remove_dir(self, dir: T.Path) -> None:
+        if fs.exist(dir):
+            fs.remove_tree(dir)
+    
+    def remove_file(self, file: T.Path) -> None:
         fs.remove_file(file)
 
 
@@ -178,8 +186,11 @@ class AirFileSystem(BaseFileSystem):
     def modify_mtime(self, path: T.Path, mtime: int) -> None:
         self._fs.modify_mtime(path, mtime)
     
-    def remove(self, file: T.Path) -> None:
-        self._fs.remove(file)
+    def remove_dir(self, dir: T.Path) -> None:
+        self._fs.remove_dir(dir)
+    
+    def remove_file(self, file: T.Path) -> None:
+        self._fs.remove_file(file)
     
     # -------------------------------------------------------------------------
     

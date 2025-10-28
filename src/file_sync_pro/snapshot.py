@@ -93,8 +93,8 @@ class Snapshot:
             data = json.loads(self.fs.load(self.snapshot_file))
         else:
             data = lkfs.load(self.snapshot_file)
-            # if data['root'].startswith(('air://', 'ftp://')):
-            #     pass
+            if data['root'].startswith(('air://', 'ftp://')):
+                data['root'] = '/' + data['root'].split('/', 3)[-1]
         if _absroot:
             if data['root'] in ('.', '..') or data['root'].startswith('../'):
                 data['root'] = lkfs.normpath('{}/{}'.format(
@@ -345,33 +345,28 @@ def sync_snapshot(
                 if time_new > time_old:
                     yield k, '=>', time_new
                 elif time_new < time_old:
-                    print(':v5i', k, time_new, time_old)
-                    # yield k, '<=?', time_old
+                    if not k.endswith('/'):
+                        print(':v5i', k, time_new, time_old)
+                        # yield k, '<=?', time_old
             else:
                 yield k, '+>', time_new
         for k, time_old in snap_old.items():
             if k not in snap_new:
                 yield k, '->', time_old
     
-    # changes_a = {
-    #     k: (m, t_) for k, m, t_ in
-    #     compare_new_to_old(snap_data_a, snap_data_base)
-    # }
-    # changes_b = {
-    #     k: (m, t_) for k, m, t_ in
-    #     compare_new_to_old(snap_data_b, snap_data_base)
-    # }
     changes_a = {} if compare_version(
         snap_alldata_a['current']['version'], snap_ver_base,
     ) == 0 else {
-        k: (m, t_) for k, m, t_ in
-        compare_new_to_old(snap_data_a, snap_data_base)
+        k: (m, t_)
+        for k, m, t_ in compare_new_to_old(snap_data_a, snap_data_base)
+        # if not k.endswith('/')
     }
     changes_b = {} if compare_version(
         snap_alldata_b['current']['version'], snap_ver_base,
     ) == 0 else {
-        k: (m, t_) for k, m, t_ in
-        compare_new_to_old(snap_data_b, snap_data_base)
+        k: (m, t_)
+        for k, m, t_ in compare_new_to_old(snap_data_b, snap_data_base)
+        # if not k.endswith('/')
     }
     
     final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
@@ -422,8 +417,8 @@ def merge_snapshot(
         {},
         snap_alldata_a['current']['data'],
         snap_alldata_b['current']['data'],
-        snap_a.fs,
-        snap_b.fs,
+        t.cast(LocalFileSystem, snap_a.fs),
+        t.cast(AirFileSystem, snap_b.fs),
         snap_alldata_a['root'],
         snap_alldata_b['root'],
         dry_run
@@ -494,11 +489,14 @@ def _apply_changes(
     root_b: str,
     dry_run: bool = False,
 ) -> t.Optional[T.SnapshotData]:
+    print(root_a, root_b, ':l')
     if dry_run:
         i = 0
         table = [('index', 'left', 'action', 'right')]
         action_count = defaultdict(int)
         for k, m, _ in changes:
+            if k.endswith('/') and '=' in m:
+                continue
             i += 1
             colored_key = '[{}]{}[/]'.format(
                 'yellow' if '?' in m else
@@ -559,6 +557,22 @@ def _apply_changes(
             d += '/' + x
             _created_dirs_b.add(d)
     
+    def delete_dir_a(dirpath: T.AbsPath) -> None:
+        fs_a.remove_dir(dirpath)
+    
+    def delete_dir_b(dirpath: T.AbsPath) -> None:
+        fs_b.remove_dir(dirpath)
+    
+    def make_dir_a(dirpath: T.AbsPath) -> None:
+        if dirpath not in _created_dirs_a:
+            fs_a.make_dir(dirpath)
+            _created_dirs_a.add(dirpath)
+    
+    def make_dir_b(dirpath: T.AbsPath) -> None:
+        if dirpath not in _created_dirs_b:
+            fs_b.make_dir(dirpath)
+            _created_dirs_b.add(dirpath)
+    
     def make_dirs_a(filepath: str) -> None:
         i = filepath.rfind('/')
         dirpath = filepath[:i]
@@ -593,7 +607,7 @@ def _apply_changes(
         # m, n, o = lkfs.split(file_i, 3)
         # file_o = '{}/{}.a.{}'.format(_deleted_dir, n, o)
         # lkfs.move(file_i, file_o)
-        fs_a.remove(file)
+        fs_a.remove_file(file)
     
     def delete_file_b(file: T.Path) -> None:
         # file_i = file
@@ -601,7 +615,7 @@ def _apply_changes(
         # file_o = '{}/{}.b.{}'.format(_deleted_dir, n, o)
         # data_i = fs_b.load(file_i)
         # lkfs.dump(data_i, file_o, 'binary')
-        fs_b.remove(file)
+        fs_b.remove_file(file)
     
     def update_file_a2b(relpath: T.Path) -> None:
         file_i = '{}/{}'.format(root_a, relpath)
@@ -617,8 +631,12 @@ def _apply_changes(
     snap_new: T.SnapshotData = snap_data_base
     
     for k, m, t in changes:
+        # isdir = k.endswith('/')
+        if k.endswith('/') and '=' in m:
+            continue
+        
         # resolve conflict
-        if m.endswith('?'):  # '=>?', '<=?'
+        if m.endswith('?'):
             assert m in ('=>?', '<=?')
             if m == '=>?':
                 backup_conflict_file_b('{}/{}'.format(root_b, k), t)
@@ -645,23 +663,38 @@ def _apply_changes(
             )
         ))
         
-        # TODO: how to remove empty dirs which have no files inside?
-        if m in ('+>', '=>'):
-            make_dirs_b('{}/{}'.format(root_b, k))
-            update_file_a2b(k)
-            snap_new[k] = t
-        elif m == '->':
-            delete_file_b('{}/{}'.format(root_b, k))
-            snap_new.pop(k)
-        elif m in ('<+', '<='):
-            make_dirs_a('{}/{}'.format(root_a, k))
-            update_file_b2a(k, t)
-            snap_new[k] = t
-        elif m == '<-':
-            delete_file_a('{}/{}'.format(root_a, k))
-            snap_new.pop(k)
+        if k.endswith('/'):
+            if m == '+>':
+                make_dir_b('{}/{}'.format(root_b, k))
+                snap_new[k] = t
+            elif m == '->':
+                delete_dir_b('{}/{}'.format(root_b, k))
+                snap_new.pop(k)
+            elif m == '<+':
+                make_dir_a('{}/{}'.format(root_a, k))
+                snap_new[k] = t
+            elif m == '<-':
+                delete_dir_a('{}/{}'.format(root_a, k))
+                snap_new.pop(k)
+            else:
+                raise Exception(k, m, t)
         else:
-            raise Exception(k, m, t)
+            if m in ('+>', '=>'):
+                make_dirs_b('{}/{}'.format(root_b, k))
+                update_file_a2b(k)
+                snap_new[k] = t
+            elif m == '->':
+                delete_file_b('{}/{}'.format(root_b, k))
+                snap_new.pop(k)
+            elif m in ('<+', '<='):
+                make_dirs_a('{}/{}'.format(root_a, k))
+                update_file_b2a(k, t)
+                snap_new[k] = t
+            elif m == '<-':
+                delete_file_a('{}/{}'.format(root_a, k))
+                snap_new.pop(k)
+            else:
+                raise Exception(k, m, t)
     
     if lkfs.empty(_conflicts_dir):
         lkfs.remove_tree(_conflicts_dir)

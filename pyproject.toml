@@ -1,6 +1,6 @@
 [project]
 name = "file-sync-pro"
-version = "0.2.0a2"
+version = "0.2.0a4"
 description = ""
 # readme = "README.md"
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]

@@ -88,6 +88,12 @@ if __name__ == '__main__':
         air://172.20.128.101:2160/storage/emulated/0/Likianta/documents \
         /gitbook/source-docs
     
+    # sync snapshot
+    pox -m file_sync_pro sync_snapshot -h
+    # dry run
+    pox -m file_sync_pro sync_snapshot \
+        data/snapshots/likianta-rider-r2/gitbook-source-docs.json \
+        data/snapshots/likianta-xiaomi-12s-pro/gitbook-source-docs.json -d
     ...
     """
     # pox -m file_sync_pro clone_project
