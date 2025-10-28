@@ -1,6 +1,7 @@
 
 ### 0.2.0 (wip)
 
+- Fix isolating snapshot file and source
 - Refactor snapshot data structure
 - Improve efficiency of analyzing changed files
 

@@ -20,6 +20,15 @@ from .filesys import LocalFileSystem
 class T:
     FileSystem = t.Union[AirFileSystem, FtpFileSystem, LocalFileSystem]
     
+    AbsPath = AnyPath = Path = str
+    #   AbsPath: be noted this can be a local path, or remote path.
+    #       for examples:
+    #           C:/Likianta/documents/gitbook
+    #           /storage/emulated/0/Likianta/documents/gitbook
+    #       the remote abspath must start with '/'.
+    #   AnyPath: abspaths, relpaths, regular slash separators (/), back
+    #   slashes (\\), 'air://...' paths, 'ftp://...' paths... they are all
+    #   allowed.
     Key = str  # a relpath
     Movement = t.Literal['+>', '=>', '->', '<+', '<=', '<-']
     #   +>  add to right
@@ -29,7 +38,6 @@ class T:
     #   <=  overwrite to left
     #   <-  delete to left
     #   ==  no change
-    Path = str  # any path forms, plus "ftp://" prefixed url.
     Time = int
     
     ComposedAction = t.Tuple[Key, Movement, Time]
@@ -50,36 +58,50 @@ class T:
 
 class Snapshot:
     fs: T.FileSystem
-    snapshot_file: T.Path
+    snapshot_file: T.AbsPath
+    source_root: T.AbsPath
+    _is_snapshot_file_remote: bool
     
-    def __init__(self, snapshot_file: T.Path) -> None:
+    def __init__(self, snapshot_file: T.AnyPath) -> None:
         assert snapshot_file.endswith('.json')
-        if snapshot_file.startswith('air://'):
-            self.fs, self.snapshot_file = \
-                AirFileSystem.create_from_url(snapshot_file)
-        elif snapshot_file.startswith('ftp://'):
-            self.fs, self.snapshot_file = \
-                FtpFileSystem.create_from_url(snapshot_file)
+        if snapshot_file.startswith(('air://', 'ftp://')):
+            self._is_snapshot_file_remote = True
+            prefix = snapshot_file.split('://', 1)[0]
+            syscls = {'air': AirFileSystem, 'ftp': FtpFileSystem}[prefix]
+            self.fs, self.snapshot_file = syscls.create_from_url(snapshot_file)
+            if self.fs.exist(self.snapshot_file):
+                self.source_root = self.load_snapshot()['root']
         else:
-            self.fs = LocalFileSystem()
+            self._is_snapshot_file_remote = False
+            if lkfs.exist(snapshot_file):
+                root = lkfs.load(snapshot_file)['root']
+                if root.startswith(('air://', 'ftp://')):
+                    prefix = root.split('://', 1)[0]
+                    syscls = \
+                        {'air': AirFileSystem, 'ftp': FtpFileSystem}[prefix]
+                    self.fs, self.source_root = syscls.create_from_url(root)
+                else:
+                    self.fs, self.source_root = LocalFileSystem(), root
+            else:
+                self.fs = LocalFileSystem()
             self.snapshot_file = lkfs.abspath(snapshot_file)
-        # print(self.snapshot_file, ':iv')
-        # self.root = lkfs.parent(self.snapshot_file)
+        # note: `self.source_root` may be undefined if snap file not exists.
     
     def load_snapshot(self, _absroot: bool = True) -> T.SnapshotFull:
         data: T.SnapshotFull
-        x = self.fs.load(self.snapshot_file)
-        if isinstance(self.fs, FtpFileSystem):
-            data = json.loads(x)
+        if self._is_snapshot_file_remote:
+            data = json.loads(self.fs.load(self.snapshot_file))
         else:
-            data = x
-        if x := data.get('ignores'):
-            data['ignores'] = frozenset(x)
+            data = lkfs.load(self.snapshot_file)
+            # if data['root'].startswith(('air://', 'ftp://')):
+            #     pass
         if _absroot:
             if data['root'] in ('.', '..') or data['root'].startswith('../'):
                 data['root'] = lkfs.normpath('{}/{}'.format(
                     lkfs.parent(self.snapshot_file), data['root']
                 ))
+        if x := data.get('ignores'):
+            data['ignores'] = frozenset(x)
         return data
     
     def update_snapshot(self, data: T.SnapshotData) -> None:
@@ -107,7 +129,7 @@ class Snapshot:
         )
         self.fs.dump(full, self.snapshot_file)
     
-    def rebuild_snapshot(self, data: T.SnapshotData, root: str) -> None:
+    def rebuild_snapshot(self, data: T.SnapshotData, root: T.AbsPath) -> None:
         """
         root: must be a normalized abspath.
             be careful using `self.fs.root` as root. if your snapshot file is -
@@ -120,6 +142,12 @@ class Snapshot:
         #     isinstance(self.fs, LocalFileSystem) and
         #     self.snapshot_file.startswith(lkfs.xpath('../../data/snapshots'))
         # )
+        
+        if isinstance(self.fs, (AirFileSystem, FtpFileSystem)):
+            if not root.startswith(('air://', 'ftp://')):
+                assert root.startswith('/')
+                root = '{}/{}'.format(self.fs.url, root[1:])
+                print(root, ':p')
         
         full = {
             # 'root'   :
@@ -136,7 +164,10 @@ class Snapshot:
             }),
             'current': x
         }
-        self.fs.dump(full, self.snapshot_file)
+        if self._is_snapshot_file_remote:
+            self.fs.dump(full, self.snapshot_file)
+        else:
+            lkfs.dump(full, self.snapshot_file)
     
     @staticmethod
     def _hash_snapshot(data: T.SnapshotData) -> str:
@@ -148,7 +179,7 @@ class Snapshot:
             #   sort them.
         ).hexdigest()
     
-    def _prefer_relpath(self, target: T.Path) -> t.Optional[T.Path]:
+    def _prefer_relpath(self, target: T.AbsPath) -> t.Optional[T.Path]:
         relpath = lkfs.relpath(target, lkfs.parent(self.snapshot_file))
         if relpath.count('../') < 3:
             return relpath
@@ -164,7 +195,7 @@ class Snapshot:
 # -----------------------------------------------------------------------------
 # api
 
-def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
+def create_snapshot(snap_file: T.AnyPath, source_root: str = None) -> None:
     snap = Snapshot(snap_file)
     
     fs0 = snap.fs
@@ -197,10 +228,15 @@ def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
         print('pop self from snap data', key, ':v')
         data.pop(key, None)
     
-    snap.rebuild_snapshot(data, root=source_root)
+    if isinstance(fs1, (AirFileSystem, FtpFileSystem)):
+        assert source_root.startswith('/')
+        root = '{}/{}'.format(fs1.url, source_root[1:])
+    else:
+        root = source_root
+    snap.rebuild_snapshot(data, root=root)
 
 
-def update_snapshot(snap_file: T.Path, subfolder: str = None) -> Snapshot:
+def update_snapshot(snap_file: T.AnyPath, subfolder: str = None) -> Snapshot:
     snap = Snapshot(snap_file)
     snap_data = snap.load_snapshot()
     src_root = snap_data['root']
@@ -228,8 +264,8 @@ def update_snapshot(snap_file: T.Path, subfolder: str = None) -> Snapshot:
     
     
 def sync_snapshot(
-    snap_file_a: T.Path,
-    snap_file_b: T.Path,
+    snap_file_a: T.AnyPath,
+    snap_file_b: T.AnyPath,
     dry_run: bool = False,
     no_doubt: bool = False,
     manual_select_base_side: t.Literal['a', 'b'] = '',
@@ -247,6 +283,31 @@ def sync_snapshot(
     snap_alldata_a = snap_a.load_snapshot()
     snap_alldata_b = snap_b.load_snapshot()
     
+    def select_base_side() -> t.Tuple[str, T.SnapshotData]:
+        if manual_select_base_side:
+            if manual_select_base_side == 'a':
+                base = snap_alldata_a['base']
+            else:
+                base = snap_alldata_b['base']
+        else:
+            match compare_version(
+                snap_alldata_a['base']['version'],
+                snap_alldata_b['base']['version'],
+            ):
+                case 0:
+                    print('same base snap', ':v4')
+                    base = snap_alldata_a['base']
+                case 1:
+                    print('use snap_b0 as base')  # use the "old" one.
+                    base = snap_alldata_b['base']
+                case 2:
+                    print('use snap_a0 as base')
+                    base = snap_alldata_a['base']
+                case _:
+                    raise Exception
+        # noinspection PyUnboundLocalVariable
+        return base['version'], base['data']
+    
     def compare_version(ver_a: str, ver_b: str) -> int:
         """
         tip: we'd prefer put newer ver at first argument, the older as `ver_b`.
@@ -260,33 +321,7 @@ def sync_snapshot(
         else:
             return 2
     
-    if manual_select_base_side:
-        if manual_select_base_side == 'a':
-            snap_ver_base = snap_alldata_a['base']['version']
-            snap_data_base = snap_alldata_a['base']['data']
-        else:
-            snap_ver_base = snap_alldata_b['base']['version']
-            snap_data_base = snap_alldata_b['base']['data']
-    else:
-        match compare_version(
-            snap_alldata_a['base']['version'],
-            snap_alldata_b['base']['version'],
-        ):
-            case 0:
-                print('same base snap', ':v4')
-                snap_ver_base = snap_alldata_a['base']['version']
-                snap_data_base = snap_alldata_a['base']['data']
-            case 1:
-                print('use snap_b0 as base')  # use the "old" one.
-                snap_ver_base = snap_alldata_b['base']['version']
-                snap_data_base = snap_alldata_b['base']['data']
-            case 2:
-                print('use snap_a0 as base')
-                snap_ver_base = snap_alldata_a['base']['version']
-                snap_data_base = snap_alldata_a['base']['data']
-            case _:
-                raise Exception
-    
+    snap_ver_base, snap_data_base = select_base_side()
     snap_data_a = snap_alldata_a['current']['data']
     snap_data_b = snap_alldata_b['current']['data']
     
@@ -346,21 +381,22 @@ def sync_snapshot(
         snap_data_base,
         snap_data_a,
         snap_data_b,
-        snap_a.fs,
-        snap_b.fs,
+        t.cast(LocalFileSystem, snap_a.fs),
+        t.cast(AirFileSystem, snap_b.fs),
         snap_alldata_a['root'],
         snap_alldata_b['root'],
         dry_run,
     )
     if not dry_run:
         print(':v3', 'lock snapshot')
+        assert snap_data_new is not None
         snap_a.rebuild_snapshot(snap_data_new, snap_alldata_a['root'])
         snap_b.rebuild_snapshot(snap_data_new, snap_alldata_b['root'])
 
 
 def merge_snapshot(
-    snap_file_a: T.Path,
-    snap_file_b: T.Path,
+    snap_file_a: T.AnyPath,
+    snap_file_b: T.AnyPath,
     dry_run: bool = False,
     no_doubt: bool = False,
 ) -> None:
