@@ -84,13 +84,13 @@ class AirFileSystem(BaseFileSystem):
     # --- android termux ---
     sshd
     # --- pc ---
-    ssh 172.20.128.123 -p 8022
+    dufs . -p <pc_dufs_port>
+    ssh <android_host> -p 8022
     # --- ssh ---
-    cd ~/storage/shared/Likianta/work/file-sync-pro
-    pip install -r requirements.lock
-    #   or: pip install -r http://172.20.128.132:2135/reqlock/airmise.txt
-    cd ~/storage/shared
-    python -m airmise run-server --port 2160
+    python -m pip install -r <pc_dufs_host>:<pc_dufs_port>/requirements.txt
+    python -m file_sync_pro run-air-server
+    # --- pc ---
+    strun 2163 src/file_sync_pro/ui.py
     """
     
     @classmethod
@@ -193,6 +193,9 @@ class AirFileSystem(BaseFileSystem):
         else:
             raise NotImplementedError
 
+
+# -----------------------------------------------------------------------------
+# FIXME
 
 class DufsFileSystem(AirFileSystem):
     """

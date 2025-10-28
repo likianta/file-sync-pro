@@ -251,10 +251,20 @@ def _preload_snap_data(snap: snapshot.Snapshot) -> None:
 
 
 if __name__ == '__main__':
-    # ssh:
-    #   ssh 192.168.8.31 -p 8022
-    #   <input ssh_password>
-    #   python -m file_sync_pro run_air_server
-    # strun 2163 src/file_sync_pro/ui.py 192.168.8.31
+    """
+    launch steps:
+        enter ssh
+            android termux: sshd
+            pc:
+                ssh <android_ip> -p 8022
+                <input ssh password>
+        (optional) upgrade file-sync-pro in android:
+            pc: dufs . -p <dufs_port>
+            ssh: python -m pip install -r <pc_ip>:<dufs_port>/requirements.lock
+        run server:
+            ssh: python -m file_sync_pro run_air_server
+        run ui:
+            pc: strun 2163 src/file_sync_pro/ui.py <android_ip>
+    """
     st.set_page_config('File Sync Pro')
     cli.run(main)
