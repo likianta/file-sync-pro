@@ -10,3 +10,4 @@ __pycache__/
 dist/
 
 !**/.gitkeep
+!/data/snapshots/readme.md

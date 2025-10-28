@@ -9,7 +9,7 @@ import hashlib
 import json
 import typing as t
 from collections import defaultdict
-from lk_utils import fs as _fs
+from lk_utils import fs as lkfs
 from lk_utils import timestamp
 from time import time
 from .filesys import AirFileSystem
@@ -62,9 +62,9 @@ class Snapshot:
                 FtpFileSystem.create_from_url(snapshot_file)
         else:
             self.fs = LocalFileSystem()
-            self.snapshot_file = _fs.abspath(snapshot_file)
+            self.snapshot_file = lkfs.abspath(snapshot_file)
         # print(self.snapshot_file, ':iv')
-        # self.root = _fs.parent(self.snapshot_file)
+        # self.root = lkfs.parent(self.snapshot_file)
     
     def load_snapshot(self, _absroot: bool = True) -> T.SnapshotFull:
         data: T.SnapshotFull
@@ -77,8 +77,8 @@ class Snapshot:
             data['ignores'] = frozenset(x)
         if _absroot:
             if data['root'] in ('.', '..') or data['root'].startswith('../'):
-                data['root'] = _fs.normpath('{}/{}'.format(
-                    _fs.parent(self.snapshot_file), data['root']
+                data['root'] = lkfs.normpath('{}/{}'.format(
+                    lkfs.parent(self.snapshot_file), data['root']
                 ))
         return data
     
@@ -118,7 +118,7 @@ class Snapshot:
         # if so, no need to convert root path from absolute to relative.
         # is_snapshot_inside = (
         #     isinstance(self.fs, LocalFileSystem) and
-        #     self.snapshot_file.startswith(_fs.xpath('../../data/snapshots'))
+        #     self.snapshot_file.startswith(lkfs.xpath('../../data/snapshots'))
         # )
         
         full = {
@@ -149,7 +149,7 @@ class Snapshot:
         ).hexdigest()
     
     def _prefer_relpath(self, target: T.Path) -> t.Optional[T.Path]:
-        relpath = _fs.relpath(target, _fs.parent(self.snapshot_file))
+        relpath = lkfs.relpath(target, lkfs.parent(self.snapshot_file))
         if relpath.count('../') < 3:
             return relpath
         else:
@@ -181,19 +181,19 @@ def create_snapshot(snap_file: T.Path, source_root: str = None) -> None:
             snap_inside = snap.snapshot_file.startswith(source_root + '/')
         else:
             fs1 = fs0
-            source_root = _fs.abspath(source_root)
+            source_root = lkfs.abspath(source_root)
             snap_inside = snap.snapshot_file.startswith(source_root + '/')
     else:
         fs1 = fs0
-        source_root = _fs.parent(snap.snapshot_file)
+        source_root = lkfs.parent(snap.snapshot_file)
         snap_inside = True
     
     data = {}
-    for f, t in fs1.findall_files(source_root):
-        print(':i', _fs.relpath(f, source_root))
-        data[f.removeprefix(source_root + '/')] = t
+    for r, t in sorted(fs1.findall_files(source_root)):
+        print(':i', r)
+        data[r] = t
     if snap_inside:
-        key = _fs.relpath(snap.snapshot_file, source_root)
+        key = lkfs.relpath(snap.snapshot_file, source_root)
         print('pop self from snap data', key, ':v')
         data.pop(key, None)
     
@@ -211,10 +211,10 @@ def update_snapshot(snap_file: T.Path, subfolder: str = None) -> Snapshot:
     
     data = {}
     for f, t in snap.fs.findall_files(subfolder or src_root):
-        print(':i', _fs.relpath(f, src_root))
+        print(':i', lkfs.relpath(f, src_root))
         data[f.removeprefix(src_root + '/')] = t
     if snap.snapshot_file.startswith(src_root + '/'):
-        key = _fs.relpath(snap.snapshot_file, src_root)
+        key = lkfs.relpath(snap.snapshot_file, src_root)
         if full_update or key in data:
             print('pop self from snap data', key, ':v')
             data.pop(key)
@@ -222,7 +222,7 @@ def update_snapshot(snap_file: T.Path, subfolder: str = None) -> Snapshot:
     if full_update:
         snap.update_snapshot(data)
     else:
-        snap.partial_update_snapshot(data, _fs.relpath(subfolder, src_root))
+        snap.partial_update_snapshot(data, lkfs.relpath(subfolder, src_root))
     
     return snap
     
@@ -526,33 +526,33 @@ def _apply_changes(
             _created_dirs_b.add(dirpath)
     
     _conflicts_dir = 'data/conflicts/{}'.format(timestamp('ymd_hns'))
-    _fs.make_dir(_conflicts_dir)
+    lkfs.make_dir(_conflicts_dir)
     
     def backup_conflict_file_a(file: T.Path) -> None:
         file_i = file
-        m, n, o = _fs.split(file_i, 3)
+        m, n, o = lkfs.split(file_i, 3)
         file_o = '{}/{}.a.{}'.format(_conflicts_dir, n, o)
-        _fs.copy_file(file_i, file_o, reserve_metadata=True)
+        lkfs.copy_file(file_i, file_o, reserve_metadata=True)
     
     def backup_conflict_file_b(file: T.Path, mtime: int) -> None:
         file_i = file
-        m, n, o = _fs.split(file_i, 3)
+        m, n, o = lkfs.split(file_i, 3)
         file_o = '{}/{}.b.{}'.format(_conflicts_dir, n, o)
         fs_b.download_file(file_i, file_o, mtime)
     
     def delete_file_a(file: T.Path) -> None:
         # file_i = file
-        # m, n, o = _fs.split(file_i, 3)
+        # m, n, o = lkfs.split(file_i, 3)
         # file_o = '{}/{}.a.{}'.format(_deleted_dir, n, o)
-        # _fs.move(file_i, file_o)
+        # lkfs.move(file_i, file_o)
         fs_a.remove(file)
     
     def delete_file_b(file: T.Path) -> None:
         # file_i = file
-        # m, n, o = _fs.split(file_i, 3)
+        # m, n, o = lkfs.split(file_i, 3)
         # file_o = '{}/{}.b.{}'.format(_deleted_dir, n, o)
         # data_i = fs_b.load(file_i)
-        # _fs.dump(data_i, file_o, 'binary')
+        # lkfs.dump(data_i, file_o, 'binary')
         fs_b.remove(file)
     
     def update_file_a2b(relpath: T.Path) -> None:
@@ -615,11 +615,11 @@ def _apply_changes(
         else:
             raise Exception(k, m, t)
     
-    if _fs.empty(_conflicts_dir):
-        _fs.remove_tree(_conflicts_dir)
+    if lkfs.empty(_conflicts_dir):
+        lkfs.remove_tree(_conflicts_dir)
     else:
         print('found {} conflicts, see in {}'.format(
-            len(_fs.find_file_names(_conflicts_dir)),
+            len(lkfs.find_file_names(_conflicts_dir)),
             _conflicts_dir
         ), ':v6')
     

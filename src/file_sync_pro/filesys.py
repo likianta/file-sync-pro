@@ -14,6 +14,7 @@ from uuid import uuid1
 
 class T:
     Path = str
+    RelPath = str
     Time = int
     Ignores = t.FrozenSet[Path]
 
@@ -23,6 +24,11 @@ class BaseFileSystem:
         raise NotImplementedError
     
     def exist(self, path: T.Path) -> bool:
+        raise NotImplementedError
+    
+    def find_changed_files(
+        self, root: T.Path, old_tree
+    ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:
         raise NotImplementedError
     
     def findall_files(
@@ -50,18 +56,44 @@ class LocalFileSystem(BaseFileSystem):
     def exist(self, path: T.Path) -> bool:
         return fs.exist(path)
     
+    def find_changed_files(
+        self,
+        root: T.Path,
+        old_tree: t.Dict[T.RelPath, T.Time]
+    ) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
+        def recurse(dirpath: T.Path) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
+            for d in fs.find_dirs(dirpath):
+                key = fs.relpath(d.path, root) + '/'
+                if key in old_tree:
+                    if d.mtime == old_tree[key]:
+                        # yield from recurse(d.path)
+                        continue
+                yield key, d.mtime
+                
+                for f in fs.find_files(d.path):
+                    key = fs.relpath(f.path, root)
+                    if key in old_tree:
+                        if f.mtime == old_tree[key]:
+                            continue
+                    yield key, f.mtime
+                
+                yield from recurse(d.path)
+        
+        yield from recurse(root)
+        
     def findall_files(
         self, root: T.Path, ignores: T.Ignores = None
-    ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
-        for f in fs.findall_files(root):
-            yield f.path, fs.filetime(f.path)
-        # TODO
-        # for f in fs.find_files(root):
-        #     yield f.path, fs.filetime(f.path)
-        # for d in fs.findall_dirs(root):
-        #     if ignores and d.relpath not in ignores:
-        #         for f in fs.find_files(d.path):
-        #             yield f.path, fs.filetime(f.path)
+    ) -> t.Iterator[t.Tuple[T.RelPath, T.Time]]:
+        def recurse(dirpath):
+            for f in fs.find_files(dirpath):
+                key = fs.relpath(f.path, root)
+                yield key, f.mtime
+            for d in fs.find_dirs(dirpath):
+                key = fs.relpath(d.path, root) + '/'
+                yield key, d.mtime
+                yield from recurse(d.path)
+        
+        yield from recurse(root)
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return fs.load(file, type='binary' if binary else 'auto')
@@ -352,7 +384,7 @@ class FtpFileSystem(AirFileSystem):
         with open(file_i, 'rb') as f:
             self.dump(f.read(), file_o)
         if mtime is None:
-            mtime = fs.filetime(file_i)
+            mtime = t.cast(int, fs.filetime(file_i))
         self._ftp.sendcmd('MFMT {} {}'.format(
             self._time_int_2_str(mtime, -self._time_shift), file_o
         ))

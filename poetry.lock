@@ -763,35 +763,35 @@ reference = "aliyun"
 
 [[package]]
 name = "lk-logger"
-version = "6.0.6"
+version = "6.1.0a2"
 description = "Python print with source map and varnames."
 optional = false
-python-versions = ">=3.8,<4.0"
+python-versions = ">=3.8"
 groups = ["main", "dev"]
 files = [
-    {file = "lk_logger-6.0.6-py3-none-any.whl", hash = "sha256:b3ff112cd8acae488b02f3657ba573733c7871fab28846df29953513de25bae0"},
+    {file = "lk_logger-6.1.0a2-py3-none-any.whl", hash = "sha256:17ca161f903e89bbfc3943ed9b82b2e0f6c945201cb36e694e9f7193176e74a6"},
 ]
 
 [package.dependencies]
-rich = ">=13.8,<14.0"
+rich = ">=13.9.0"
 
 [package.extras]
-ext = ["svg-ultralight (>=0.34.0,<0.35.0) ; python_version >= \"3.9\" and python_version < \"4.0\""]
+ext = ["svg-ultralight"]
 
 [package.source]
 type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
+url = "http://localhost:2131"
+reference = "likianta"
 
 [[package]]
 name = "lk-utils"
-version = "3.4.1"
+version = "3.4.2b0"
 description = "LK Utils is a set of utility wrappers made for data processing."
 optional = false
 python-versions = ">=3.8"
 groups = ["main", "dev"]
 files = [
-    {file = "lk_utils-3.4.1-py3-none-any.whl", hash = "sha256:d03f5899dd2802deb88a230835cef1b333ba09b49ccdcb90e28d98a35ae417b6"},
+    {file = "lk_utils-3.4.2b0-py3-none-any.whl", hash = "sha256:315efc57f1754fc8e53e0fee32d465287617a3b7c4c48bccdd1daad8016673b0"},
 ]
 
 [package.dependencies]
@@ -2570,4 +2570,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "630f61392ce8dc8535fb8ce4f35f66d7236bcaa3e7f0528aec147234f1bde54c"
+content-hash = "dbb33404b2db2aed9b336e6382d7decdded286be056482615edba7bbf187d582"
