@@ -106,6 +106,11 @@ class LocalFileSystem(BaseFileSystem):
         if not fs.exist(dirpath):
             fs.make_dirs(dirpath)
     
+    # noinspection PyMethodMayBeStatic
+    def modify_mtime(self, path: T.Path, mtime: int) -> None:
+        atime = os.path.getatime(path)
+        os.utime(path, (atime, mtime))
+    
     def remove(self, file: T.Path) -> None:
         fs.remove_file(file)
 
@@ -124,6 +129,7 @@ class AirFileSystem(BaseFileSystem):
     # --- pc ---
     strun 2163 src/file_sync_pro/ui.py
     """
+    _fs: LocalFileSystem
     
     @classmethod
     def create_from_url(cls, url: str) -> t.Tuple['AirFileSystem', T.Path]:
@@ -143,7 +149,7 @@ class AirFileSystem(BaseFileSystem):
         air.config(host, port, verbose=True)
         air.connect()
         self.url = f'air://{host}:{port}'
-        self._fs = air.delegate(LocalFileSystem)
+        self._fs = t.cast(LocalFileSystem, air.delegate(LocalFileSystem))
     
     # -------------------------------------------------------------------------
     # overrides
@@ -168,6 +174,9 @@ class AirFileSystem(BaseFileSystem):
     def make_dirs(self, dirpath: T.Path) -> None:
         if not self._fs.exist(dirpath):
             self._fs.make_dirs(dirpath)
+    
+    def modify_mtime(self, path: T.Path, mtime: int) -> None:
+        self._fs.modify_mtime(path, mtime)
     
     def remove(self, file: T.Path) -> None:
         self._fs.remove(file)
