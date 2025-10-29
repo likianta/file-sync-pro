@@ -11,41 +11,32 @@ from . import filesys
 from . import snapshot
 from .init import clone_project
 
-_data = sc.session.get_state(version=18)
+_state = sc.get_state(version=18)
 
 
-def _init_session(remote_ip: str) -> dict:
+def _init_state(remote_ip: str) -> dict:
     air.config(remote_ip, 2160)
-    snap_left = snapshot.Snapshot('data/snapshots/file_sync_pro.json')
+    root_i = 'data/snapshots/likianta-rider-r2'
+    root_o = 'data/snapshots/likianta-xiaomi-12s-pro'
+    snap_left = snapshot.Snapshot(f'{root_i}/file-sync-project.json')
     setattr(snap_left, 'data', None)
     return {
         'records'   : {
             'file-sync-pro': (
-                'C:/Likianta/workspace/dev.master.likianta/file-sync-pro/data'
-                '/snapshots/file_sync_pro.json',
-                'air://{}:2160/storage/emulated/0/Likianta/work'
-                '/file-sync-pro/data/snapshots/file_sync_pro_(android).json'
-                .format(remote_ip)
+                f'{root_i}/file-sync-project.json',
+                f'{root_o}/file-sync-project.json',
             ),
             'gitbook'      : (
-                'C:/Likianta/documents/gitbook/source-docs/snapshot.json',
-                'air://{}:2160/storage/emulated/0/Likianta/work'
-                '/file-sync-pro/data/snapshots/gitbook_(android).json'
-                .format(remote_ip)
+                f'{root_i}/gitbook-source-docs.json',
+                f'{root_o}/gitbook-source-docs.json',
             ),
             'photolens'    : (
-                'C:/Likianta/workspace/dev.master.likianta/file-sync-pro/data'
-                '/snapshots/photolens.json',
-                'air://{}:2160/storage/emulated/0/Likianta/work'
-                '/file-sync-pro/data/snapshots/photolens.json'
-                .format(remote_ip)
+                f'{root_i}/photolens.json',
+                f'{root_o}/photolens.json',
             ),
             'pictures'     : (
-                'C:/Likianta/workspace/dev.master.likianta/file-sync-pro/data'
-                '/snapshots/pictures_(pc).json',
-                'air://{}:2160/storage/emulated/0/Likianta/work'
-                '/file-sync-pro/data/snapshots/pictures_(android).json'
-                .format(remote_ip)
+                f'{root_i}/normalized-pictures.json',
+                f'{root_o}/normalized-pictures.json',
             ),
             'new...'       : ()
         },
@@ -63,8 +54,8 @@ def main(remote_ip: str) -> None:
             - 192.168.8.101
             - ...
     """
-    if not _data:
-        _data.update(_init_session(remote_ip))
+    if not _state:
+        _state.update(_init_state(remote_ip))
     
     if st.button('Reconnect to remote'):
         # air.connect(remote_ip, 2160)
@@ -72,7 +63,7 @@ def main(remote_ip: str) -> None:
     # if not air.default_client.is_opened:
     #     return
     
-    records = _data['records']
+    records = _state['records']
     key = sc.radio('Host and remote paths', records.keys(), horizontal=False)
     if key == 'new...':
         left_path, right_path = '', ''
@@ -90,7 +81,7 @@ def main(remote_ip: str) -> None:
     left_path = _input_left_path(left_path)
     right_path = _input_right_path(right_path, left_path)
     
-    snap_left: snapshot.Snapshot = _data['snap_left']
+    snap_left: snapshot.Snapshot = _state['snap_left']
     if left_path:
         if snap_left.snapshot_file != left_path:
             snap_left.snapshot_file = left_path
@@ -98,7 +89,7 @@ def main(remote_ip: str) -> None:
     else:
         return
     
-    snap_right: t.Optional[snapshot.Snapshot] = _data['snap_right']
+    snap_right: t.Optional[snapshot.Snapshot] = _state['snap_right']
     if right_path.startswith('air://'):
         if snap_right:
             assert right_path.startswith(snap_right.fs.url)
@@ -108,7 +99,8 @@ def main(remote_ip: str) -> None:
                 snap_right.snapshot_file = x
                 _preload_snap_data(snap_right)
         else:
-            snap_right = _data['snap_right'] = snapshot.Snapshot(right_path)
+            snap_right = _state['snap_right'] = snapshot.Snapshot(right_path)
+            assert snap_right is not None
             _preload_snap_data(snap_right)
         # right_path = snap_right.snapshot_file
     
@@ -131,10 +123,10 @@ def main(remote_ip: str) -> None:
     if st.button('Merge'):
         snapshot.merge_snapshot(left_path, right_path, dry_run, no_doubt)
         
-    if _data['snap_right']:
+    if _state['snap_right']:
         if st.button('Close right connection'):
             air.default_client.close()
-            _data['snap_right'] = None
+            _state['snap_right'] = None
 
 
 # -------------------------------------------------------------------------
@@ -173,7 +165,7 @@ def main(remote_ip: str) -> None:
     
     
 def _create_snapshot(side: t.Literal['left', 'right']):
-    snap = _data[f'snap_{side}']
+    snap = _state[f'snap_{side}']
     with st.popover(
         f'Create {side}',
         # use_container_width=True,
@@ -201,6 +193,7 @@ def _create_snapshot(side: t.Literal['left', 'right']):
             if isinstance(snap.fs, filesys.LocalFileSystem):
                 snapshot.create_snapshot(snap.snapshot_file, root)
             else:
+                # noinspection PyTypeChecker
                 with st.spinner('This may take a while, please wait...'):
                     snapshot.create_snapshot(
                         snap.fs.url + snap.snapshot_file, root
@@ -208,8 +201,8 @@ def _create_snapshot(side: t.Literal['left', 'right']):
             _preload_snap_data(snap)
         if side == 'right' and snap.data is None:
             if st.button('Clone from left', disabled=root == placeholder):
-                snap_left = _data['snap_left']
-                snap_right = _data['snap_right']
+                snap_left = _state['snap_left']
+                snap_right = _state['snap_right']
                 clone_project(
                     snap_left.snapshot_file,
                     snap_right.fs.url + snap_right.snapshot_file,
