@@ -17,6 +17,7 @@ class T:
     RelPath = str
     Time = int
     Ignores = t.FrozenSet[Path]
+    Tree = t.Dict[RelPath, Time]
 
 
 class BaseFileSystem:
@@ -26,10 +27,10 @@ class BaseFileSystem:
     def exist(self, path: T.Path) -> bool:
         raise NotImplementedError
     
-    def find_changed_files(
-        self, root: T.Path, old_tree
-    ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:
-        raise NotImplementedError
+    # def find_changed_files(
+    #     self, root: T.Path, old_tree
+    # ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:
+    #     raise NotImplementedError
     
     def findall_files(
         self, root: T.Path, ignores: T.Ignores = None,
@@ -59,33 +60,31 @@ class LocalFileSystem(BaseFileSystem):
     def exist(self, path: T.Path) -> bool:
         return fs.exist(path)
     
-    def find_changed_files(
-        self,
-        root: T.Path,
-        old_tree: t.Dict[T.RelPath, T.Time]
-    ) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
-        def recurse(dirpath: T.Path) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
-            for d in fs.find_dirs(dirpath):
-                key = fs.relpath(d.path, root) + '/'
-                if key in old_tree:
-                    if d.mtime == old_tree[key]:
-                        # yield from recurse(d.path)
-                        continue
-                yield key, d.mtime
-                
-                for f in fs.find_files(d.path):
-                    key = fs.relpath(f.path, root)
-                    if key in old_tree:
-                        if f.mtime == old_tree[key]:
-                            continue
-                    yield key, f.mtime
-                
-                yield from recurse(d.path)
-        
-        yield from recurse(root)
+    # def find_changed_files(
+    #     self, root: T.Path, old_tree: T.Tree
+    # ) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
+    #     def recurse(dirpath: T.Path) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
+    #         for d in fs.find_dirs(dirpath):
+    #             key = fs.relpath(d.path, root) + '/'
+    #             if key in old_tree:
+    #                 if d.mtime == old_tree[key]:
+    #                     # yield from recurse(d.path)
+    #                     continue
+    #             yield key, d.mtime
+    #
+    #             for f in fs.find_files(d.path):
+    #                 key = fs.relpath(f.path, root)
+    #                 if key in old_tree:
+    #                     if f.mtime == old_tree[key]:
+    #                         continue
+    #                 yield key, f.mtime
+    #
+    #             yield from recurse(d.path)
+    #
+    #     yield from recurse(root)
         
     def findall_files(
-        self, root: T.Path, ignores: T.Ignores = None
+        self, root: T.Path, history: T.Tree = None, ignores: T.Ignores = None
     ) -> t.Iterator[t.Tuple[T.RelPath, T.Time]]:
         def recurse(dirpath):
             for f in fs.find_files(dirpath):
@@ -93,9 +92,16 @@ class LocalFileSystem(BaseFileSystem):
                 yield key, f.mtime
             for d in fs.find_dirs(dirpath):
                 key = fs.relpath(d.path, root) + '/'
+                if history and key in history:
+                    if d.mtime == history[key]:
+                        yield from (
+                            (a, b)
+                            for a, b in history.items()
+                            if a.startswith(key)
+                        )
+                        continue
                 yield key, d.mtime
                 yield from recurse(d.path)
-        
         yield from recurse(root)
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
@@ -169,9 +175,9 @@ class AirFileSystem(BaseFileSystem):
         return self._fs.exist(path)
     
     def findall_files(
-        self, root: T.Path, ignores: T.Ignores = None
+        self, root: T.Path, history: T.Tree = None, ignores: T.Ignores = None
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
-        yield from self._fs.findall_files(root, ignores)
+        yield from self._fs.findall_files(root, history, ignores)
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return self._fs.load(file, binary=binary)

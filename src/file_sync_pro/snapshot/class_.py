@@ -48,7 +48,9 @@ class T:
     
     SnapshotFull = t.TypedDict('SnapshotFull', {
         'root'   : Path,
-        'ignores': t.FrozenSet[Path],
+        'ignores': t.Union[t.List[Path], t.FrozenSet[Path]],
+        #   the list type is for saving to ".json" file. frozenset is for
+        #   speeding runtime.
         'base'   : SnapshotItem,
         'current': SnapshotItem,
     })
@@ -56,76 +58,79 @@ class T:
 
 class Snapshot:
     fs: T.FileSystem
+    is_root_remote: bool
+    is_snapshot_inside: bool
+    is_snapshot_remote: bool
     snapshot_file: T.AbsPath
     source_root: T.AbsPath
-    _is_snapshot_file_remote: bool
     
     def __init__(self, snapshot_file: T.AnyPath) -> None:
         assert snapshot_file.endswith('.json')
         if snapshot_file.startswith(('air://', 'ftp://')):
-            self._is_snapshot_file_remote = True
+            self.is_snapshot_remote = True
             prefix = snapshot_file.split('://', 1)[0]
             syscls = {'air': AirFileSystem, 'ftp': FtpFileSystem}[prefix]
             self.fs, self.snapshot_file = syscls.create_from_url(snapshot_file)
             if self.fs.exist(self.snapshot_file):
                 self.source_root = self.load_snapshot()['root']
+                self.is_root_remote = False
+            self.is_snapshot_inside = \
+                self.snapshot_file.startswith(self.source_root)
         else:
-            self._is_snapshot_file_remote = False
+            self.is_snapshot_remote = False
             if lkfs.exist(snapshot_file):
                 root = lkfs.load(snapshot_file)['root']
                 if root.startswith(('air://', 'ftp://')):
+                    self.is_root_remote = True
                     prefix = root.split('://', 1)[0]
                     syscls = \
                         {'air': AirFileSystem, 'ftp': FtpFileSystem}[prefix]
                     self.fs, self.source_root = syscls.create_from_url(root)
+                    self.snapshot_file = lkfs.abspath(snapshot_file)
+                    self.is_snapshot_inside = False
                 else:
+                    self.is_root_remote = False
                     self.fs, self.source_root = LocalFileSystem(), root
+                    self.snapshot_file = lkfs.abspath(snapshot_file)
+                    self.is_snapshot_inside = \
+                        self.snapshot_file.startswith(self.source_root)
             else:
                 self.fs = LocalFileSystem()
-            self.snapshot_file = lkfs.abspath(snapshot_file)
-        # note: `self.source_root` may be undefined if snap file not exists.
+                self.snapshot_file = lkfs.abspath(snapshot_file)
+                self.is_snapshot_inside = \
+                    self.snapshot_file.startswith(self.source_root)
+        # note: `self.source_root`, `self.is_root_remote` may be undefined if
+        # snap file not exists.
     
-    def load_snapshot(self, _absroot: bool = True) -> T.SnapshotFull:
+    def load_snapshot(self, _raw_format: bool = False) -> T.SnapshotFull:
         data: T.SnapshotFull
-        if self._is_snapshot_file_remote:
+        if self.is_snapshot_remote:
             data = json.loads(self.fs.load(self.snapshot_file))
         else:
             data = lkfs.load(self.snapshot_file)
-            if data['root'].startswith(('air://', 'ftp://')):
-                data['root'] = '/' + data['root'].split('/', 3)[-1]
-        if _absroot:
+            if not _raw_format:
+                if data['root'].startswith(('air://', 'ftp://')):
+                    data['root'] = '/' + data['root'].split('/', 3)[-1]
+        if not _raw_format:
             if data['root'] in ('.', '..') or data['root'].startswith('../'):
                 data['root'] = lkfs.normpath('{}/{}'.format(
                     lkfs.parent(self.snapshot_file), data['root']
                 ))
-        if x := data.get('ignores'):
-            data['ignores'] = frozenset(x)
+            if data.get('ignores'):
+                data['ignores'] = frozenset(data['ignores'])
         return data
     
     def update_snapshot(self, data: T.SnapshotData) -> None:
-        full = self.load_snapshot(_absroot=False)
-        full['current']['version'] = '{}-{}'.format(
+        full = self.load_snapshot(_raw_format=True)
+        ver = '{}-{}'.format(
             self._hash_snapshot(data), int(time())
         )
-        full['current']['data'] = data
-        self.fs.dump(full, self.snapshot_file)
-    
-    def partial_update_snapshot(
-        self, data: T.SnapshotData, relpath: str
-    ) -> None:
-        full = self.load_snapshot(_absroot=False)
-        
-        temp = {}
-        for k, v in full['current']['data'].items():
-            if not k.startswith(relpath):
-                temp[k] = v
-        temp.update(data)
-        
-        full['current']['data'] = temp
-        full['current']['version'] = '{}-{}'.format(
-            self._hash_snapshot(temp), int(time())
-        )
-        self.fs.dump(full, self.snapshot_file)
+        if full['current']['version'] == ver:
+            print(':p', 'data no change!')
+        else:
+            full['current']['version'] = ver
+            full['current']['data'] = data
+            self.save_snapshot(full)
     
     def rebuild_snapshot(self, data: T.SnapshotData, root: T.AbsPath) -> None:
         """
@@ -147,7 +152,7 @@ class Snapshot:
                 root = '{}/{}'.format(self.fs.url, root[1:])
                 print(root, ':p')
         
-        full = {
+        full: T.SnapshotFull = {
             # 'root'   :
             #     # root if root.startswith(('air://', 'ftp://')) else
             #     root if is_snapshot_inside else
@@ -162,10 +167,13 @@ class Snapshot:
             }),
             'current': x
         }
-        if self._is_snapshot_file_remote:
-            self.fs.dump(full, self.snapshot_file)
+        self.save_snapshot(full)
+    
+    def save_snapshot(self, full_data: T.SnapshotFull):
+        if self.is_snapshot_remote:
+            self.fs.dump(full_data, self.snapshot_file)
         else:
-            lkfs.dump(full, self.snapshot_file)
+            lkfs.dump(full_data, self.snapshot_file)
     
     @staticmethod
     def _hash_snapshot(data: T.SnapshotData) -> str:

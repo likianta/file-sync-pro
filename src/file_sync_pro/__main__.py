@@ -8,16 +8,7 @@ from .init import clone_project
 
 cli.add_cmd(clone_project)
 cli.add_cmd(snapshot.create_snapshot)
-# cli.add_cmd(snapshot.update_snapshot)
-
-
-@cli
-def update_snapshot(snap_file: str, subfolder: str = None) -> None:
-    snap = snapshot.update_snapshot(snap_file, subfolder)
-    if isinstance(snap.fs, FtpFileSystem):  # TEST
-        snap.fs.download_file(snap.snapshot_file, 'data/remote_snapshot.json')
-
-
+cli.add_cmd(snapshot.update_snapshot)
 cli.add_cmd(snapshot.sync_snapshot)
 cli.add_cmd(snapshot.merge_snapshot)
 
@@ -88,6 +79,12 @@ if __name__ == '__main__':
         air://172.20.128.101:2160/storage/emulated/0/Likianta/documents \
         /gitbook/source-docs
     
+    # update snapshot
+    pox -m file_sync_pro update_snapshot \
+        data/snapshots/likianta-rider-r2/gitbook-source-docs.json
+    pox -m file_sync_pro update_snapshot \
+        data/snapshots/likianta-xiaomi-12s-pro/gitbook-source-docs.json
+    
     # sync snapshot
     pox -m file_sync_pro sync_snapshot -h
     # dry run
@@ -96,22 +93,4 @@ if __name__ == '__main__':
         data/snapshots/likianta-xiaomi-12s-pro/gitbook-source-docs.json -d
     ...
     """
-    # pox -m file_sync_pro clone_project
-    #   C:/Likianta/documents/gitbook/source-docs
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
-    
-    # pox -m file_sync_pro update_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
-    # pox -m file_sync_pro update_snapshot
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
-    #   /snapshot.json
-    
-    # pox -m file_sync_pro sync_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
-    #   /snapshot.json -d
-    # pox -m file_sync_pro sync_snapshot
-    #   C:/Likianta/documents/gitbook/source-docs/snapshot.json
-    #   ftp://172.20.128.123:2024/Likianta/documents/gitbook/source-docs
-    #   /snapshot.json
     cli.run()

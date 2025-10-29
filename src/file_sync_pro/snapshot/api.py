@@ -50,36 +50,25 @@ def create_snapshot(snap_file: T.AnyPath, source_root: str = None) -> None:
     snap.rebuild_snapshot(data, root=root)
 
 
-def update_snapshot(snap_file: T.AnyPath, subfolder: str = None) -> Snapshot:
+def update_snapshot(snap_file: T.AnyPath) -> Snapshot:
     snap = Snapshot(snap_file)
     snap_data = snap.load_snapshot()
     src_root = snap_data['root']
     
-    full_update = bool(not subfolder)
-    if subfolder:
-        assert subfolder.startswith(src_root) and subfolder != src_root
-    
     data = {}
-    for r, t in snap.fs.find_changed_files(
-        subfolder or src_root, snap_data['base']['data']
+    for r, t in snap.fs.findall_files(
+        src_root, history=snap_data['base']['data']
     ):
-        print(':i', r)  # FIXME: `subfolder` makes wrong relpaths
+        print(':i', r)
         data[r] = t
-    
-    for f, t in snap.fs.findall_files(subfolder or src_root):
-        print(':i', lkfs.relpath(f, src_root))
-        data[f.removeprefix(src_root + '/')] = t
-    if snap.snapshot_file.startswith(src_root + '/'):
+        
+    if snap.is_snapshot_inside:
         key = lkfs.relpath(snap.snapshot_file, src_root)
-        if full_update or key in data:
+        if key in data:
             print('pop self from snap data', key, ':v')
             data.pop(key)
     
-    if full_update:
-        snap.update_snapshot(data)
-    else:
-        snap.partial_update_snapshot(data, lkfs.relpath(subfolder, src_root))
-    
+    snap.update_snapshot(data)
     return snap
 
 

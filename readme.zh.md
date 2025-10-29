@@ -92,6 +92,36 @@ strun 2163 src/file_sync_pro/ui.py
 
 ## Android
 
+### 工作原理
+
+Android 需要安装 Termux, 并在 Termux 中安装 Python 环境 (要求 Python 3.12 及以上版本).
+
+使用 Python 以及待会儿 pip 安装好的 `file-sync-pro` 包, 才能在 Android 端开启 air server 服务, 这样 PC 端会和 air server 沟通, 完成所有 io 操作.
+
+### 安装与环境配置
+
+#### 首次安装 `file-sync-pro`
+
+...
+
+#### 升级 `file-sync-pro`
+
+如果只升级 `file-sync-pro`, 不升级它的依赖, 下面是最快的方法:
+
+```sh
+python -m pip install http://<pc_host>:<dufs_port>/<file_sync_pro_dist>/<whl_file> --no-deps
+```
+
+如果还需要升级包括它的依赖:
+
+```sh
+python -m pip install -r http://<pc_host>:<dufs_port>/<file_sync_project>/requirements.lock
+```
+
+...
+
+### 步骤
+
 1. 打开 Termux, 开启 SSH
 
 2. PC 端连接 SSH:
