@@ -12,50 +12,69 @@ class LocalFileSystem(BaseFileSystem):
     def exist(self, path: T.Path) -> bool:
         return fs.exist(path)
     
-    # def find_changed_files(
-    #     self, root: T.Path, old_tree: T.Tree
-    # ) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
-    #     def recurse(dirpath: T.Path) -> t.Iterable[t.Tuple[T.RelPath, T.Time]]:
-    #         for d in fs.find_dirs(dirpath):
-    #             key = fs.relpath(d.path, root) + '/'
-    #             if key in old_tree:
-    #                 if d.mtime == old_tree[key]:
-    #                     # yield from recurse(d.path)
-    #                     continue
-    #             yield key, d.mtime
-    #
-    #             for f in fs.find_files(d.path):
-    #                 key = fs.relpath(f.path, root)
-    #                 if key in old_tree:
-    #                     if f.mtime == old_tree[key]:
-    #                         continue
-    #                 yield key, f.mtime
-    #
-    #             yield from recurse(d.path)
-    #
-    #     yield from recurse(root)
-    
     def findall_files(
         self, root: T.Path, history: T.Tree = None, ignores: T.Ignores = None
     ) -> t.Iterator[t.Tuple[T.RelPath, T.Time]]:
-        def recurse(dirpath):
+        total_count = 0
+        reuse_count = 0
+        
+        if history:
+            history_dir_2_files = {'./': []}
+            #   {reldir: [(filename, filemtime), ...], ...}
+            for k, v in history.items():
+                if k.endswith('/'):
+                    history_dir_2_files[k] = []
+                else:
+                    if '/' in k:
+                        a, b = k.rsplit('/', 1)
+                    else:
+                        a, b = '.', k
+                    history_dir_2_files[a + '/'].append((b, v))
+        else:
+            history_dir_2_files = None
+        
+        def submit_files(dirpath: T.Path) -> t.Iterator[
+            t.Tuple[T.RelPath, T.Time]
+        ]:
+            nonlocal total_count
             for f in fs.find_files(dirpath):
                 key = fs.relpath(f.path, root)
+                print(key, ':pi3')
                 yield key, f.mtime
-            for d in fs.find_dirs(dirpath):
-                key = fs.relpath(d.path, root) + '/'
-                if history and key in history:
-                    if d.mtime == history[key]:
-                        yield from (
-                            (a, b)
-                            for a, b in history.items()
-                            if a.startswith(key)
-                        )
-                        continue
-                yield key, d.mtime
-                yield from recurse(d.path)
+                total_count += 1
         
-        yield from recurse(root)
+        # yield from submit_files(root)
+        for f in fs.find_files(root):
+            key = f.relpath
+            yield key, f.mtime
+            total_count += 1
+            if history and key in history and f.mtime == history[key]:
+                reuse_count += 1
+            else:
+                print(':i3', key)
+        for d in fs.findall_dirs(root):
+            key = d.relpath + '/'
+            yield key, d.mtime
+            total_count += 1
+            if history and key in history and d.mtime == history[key]:
+                reuse_count += 1
+                for name, time in history_dir_2_files[key]:
+                    fkey = key + name
+                    yield fkey, time
+                    total_count += 1
+                    reuse_count += 1
+                # print(':i3v', 'skip printing {} reused files'.format(
+                #     len(history_dir_2_files[key])
+                # ))
+                continue
+            else:
+                print(':i3', key)
+            yield from submit_files(d.path)
+        
+        if history:
+            print(':v2p', 'reuse {} of {} files ({:.2%})'.format(
+                reuse_count, total_count, reuse_count / total_count
+            ))
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return fs.load(file, type='binary' if binary else 'auto')

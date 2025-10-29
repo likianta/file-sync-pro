@@ -33,10 +33,7 @@ def create_snapshot(snap_file: T.AnyPath, source_root: str = None) -> None:
         source_root = lkfs.parent(snap.snapshot_file)
         snap_inside = True
     
-    data = {}
-    for r, t in sorted(fs1.findall_files(source_root)):
-        print(':i', r)
-        data[r] = t
+    data = dict(fs1.findall_files(source_root))
     if snap_inside:
         key = lkfs.relpath(snap.snapshot_file, source_root)
         print('pop self from snap data', key, ':v')
@@ -55,19 +52,14 @@ def update_snapshot(snap_file: T.AnyPath) -> Snapshot:
     snap_data = snap.load_snapshot()
     src_root = snap_data['root']
     
-    data = {}
-    for r, t in snap.fs.findall_files(
+    data = dict(snap.fs.findall_files(
         src_root, history=snap_data['base']['data']
-    ):
-        print(':i', r)
-        data[r] = t
-        
+    ))
     if snap.is_snapshot_inside:
         key = lkfs.relpath(snap.snapshot_file, src_root)
         if key in data:
             print('pop self from snap data', key, ':v')
             data.pop(key)
-    
     snap.update_snapshot(data)
     return snap
 
@@ -235,6 +227,7 @@ def merge_snapshot(
     
     if not dry_run:
         print(':v3', 'lock snapshot')
+        assert snap_data_new is not None
         snap_a.rebuild_snapshot(snap_data_new, snap_alldata_a['root'])
         snap_b.rebuild_snapshot(snap_data_new, snap_alldata_b['root'])
 
@@ -441,16 +434,17 @@ def _apply_changes(
     
     for k, m, t in changes:
         # isdir = k.endswith('/')
-        if k.endswith('/') and '=' in m:
-            continue
+        # if k.endswith('/') and '=' in m:
+        #     continue
         
         # resolve conflict
         if m.endswith('?'):
             assert m in ('=>?', '<=?')
-            if m == '=>?':
-                backup_conflict_file_b('{}/{}'.format(root_b, k), t)
-            else:
-                backup_conflict_file_a('{}/{}'.format(root_a, k))
+            if not k.endswith('/'):
+                if m == '=>?':
+                    backup_conflict_file_b('{}/{}'.format(root_b, k), t)
+                else:
+                    backup_conflict_file_a('{}/{}'.format(root_a, k))
             m = m[:-1]
         # assert '?' not in m
         
@@ -486,7 +480,8 @@ def _apply_changes(
                 delete_dir_a('{}/{}'.format(root_a, k))
                 snap_new.pop(k)
             else:
-                raise Exception(k, m, t)
+                snap_new[k] = t
+                # raise Exception(k, m, t)
         else:
             if m in ('+>', '=>'):
                 make_dirs_b('{}/{}'.format(root_b, k))

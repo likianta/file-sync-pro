@@ -34,9 +34,6 @@ def force_sync_snapshot(snapshot_file_a: str, snapshot_file_b: str) -> None:
     fs_b.upload_file(snapshot_file_a, snapshot_file_b)
 
 
-cli.add_cmd(filesys.send_file_to_remote)
-
-
 @cli
 def run_air_server() -> None:
     import lk_logger
