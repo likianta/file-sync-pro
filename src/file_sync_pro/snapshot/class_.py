@@ -97,6 +97,7 @@ class Snapshot:
             else:
                 self.fs = LocalFileSystem()
                 self.snapshot_file = lkfs.abspath(snapshot_file)
+                self.source_root = lkfs.parent(self.snapshot_file)
                 self.is_snapshot_inside = \
                     self.snapshot_file.startswith(self.source_root)
         # note: `self.source_root`, `self.is_root_remote` may be undefined if

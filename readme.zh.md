@@ -76,7 +76,19 @@ pip install file-sync-pro  # TODO
 
 ## 使用
 
-### PC
+本项目支持命令行用 UI 两种用法. 先介绍 UI 的用法:
+
+### Web UI
+
+```python
+strun 2163 src/file_sync_pro/ui.py
+```
+
+...
+
+## 命令行用法
+
+#### PC
 
 ...
 
@@ -157,6 +169,26 @@ pox -m file_sync_pro sync_snapshot \
 ```
 
 ## 问题解答
+
+### 修复错误的时间戳
+
+由于一些历史原因或者其他未知因素导致, 在同步时, 我们可能会看到控制台有黄色的文字打印, 警告称 A 和 B 在 某个/某些 文件 (夹) 上存在时间戳逻辑不合理的问题.
+
+为了解决这个问题, 我们要使用编程的方式修改它们的时间戳一致.
+
+```sh
+# get help
+python -m file_sync_pro.doctor -h
+# dry run
+python -m file_sync_pro.doctor <snapfile_a> <snapfile_b> -d
+# sync
+python -m file_sync_pro.doctor <snapfile_a> <snapfile_b>
+```
+
+注意事项:
+
+- 在 dry-run 模式下, 如果遇到红色的项, 这意味着该项所对应的文件内容存在差异. 你需要先使内容一致, 才能继续修复时间戳, 否则非 dry-run 模式下运行到这里会报错.
+- 在非 dry-run 模式下运行完了以后, 使用 `update_snapshot` 来刷新 A, B 的快照文件. 建议刷新后再运行一次 dry-run 模式, 正常来说, 这时候就看不到异常的时间戳了.
 
 ### 局域网中的传输速度非常慢
 
