@@ -1,6 +1,6 @@
 import airmise as air
+import lk_utils
 from argsense import cli
-from lk_utils import fs as _fs
 from . import filesys
 from . import snapshot
 from .filesys import FtpFileSystem
@@ -10,14 +10,14 @@ cli.add_cmd(clone_project)
 cli.add_cmd(snapshot.create_snapshot)
 cli.add_cmd(snapshot.update_snapshot)
 cli.add_cmd(snapshot.sync_snapshot)
-cli.add_cmd(snapshot.merge_snapshot)
+cli.add_cmd(snapshot.rebuild_snapshot)
 
 
 @cli
 def fetch_remote_file(path_i: str, path_o: str = None) -> None:
     fs, path_i = filesys.AirFileSystem.create_from_url(path_i)
     if path_o is None:
-        path_o = 'data/downloads/{}'.format(_fs.basename(path_i))
+        path_o = 'data/downloads/{}'.format(lk_utils.fs.basename(path_i))
     fs.download_file(path_i, path_o)
     print('see "{}"'.format(path_o))
 
@@ -37,17 +37,10 @@ def force_sync_snapshot(snapshot_file_a: str, snapshot_file_b: str) -> None:
 @cli
 def run_air_server() -> None:
     import lk_logger
+    import os
     lk_logger.update(path_style='filename')
-    
-    # from lk_utils import run_cmd_args
-    # run_cmd_args(
-    #     'dufs', '-A', '-p', '2161', '/storage/emulated/0/Likianta',
-    #     blocking=False,
-    #     # verbose=True,
-    # )
-    
     air.register(filesys.LocalFileSystem)
-    air.run_server({'fs': _fs}, port=2160, verbose=True)
+    air.run_server({'fs': lk_utils.fs, 'os': os}, port=2160, verbose=True)
 
 
 if __name__ == '__main__':

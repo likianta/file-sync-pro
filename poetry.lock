@@ -763,13 +763,13 @@ reference = "aliyun"
 
 [[package]]
 name = "lk-logger"
-version = "6.0.7b0"
+version = "6.0.7"
 description = "Python print with source map and varnames."
 optional = false
 python-versions = ">=3.8"
 groups = ["main", "dev"]
 files = [
-    {file = "lk_logger-6.0.7b0-py3-none-any.whl", hash = "sha256:4d10c73c4decebb83598e692d2b27c0ad9340ec45b2fa4638fee29ddf4f2e518"},
+    {file = "lk_logger-6.0.7-py3-none-any.whl", hash = "sha256:8bbc003240e294849eabea8b29ee3ba3abcdf29459cdbd0625160edb075945a0"},
 ]
 
 [package.dependencies]
@@ -2570,4 +2570,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "87527134760ed5ee7ed7b799c046acd372f4fa3a9c7e625f765c216a1c369cd5"
+content-hash = "f97f640f500bdfac92c6d3230359cead062f2076187eb5b7e4f86ae0ea3740d4"

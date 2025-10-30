@@ -43,8 +43,8 @@ def fix_mtime(
     rows = [('index', 'key', 'mtime_a', '..', 'mtime_b')]
     rowx = 0
     for key in keys_a & keys_b:
-        if dry_run:
-            print(':iv', key)
+        # if dry_run:
+        #     print(':iv', key)
         
         mtime_a = snap_data_a[key]
         mtime_b = snap_data_b[key]

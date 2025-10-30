@@ -1,67 +1,99 @@
+import hashlib
+import json
+import os
 import typing as t
 from collections import defaultdict
-from lk_utils import fs as lkfs
+from lk_utils import fs as fs0
 from lk_utils import timestamp
-from .class_ import Snapshot
-from .class_ import T
-from ..filesys import AirFileSystem
-from ..filesys import FtpFileSystem
-from ..filesys import LocalFileSystem
+from time import time
+from ..filesys2 import FileSystem
+from ..filesys2 import is_local_path
+from ..filesys2.remote import FileSystem as RemoteFileSystem
 
 
-def create_snapshot(snap_file: T.AnyPath, source_root: str = None) -> None:
-    snap = Snapshot(snap_file)
+class T:
+    AbsPath = AnyPath = Path = str
+    #   AbsPath: be noted this can be a local path, or remote path.
+    #       for examples:
+    #           C:/Likianta/documents/gitbook
+    #           /storage/emulated/0/Likianta/documents/gitbook
+    #       the remote abspath must start with '/'.
+    #   AnyPath: abspaths, relpaths, regular slash separators (/), back
+    #   slashes (\\), 'air://...' paths, 'ftp://...' paths... they are all
+    #   allowed.
+    Key = str  # a relpath
+    Movement = t.Literal['+>', '=>', '->', '<+', '<=', '<-']
+    #   +>  add to right
+    #   =>  overwrite to right
+    #   ->  delete to right
+    #   <+  add to left
+    #   <=  overwrite to left
+    #   <-  delete to left
+    #   ==  no change
+    Time = int
     
-    fs0 = snap.fs
-    # create `fs1`, update `source_root`, create `snap_inside`
-    if source_root:
-        if source_root.startswith('air://'):
-            fs1, x = AirFileSystem.create_from_url(source_root)
-            source_root = x
-            snap_inside = False
-        elif source_root.startswith('ftp://'):
-            fs1, x = FtpFileSystem.create_from_url(source_root)
-            source_root = x
-            assert source_root.startswith('/Likianta')
-            snap_inside = snap.snapshot_file.startswith(source_root + '/')
-        else:
-            fs1 = fs0
-            source_root = lkfs.abspath(source_root)
-            snap_inside = snap.snapshot_file.startswith(source_root + '/')
-    else:
-        fs1 = fs0
-        source_root = lkfs.parent(snap.snapshot_file)
-        snap_inside = True
+    ComposedAction = t.Tuple[Key, Movement, Time]
+    Nodes = t.Dict[Path, int]  # {relpath: modified_time, ...}
     
-    data = dict(fs1.findall_files(source_root))
-    if snap_inside:
-        key = lkfs.relpath(snap.snapshot_file, source_root)
-        print('pop self from snap data', key, ':v')
-        data.pop(key, None)
+    SnapshotItem = t.TypedDict('SnapshotItem', {
+        'version': str,  # `<hash>-<time>`
+        'files'  : Nodes,
+        'dirs'   : Nodes,
+    })
     
-    if isinstance(fs1, (AirFileSystem, FtpFileSystem)):
-        assert source_root.startswith('/')
-        root = '{}/{}'.format(fs1.url, source_root[1:])
-    else:
-        root = source_root
-    snap.rebuild_snapshot(data, root=root)
+    SnapshotFull = t.TypedDict('SnapshotFull', {
+        'root'   : Path,
+        'ignores': t.Union[t.List[Path], t.FrozenSet[Path]],
+        #   the list type is for saving to ".json" file. frozenset is for
+        #   speeding runtime.
+        'base'   : SnapshotItem,
+        'current': SnapshotItem,
+    })
 
 
-def update_snapshot(snap_file: T.AnyPath) -> Snapshot:
-    snap = Snapshot(snap_file)
-    snap_data = snap.load_snapshot()
-    src_root = snap_data['root']
+def create_snapshot(snap_file: T.AnyPath, source_root: str) -> None:
+    """
+    params:
+        snap_file: can be inexistent file. if exists, will be overwritten.
+            usually saved in `data/snapshots/<host>/<name>.json`.
+    """
+    assert is_local_path(snap_file)
+    fs1 = FileSystem(source_root)
+    root = fs1.root
+    del source_root
     
-    data = dict(snap.fs.findall_files(
-        src_root, history=snap_data['base']['data']
-    ))
-    if snap.is_snapshot_inside:
-        key = lkfs.relpath(snap.snapshot_file, src_root)
-        if key in data:
-            print('pop self from snap data', key, ':v')
-            data.pop(key)
-    snap.update_snapshot(data)
-    return snap
+    # files = dict(fs1.findall_files(root))
+    # dirs = dict(fs1.findall_dirs(root))
+    files, dirs = fs1.findall_nodes(root)
+    full_data = {'root': fs1.url, 'ignores': []}  # noqa
+    full_data['current'] = full_data['base'] = {
+        'version': _make_version(files),
+        'files'  : files,
+        'dirs'   : dirs,
+    }
+    fs0.dump(full_data, snap_file)
+
+    
+def rebuild_snapshot(snap_file: T.AnyPath):
+    # assert fs0.exist(snap_file)
+    create_snapshot(snap_file, fs0.load(snap_file)['root'])
+
+
+def update_snapshot(snap_file: T.AnyPath):
+    full_data = fs0.load(snap_file)
+    fs1 = FileSystem(full_data['root'])
+    root = fs1.root
+    
+    files, dirs = fs1.findall_nodes(
+        root, (full_data['base']['files'], full_data['base']['dirs'])
+    )
+    full_data['current'] = {
+        'version': _make_version(files),
+        'files'  : files,
+        'dirs'   : dirs,
+    }
+    
+    fs0.dump(full_data, snap_file)
 
 
 def sync_snapshot(
@@ -78,13 +110,10 @@ def sync_snapshot(
             if set, suggest setting 'b'. it means that `snap_file_b` is -
             passive side.
     """
-    snap_a = Snapshot(snap_file_a)
-    snap_b = Snapshot(snap_file_b)
+    snap_alldata_a = fs0.load(snap_file_a)
+    snap_alldata_b = fs0.load(snap_file_b)
     
-    snap_alldata_a = snap_a.load_snapshot()
-    snap_alldata_b = snap_b.load_snapshot()
-    
-    def select_base_side() -> t.Tuple[str, T.SnapshotData]:
+    def select_base_side() -> t.Tuple[str, T.Nodes]:
         if manual_select_base_side:
             if manual_select_base_side == 'a':
                 base = snap_alldata_a['base']
@@ -107,7 +136,7 @@ def sync_snapshot(
                 case _:
                     raise Exception
         # noinspection PyUnboundLocalVariable
-        return base['version'], base['data']
+        return base['version'], base['files']
     
     def compare_version(ver_a: str, ver_b: str) -> int:
         """
@@ -123,15 +152,14 @@ def sync_snapshot(
             return 2
     
     snap_ver_base, snap_data_base = select_base_side()
-    snap_data_a = snap_alldata_a['current']['data']
-    snap_data_b = snap_alldata_b['current']['data']
+    snap_data_a = snap_alldata_a['current']['files']
+    snap_data_b = snap_alldata_b['current']['files']
     
     # -------------------------------------------------------------------------
     
     # noinspection PyTypeChecker
     def compare_new_to_old(
-        snap_new: T.SnapshotData,
-        snap_old: T.SnapshotData,
+        snap_new: T.Nodes, snap_old: T.Nodes
     ) -> t.Iterator[T.ComposedAction]:
         """
         note: the yieled movement can only be the following:
@@ -172,125 +200,50 @@ def sync_snapshot(
     
     final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
     
+    fs_a = FileSystem(snap_alldata_a['root'])
+    fs_b = FileSystem(snap_alldata_b['root'])
     snap_data_new = _apply_changes(
         final_changes,
         snap_data_base,
         snap_data_a,
         snap_data_b,
-        t.cast(LocalFileSystem, snap_a.fs),
-        t.cast(AirFileSystem, snap_b.fs),
-        snap_alldata_a['root'],
-        snap_alldata_b['root'],
+        fs_a.core,
+        fs_b.core,
+        fs_a.root,
+        fs_b.root,
         dry_run,
     )
     if not dry_run:
         print(':v3', 'lock snapshot')
         assert snap_data_new is not None
-        snap_a.rebuild_snapshot(snap_data_new, snap_alldata_a['root'])
-        snap_b.rebuild_snapshot(snap_data_new, snap_alldata_b['root'])
-
-
-def merge_snapshot(
-    snap_file_a: T.AnyPath,
-    snap_file_b: T.AnyPath,
-    dry_run: bool = False,
-    no_doubt: bool = False,
-) -> None:
-    """
-    params:
-        dry_run (-d):
-    """
-    snap_a = Snapshot(snap_file_a)
-    snap_b = Snapshot(snap_file_b)
-    
-    snap_alldata_a = snap_a.load_snapshot()
-    snap_alldata_b = snap_b.load_snapshot()
-    
-    # noinspection PyTypeChecker
-    changes = _compare_changelists(
-        {k: ('+>', t_) for k, t_ in snap_alldata_a['current']['data'].items()},
-        {k: ('+>', t_) for k, t_ in snap_alldata_b['current']['data'].items()},
-        no_doubt
-    )
-    
-    snap_data_new = _apply_changes(
-        changes,
-        {},
-        snap_alldata_a['current']['data'],
-        snap_alldata_b['current']['data'],
-        t.cast(LocalFileSystem, snap_a.fs),
-        t.cast(AirFileSystem, snap_b.fs),
-        snap_alldata_a['root'],
-        snap_alldata_b['root'],
-        dry_run
-    )
-    
-    if not dry_run:
-        print(':v3', 'lock snapshot')
-        assert snap_data_new is not None
-        snap_a.rebuild_snapshot(snap_data_new, snap_alldata_a['root'])
-        snap_b.rebuild_snapshot(snap_data_new, snap_alldata_b['root'])
+        
+        snap_alldata_a['base'] = snap_alldata_a['current'] = {
+            'version': _make_version(snap_data_new),
+            'files': snap_data_new,
+            'dirs': snap_alldata_a['current']['dirs'],
+        }
+        fs0.dump(snap_alldata_a, snap_file_a)
+        
+        snap_alldata_b['base'] = snap_alldata_b['current'] = {
+            'version': _make_version(snap_data_new),
+            'files': snap_data_new,
+            'dirs': snap_alldata_b['current']['dirs'],
+        }
+        fs0.dump(snap_alldata_b, snap_file_b)
 
 
 # noinspection PyTypeChecker
-def _compare_changelists(
-    changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
-    changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
-    no_doubt: bool = False,
-) -> t.Iterator[T.ComposedAction]:
-    for k, (ma, ta) in changes_a.items():
-        if k in changes_b:
-            mb, tb = changes_b[k]
-            if ma == '+>' or ma == '=>':
-                if mb == '+>' or mb == '=>':
-                    if ta >= tb:
-                        # b created/updated -> a created/updated
-                        if no_doubt:
-                            yield k, '=>', ta
-                        else:
-                            yield k, '=>?', ta
-                    else:  # ta < tb
-                        # a created/updated -> b created/updated
-                        if no_doubt:
-                            yield k, '<=', tb
-                        else:
-                            yield k, '<=?', tb
-                else:
-                    # 1. ta > tb:
-                    #   b created -> b deleted -> a created/updated
-                    # 2. ta < tb:
-                    #   a created/updated -> b created -> b deleted
-                    # 3. ta < tb:
-                    #   b created -> a created/updated -> b deleted
-                    # 4. ta == tb:
-                    #   a b created/updated at same time -> b deleted
-                    yield k, '+>', ta
-            else:  # ma == '->'
-                if mb == '+>' or mb == '=>':
-                    yield k, '<+', tb
-        else:
-            yield k, ma, ta
-    for k, (mb, tb) in changes_b.items():
-        if k not in changes_a:
-            if mb == '+>':
-                yield k, '<+', tb
-            elif mb == '=>':
-                yield k, '<=', tb
-            else:  # mb == '->'
-                yield k, '<-', tb
-
-
 def _apply_changes(
     changes: t.Iterator[T.ComposedAction],
-    snap_data_base: T.SnapshotData,
-    snap_data_a: T.SnapshotData,
-    snap_data_b: T.SnapshotData,
-    fs_a: LocalFileSystem,
-    fs_b: AirFileSystem,
+    snap_data_base: T.Nodes,
+    snap_data_a: T.Nodes,
+    snap_data_b: T.Nodes,
+    fs_a: 'fs0',
+    fs_b: RemoteFileSystem,
     root_a: str,
     root_b: str,
     dry_run: bool = False,
-) -> t.Optional[T.SnapshotData]:
+) -> t.Optional[T.Nodes]:
     print(root_a, root_b, ':l')
     if dry_run:
         i = 0
@@ -360,77 +313,90 @@ def _apply_changes(
             _created_dirs_b.add(d)
     
     def delete_dir_a(dirpath: T.AbsPath) -> None:
-        fs_a.remove_dir(dirpath)
+        if fs_a.exist(dirpath):
+            fs_a.remove_tree(dirpath)
     
     def delete_dir_b(dirpath: T.AbsPath) -> None:
-        fs_b.remove_dir(dirpath)
+        if fs_b.exist(dirpath):
+            fs_b.remove_tree(dirpath)
     
     def make_dir_a(dirpath: T.AbsPath) -> None:
         if dirpath not in _created_dirs_a:
-            fs_a.make_dir(dirpath)
+            if not fs_a.exist(dirpath):
+                fs_a.make_dir(dirpath)
             _created_dirs_a.add(dirpath)
     
     def make_dir_b(dirpath: T.AbsPath) -> None:
         if dirpath not in _created_dirs_b:
-            fs_b.make_dir(dirpath)
+            if not fs_b.exist(dirpath):
+                fs_b.make_dir(dirpath)
             _created_dirs_b.add(dirpath)
     
     def make_dirs_a(filepath: str) -> None:
         i = filepath.rfind('/')
         dirpath = filepath[:i]
         if dirpath not in _created_dirs_a:
-            fs_a.make_dirs(dirpath)
+            if not fs_a.exist(dirpath):
+                fs_a.make_dirs(dirpath)
             _created_dirs_a.add(dirpath)
     
     def make_dirs_b(filepath: str) -> None:
         i = filepath.rfind('/')
         dirpath = filepath[:i]
         if dirpath not in _created_dirs_b:
-            fs_b.make_dirs(dirpath)
+            if not fs_b.exist(dirpath):
+                fs_b.make_dirs(dirpath)
             _created_dirs_b.add(dirpath)
     
     _conflicts_dir = 'data/conflicts/{}'.format(timestamp('ymd_hns'))
-    lkfs.make_dir(_conflicts_dir)
+    fs0.make_dir(_conflicts_dir)
     
     def backup_conflict_file_a(file: T.Path) -> None:
         file_i = file
-        m, n, o = lkfs.split(file_i, 3)
+        m, n, o = fs0.split(file_i, 3)
         file_o = '{}/{}.a.{}'.format(_conflicts_dir, n, o)
-        lkfs.copy_file(file_i, file_o, reserve_metadata=True)
+        fs0.copy_file(file_i, file_o, reserve_metadata=True)
     
     def backup_conflict_file_b(file: T.Path, mtime: int) -> None:
         file_i = file
-        m, n, o = lkfs.split(file_i, 3)
+        m, n, o = fs0.split(file_i, 3)
         file_o = '{}/{}.b.{}'.format(_conflicts_dir, n, o)
-        fs_b.download_file(file_i, file_o, mtime)
+        _download_file(file_i, file_o, mtime)
     
     def delete_file_a(file: T.Path) -> None:
-        # file_i = file
-        # m, n, o = lkfs.split(file_i, 3)
-        # file_o = '{}/{}.a.{}'.format(_deleted_dir, n, o)
-        # lkfs.move(file_i, file_o)
-        fs_a.remove_file(file)
+        if fs_a.exist(file):
+            fs_a.remove_file(file)
     
     def delete_file_b(file: T.Path) -> None:
-        # file_i = file
-        # m, n, o = lkfs.split(file_i, 3)
-        # file_o = '{}/{}.b.{}'.format(_deleted_dir, n, o)
-        # data_i = fs_b.load(file_i)
-        # lkfs.dump(data_i, file_o, 'binary')
-        fs_b.remove_file(file)
+        if fs_b.exist(file):
+            fs_b.remove_file(file)
     
     def update_file_a2b(relpath: T.Path) -> None:
         file_i = '{}/{}'.format(root_a, relpath)
         file_o = '{}/{}'.format(root_b, relpath)
-        fs_b.upload_file(file_i, file_o)
+        _upload_file(file_i, file_o, fs0.filetime(file_i))
     
     def update_file_b2a(relpath: T.Path, mtime: int) -> None:
         file_i = '{}/{}'.format(root_b, relpath)
         file_o = '{}/{}'.format(root_a, relpath)
-        fs_b.download_file(file_i, file_o, mtime)
+        _download_file(file_i, file_o, mtime)
+    
+    def _download_file(file_i: T.Path, file_o: T.Path, mtime: T.Time):
+        data = fs_b.load(file_i, 'binary')
+        fs_a.dump(data, file_o, 'binary')
+        os.utime(file_o, (mtime, mtime))
+    
+    def _upload_file(
+        file_i: T.Path, file_o: T.Path, mtime: T.Time
+    ) -> None:
+        data = fs_a.load(file_i, 'binary')
+        fs_b.dump(data, file_o, 'binary')
+        fs_b.client.exec(
+            'os.utime(file, (mtime, mtime))', file=file_o, mtime=mtime
+        )
     
     # snap_new = snap_data_base.copy()
-    snap_new: T.SnapshotData = snap_data_base
+    snap_new: T.Nodes = snap_data_base
     
     for k, m, t in changes:
         # isdir = k.endswith('/')
@@ -500,12 +466,71 @@ def _apply_changes(
             else:
                 raise Exception(k, m, t)
     
-    if lkfs.empty(_conflicts_dir):
-        lkfs.remove_tree(_conflicts_dir)
+    if fs0.empty(_conflicts_dir):
+        fs0.remove_tree(_conflicts_dir)
     else:
         print('found {} conflicts, see in {}'.format(
-            len(lkfs.find_file_names(_conflicts_dir)),
+            len(fs0.find_file_names(_conflicts_dir)),
             _conflicts_dir
         ), ':v6')
     
     return snap_new
+
+
+# noinspection PyTypeChecker
+def _compare_changelists(
+    changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
+    changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
+    no_doubt: bool = False,
+) -> t.Iterator[T.ComposedAction]:
+    for k, (ma, ta) in changes_a.items():
+        if k in changes_b:
+            mb, tb = changes_b[k]
+            if ma == '+>' or ma == '=>':
+                if mb == '+>' or mb == '=>':
+                    if ta >= tb:
+                        # b created/updated -> a created/updated
+                        if no_doubt:
+                            yield k, '=>', ta
+                        else:
+                            yield k, '=>?', ta
+                    else:  # ta < tb
+                        # a created/updated -> b created/updated
+                        if no_doubt:
+                            yield k, '<=', tb
+                        else:
+                            yield k, '<=?', tb
+                else:
+                    # 1. ta > tb:
+                    #   b created -> b deleted -> a created/updated
+                    # 2. ta < tb:
+                    #   a created/updated -> b created -> b deleted
+                    # 3. ta < tb:
+                    #   b created -> a created/updated -> b deleted
+                    # 4. ta == tb:
+                    #   a b created/updated at same time -> b deleted
+                    yield k, '+>', ta
+            else:  # ma == '->'
+                if mb == '+>' or mb == '=>':
+                    yield k, '<+', tb
+        else:
+            yield k, ma, ta
+    for k, (mb, tb) in changes_b.items():
+        if k not in changes_a:
+            if mb == '+>':
+                yield k, '<+', tb
+            elif mb == '=>':
+                yield k, '<=', tb
+            else:  # mb == '->'
+                yield k, '<-', tb
+
+
+def _hash_data(data):
+    return hashlib.md5(
+        json.dumps(data, sort_keys=True).encode()
+        #                ~~~~~~~~~~~~~~ recursively sort.
+    ).hexdigest()
+
+
+def _make_version(files_data):
+    return '{}-{}'.format(_hash_data(files_data), int(time()))
