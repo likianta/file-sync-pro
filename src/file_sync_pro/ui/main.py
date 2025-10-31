@@ -71,10 +71,7 @@ def main(remote_ip: str) -> None:
             snap_api.update_snapshot(snap_b)
         place1 = st.empty()
         place2 = st.empty()
-        kwargs = {
-            'dry_run': st.toggle('Dry run'),
-            # 'no_doubt': st.toggle('No doubt'),
-        }
+        kwargs = {}
         with st.popover('More options'):
             kwargs['manual_select_base_side'] = sc.radio(
                 'Manual select base side',
@@ -82,8 +79,9 @@ def main(remote_ip: str) -> None:
                 horizontal=True
             )
             kwargs['no_doubt'] = st.toggle('No doubt')
+        kwargs['dry_run'] = st.toggle('Dry run')
         with place1:
-            if st.button('Sync'):
+            if st.button('Sync', type='primary'):
                 snap_api.sync_snapshot(snap_a, snap_b, **kwargs)
         with place2:
             if st.button('Merge'):

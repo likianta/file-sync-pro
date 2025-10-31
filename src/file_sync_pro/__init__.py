@@ -4,5 +4,7 @@ from .filesys import FtpFileSystem
 from .filesys import LocalFileSystem
 from .snapshot import Snapshot
 from .snapshot import create_snapshot
+from .snapshot import merge_snapshot
+from .snapshot import rebuild_snapshot
 from .snapshot import sync_snapshot
 from .snapshot import update_snapshot

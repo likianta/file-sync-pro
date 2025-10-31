@@ -200,36 +200,24 @@ def sync_snapshot(
     
     final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
     
-    fs_a = FileSystem(snap_alldata_a['root'])
-    fs_b = FileSystem(snap_alldata_b['root'])
-    snap_data_new = _apply_changes(
-        final_changes,
-        snap_data_base,
-        snap_data_a,
-        snap_data_b,
-        fs_a.core,
-        fs_b.core,
-        fs_a.root,
-        fs_b.root,
-        dry_run,
-    )
-    if not dry_run:
+    if dry_run:
+        _preview_changes(final_changes)
+    else:
+        fs_a = FileSystem(snap_alldata_a['root'])
+        fs_b = FileSystem(snap_alldata_b['root'])
+        snap_data_new = _apply_changes(
+            final_changes,
+            snap_data_base,
+            snap_data_a,
+            snap_data_b,
+            fs_a.core,
+            fs_b.core,
+            fs_a.root,
+            fs_b.root,
+        )
         print(':v3', 'lock snapshot')
-        assert snap_data_new is not None
-        
-        snap_alldata_a['base'] = snap_alldata_a['current'] = {
-            'version': _make_version(snap_data_new),
-            'files': snap_data_new,
-            'dirs': snap_alldata_a['current']['dirs'],
-        }
-        fs0.dump(snap_alldata_a, snap_file_a)
-        
-        snap_alldata_b['base'] = snap_alldata_b['current'] = {
-            'version': _make_version(snap_data_new),
-            'files': snap_data_new,
-            'dirs': snap_alldata_b['current']['dirs'],
-        }
-        fs0.dump(snap_alldata_b, snap_file_b)
+        _lock_snapshot(snap_alldata_a, snap_data_new, snap_file_a)
+        _lock_snapshot(snap_alldata_b, snap_data_new, snap_file_b)
 
 
 def merge_snapshot(
@@ -258,38 +246,25 @@ def merge_snapshot(
     # noinspection PyTypeChecker
     final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
     
-    fs_a = FileSystem(snap_alldata_a['root'])
-    fs_b = FileSystem(snap_alldata_b['root'])
-    snap_data_new = _apply_changes(
-        final_changes,
-        {},
-        snap_alldata_a['current']['files'],
-        snap_alldata_b['current']['files'],
-        fs_a.core,
-        fs_b.core,
-        fs_a.root,
-        fs_b.root,
-        dry_run,
-    )
-    
-    if not dry_run:
+    if dry_run:
+        _preview_changes(final_changes)
+    else:
+        fs_a = FileSystem(snap_alldata_a['root'])
+        fs_b = FileSystem(snap_alldata_b['root'])
+        snap_data_new = _apply_changes(
+            final_changes,
+            {},
+            snap_alldata_a['current']['files'],
+            snap_alldata_b['current']['files'],
+            fs_a.core,
+            fs_b.core,
+            fs_a.root,
+            fs_b.root,
+        )
         print(':v3', 'lock snapshot')
-        assert snap_data_new is not None
-        
-        snap_alldata_a['base'] = snap_alldata_a['current'] = {
-            'version': _make_version(snap_data_new),
-            'files'  : snap_data_new,
-            'dirs'   : snap_alldata_a['current']['dirs'],
-        }
-        fs0.dump(snap_alldata_a, snap_file_a)
-        
-        snap_alldata_b['base'] = snap_alldata_b['current'] = {
-            'version': _make_version(snap_data_new),
-            'files'  : snap_data_new,
-            'dirs'   : snap_alldata_b['current']['dirs'],
-        }
-        fs0.dump(snap_alldata_b, snap_file_b)
-    
+        _lock_snapshot(snap_alldata_a, snap_data_new, snap_file_a)
+        _lock_snapshot(snap_alldata_b, snap_data_new, snap_file_b)
+
 
 # noinspection PyTypeChecker
 def _compare_changelists(
@@ -339,6 +314,58 @@ def _compare_changelists(
                 yield k, '<-', tb
 
 
+def _preview_changes(changes: t.Iterator[T.ComposedAction]) -> None:
+    i = 0
+    table = [('index', 'left', 'action', 'right')]
+    action_count = defaultdict(int)
+    for k, m, _ in changes:
+        if k.endswith('/') and '=' in m:
+            continue
+        i += 1
+        colored_key = '[{}]{}[/]'.format(
+            'yellow' if '?' in m else
+            'green' if '+' in m else
+            'blue' if '=' in m else
+            'red',
+            k.replace('[', '\\[')
+        )
+        # table.append((
+        #     str(i),
+        #     colored_key if m.startswith(('+>', '=>', '<-')) else
+        #     '' if m.startswith(('->', '<+')) else
+        #     '...',
+        #     m.rstrip('?'),
+        #     '' if m.startswith(('+>', '<-')) else
+        #     '...' if m.startswith(('=>',)) else
+        #     colored_key,
+        # ))
+        m = m.rstrip('?')
+        # noinspection PyTypeChecker
+        table.append((
+            str(i),
+            *(
+                # (colored_key, '+>', '') if m == '+>' else
+                # (colored_key, '=>', '...') if m == '=>' else
+                # ('', '->', colored_key) if m == '->' else
+                # ('', '<+', colored_key) if m == '<+' else
+                # ('...', '<=', colored_key) if m == '<=' else
+                # (colored_key, '<-', '')  # '<-'
+                (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
+                (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
+                ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
+                ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
+                ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
+                (colored_key, '<-', '[dim]<deleted>[/]')  # '<-'
+            )
+        ))
+        action_count[m] += 1
+    if len(table) > 1:
+        print(table, ':r2')
+        print(action_count, ':r2')
+    else:
+        print('no change', ':v4')
+
+
 # noinspection PyTypeChecker
 def _apply_changes(
     changes: t.Iterator[T.ComposedAction],
@@ -349,62 +376,8 @@ def _apply_changes(
     fs_b: RemoteFileSystem,
     root_a: str,
     root_b: str,
-    dry_run: bool = False,
-) -> t.Optional[T.Nodes]:
+) -> T.Nodes:
     print(root_a, root_b, ':l')
-    if dry_run:
-        i = 0
-        table = [('index', 'left', 'action', 'right')]
-        action_count = defaultdict(int)
-        for k, m, _ in changes:
-            if k.endswith('/') and '=' in m:
-                continue
-            i += 1
-            colored_key = '[{}]{}[/]'.format(
-                'yellow' if '?' in m else
-                'green' if '+' in m else
-                'blue' if '=' in m else
-                'red',
-                k.replace('[', '\\[')
-            )
-            # table.append((
-            #     str(i),
-            #     colored_key if m.startswith(('+>', '=>', '<-')) else
-            #     '' if m.startswith(('->', '<+')) else
-            #     '...',
-            #     m.rstrip('?'),
-            #     '' if m.startswith(('+>', '<-')) else
-            #     '...' if m.startswith(('=>',)) else
-            #     colored_key,
-            # ))
-            m = m.rstrip('?')
-            # noinspection PyTypeChecker
-            table.append((
-                str(i),
-                *(
-                    # (colored_key, '+>', '') if m == '+>' else
-                    # (colored_key, '=>', '...') if m == '=>' else
-                    # ('', '->', colored_key) if m == '->' else
-                    # ('', '<+', colored_key) if m == '<+' else
-                    # ('...', '<=', colored_key) if m == '<=' else
-                    # (colored_key, '<-', '')  # '<-'
-                    (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
-                    (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
-                    ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
-                    ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
-                    ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
-                    (colored_key, '<-', '[dim]<deleted>[/]')  # '<-'
-                )
-            ))
-            action_count[m] += 1
-        if len(table) > 1:
-            print(table, ':r2')
-            print(action_count, ':r2')
-        else:
-            print('no change', ':v4')
-        return
-    
-    # -------------------------------------------------------------------------
     
     _created_dirs_a = set()
     for p in snap_data_a:
@@ -593,3 +566,12 @@ def _hash_data(data):
 
 def _make_version(files_data):
     return '{}-{}'.format(_hash_data(files_data), int(time()))
+
+
+def _lock_snapshot(full_data, files_data, output_file):
+    full_data['base'] = full_data['current'] = {
+        'version': _make_version(files_data),
+        'files': files_data,
+        'dirs': full_data['current']['dirs'],
+    }
+    fs0.dump(full_data, output_file)
