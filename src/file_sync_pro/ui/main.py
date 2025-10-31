@@ -87,7 +87,8 @@ def main(remote_ip: str) -> None:
                 snap_api.sync_snapshot(snap_a, snap_b, **kwargs)
         with place2:
             if st.button('Merge'):
-                ...
+                kwargs.pop('manual_select_base_side', None)
+                snap_api.merge_snapshot(snap_a, snap_b, **kwargs)
 
 
 if __name__ == '__main__':

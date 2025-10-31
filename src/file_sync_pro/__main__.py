@@ -10,6 +10,7 @@ cli.add_cmd(clone_project)
 cli.add_cmd(snapshot.create_snapshot)
 cli.add_cmd(snapshot.update_snapshot)
 cli.add_cmd(snapshot.sync_snapshot)
+cli.add_cmd(snapshot.merge_snapshot)
 cli.add_cmd(snapshot.rebuild_snapshot)
 
 

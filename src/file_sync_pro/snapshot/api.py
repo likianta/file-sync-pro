@@ -232,6 +232,113 @@ def sync_snapshot(
         fs0.dump(snap_alldata_b, snap_file_b)
 
 
+def merge_snapshot(
+    snap_file_a: T.AnyPath,
+    snap_file_b: T.AnyPath,
+    dry_run: bool = False,
+    no_doubt: bool = False,
+):
+    """
+    params:
+        dry_run (-d):
+    """
+    snap_alldata_a = fs0.load(snap_file_a)
+    snap_alldata_b = fs0.load(snap_file_b)
+    
+    files_a = frozenset(snap_alldata_a['current']['files'].keys())
+    files_b = frozenset(snap_alldata_b['current']['files'].keys())
+    changes_a = {
+        k: ('+>', snap_alldata_a['current']['files'][k])
+        for k in (files_a - files_b)
+    }
+    changes_b = {
+        k: ('+>', snap_alldata_b['current']['files'][k])
+        for k in (files_b - files_a)
+    }
+    # noinspection PyTypeChecker
+    final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
+    
+    fs_a = FileSystem(snap_alldata_a['root'])
+    fs_b = FileSystem(snap_alldata_b['root'])
+    snap_data_new = _apply_changes(
+        final_changes,
+        {},
+        snap_alldata_a['current']['files'],
+        snap_alldata_b['current']['files'],
+        fs_a.core,
+        fs_b.core,
+        fs_a.root,
+        fs_b.root,
+        dry_run,
+    )
+    
+    if not dry_run:
+        print(':v3', 'lock snapshot')
+        assert snap_data_new is not None
+        
+        snap_alldata_a['base'] = snap_alldata_a['current'] = {
+            'version': _make_version(snap_data_new),
+            'files'  : snap_data_new,
+            'dirs'   : snap_alldata_a['current']['dirs'],
+        }
+        fs0.dump(snap_alldata_a, snap_file_a)
+        
+        snap_alldata_b['base'] = snap_alldata_b['current'] = {
+            'version': _make_version(snap_data_new),
+            'files'  : snap_data_new,
+            'dirs'   : snap_alldata_b['current']['dirs'],
+        }
+        fs0.dump(snap_alldata_b, snap_file_b)
+    
+
+# noinspection PyTypeChecker
+def _compare_changelists(
+    changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
+    changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
+    no_doubt: bool = False,
+) -> t.Iterator[T.ComposedAction]:
+    for k, (ma, ta) in changes_a.items():
+        if k in changes_b:
+            mb, tb = changes_b[k]
+            if ma == '+>' or ma == '=>':
+                if mb == '+>' or mb == '=>':
+                    if ta >= tb:
+                        # b created/updated -> a created/updated
+                        if no_doubt:
+                            yield k, '=>', ta
+                        else:
+                            yield k, '=>?', ta
+                    else:  # ta < tb
+                        # a created/updated -> b created/updated
+                        if no_doubt:
+                            yield k, '<=', tb
+                        else:
+                            yield k, '<=?', tb
+                else:
+                    # 1. ta > tb:
+                    #   b created -> b deleted -> a created/updated
+                    # 2. ta < tb:
+                    #   a created/updated -> b created -> b deleted
+                    # 3. ta < tb:
+                    #   b created -> a created/updated -> b deleted
+                    # 4. ta == tb:
+                    #   a b created/updated at same time -> b deleted
+                    yield k, '+>', ta
+            else:  # ma == '->'
+                if mb == '+>' or mb == '=>':
+                    yield k, '<+', tb
+        else:
+            yield k, ma, ta
+    for k, (mb, tb) in changes_b.items():
+        if k not in changes_a:
+            if mb == '+>':
+                yield k, '<+', tb
+            elif mb == '=>':
+                yield k, '<=', tb
+            else:  # mb == '->'
+                yield k, '<-', tb
+
+
 # noinspection PyTypeChecker
 def _apply_changes(
     changes: t.Iterator[T.ComposedAction],
@@ -475,54 +582,6 @@ def _apply_changes(
         ), ':v6')
     
     return snap_new
-
-
-# noinspection PyTypeChecker
-def _compare_changelists(
-    changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
-    changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
-    no_doubt: bool = False,
-) -> t.Iterator[T.ComposedAction]:
-    for k, (ma, ta) in changes_a.items():
-        if k in changes_b:
-            mb, tb = changes_b[k]
-            if ma == '+>' or ma == '=>':
-                if mb == '+>' or mb == '=>':
-                    if ta >= tb:
-                        # b created/updated -> a created/updated
-                        if no_doubt:
-                            yield k, '=>', ta
-                        else:
-                            yield k, '=>?', ta
-                    else:  # ta < tb
-                        # a created/updated -> b created/updated
-                        if no_doubt:
-                            yield k, '<=', tb
-                        else:
-                            yield k, '<=?', tb
-                else:
-                    # 1. ta > tb:
-                    #   b created -> b deleted -> a created/updated
-                    # 2. ta < tb:
-                    #   a created/updated -> b created -> b deleted
-                    # 3. ta < tb:
-                    #   b created -> a created/updated -> b deleted
-                    # 4. ta == tb:
-                    #   a b created/updated at same time -> b deleted
-                    yield k, '+>', ta
-            else:  # ma == '->'
-                if mb == '+>' or mb == '=>':
-                    yield k, '<+', tb
-        else:
-            yield k, ma, ta
-    for k, (mb, tb) in changes_b.items():
-        if k not in changes_a:
-            if mb == '+>':
-                yield k, '<+', tb
-            elif mb == '=>':
-                yield k, '<=', tb
-            else:  # mb == '->'
-                yield k, '<-', tb
 
 
 def _hash_data(data):
