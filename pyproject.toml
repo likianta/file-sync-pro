@@ -21,7 +21,7 @@ ipython = "^9.6.0"
 lk-logger = { version = ">=6.0.7,<6.1.0", source = "likianta" }
 requests = { version = "^2.32.5", platform = "!=linux" }
 streamlit = { version = "^1.50.0", platform = "!=linux" }
-streamlit-canary = { version = "^0.1.1a3", source = "likianta", platform = "!=linux" }
+streamlit-canary = { version = "^0.1.1a4", source = "likianta", platform = "!=linux" }
 
 [[tool.poetry.source]]
 name = "aliyun"

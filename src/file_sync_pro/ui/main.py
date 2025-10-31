@@ -1,5 +1,5 @@
 if __name__ == '__main__':
-    __package__ = 'src.file_sync_pro'
+    __package__ = 'src.file_sync_pro.ui'
 
 import airmise as air
 import streamlit as st
@@ -7,9 +7,9 @@ import streamlit_canary as sc
 import typing as t
 from argsense import cli
 from lk_utils import fs
-from . import filesys
-from . import snapshot
-from .init import clone_project
+from .. import filesys
+from .. import snapshot
+from ..init import clone_project
 
 _state = sc.get_state(version=18)
 
@@ -60,8 +60,9 @@ def main(remote_ip: str) -> None:
     if st.button('Reconnect to remote'):
         # air.connect(remote_ip, 2160)
         air.default_client.reopen()
-    # if not air.default_client.is_opened:
-    #     return
+    
+    with st.popover('Create snapshot'):
+        _create_snapshot_2()
     
     records = _state['records']
     key = sc.radio('Host and remote paths', records.keys(), horizontal=False)
@@ -120,9 +121,7 @@ def main(remote_ip: str) -> None:
     no_doubt = st.checkbox('No doubt')
     if st.button('Sync'):
         snapshot.sync_snapshot(left_path, right_path, dry_run, no_doubt)
-    if st.button('Merge'):
-        snapshot.merge_snapshot(left_path, right_path, dry_run, no_doubt)
-        
+    
     if _state['snap_right']:
         if st.button('Close right connection'):
             air.default_client.close()
@@ -130,40 +129,40 @@ def main(remote_ip: str) -> None:
 
 
 # -------------------------------------------------------------------------
-    
-    # cols = iter(st.columns(4))
-    # with next(cols):
-    #     if sc.long_button(
-    #         'Add record',
-    #         disabled=not left_path or (left_path, right_path) in records
-    #     ):
-    #         records.append((left_path, right_path))
-    #         if len(records) > 20:
-    #             records.pop(0)
-    #         st.rerun()
-    # with next(cols):
-    #     if fs.exist(left_path):
-    #         if sc.long_button('Update left'):
-    #             snapshot.update_snapshot(left_path)
-    #     else:
-    #         with st.popover(
-    #             'Create left',
-    #             use_container_width=True,
-    #         ):
-    #             x = st.text_input(
-    #                 'Source root',
-    #                 placeholder=(p := fs.parent(left_path))
-    #             ) or p
-    #             if st.button('Create'):
-    #                 snapshot.create_snapshot(left_path, x)
-    # with next(cols):
-    #     if sc.long_button('Update right'):
-    #         snapshot.update_snapshot(right_path)
-    # with next(cols):
-    #     if sc.long_button('Sync left and right'):
-    #         snapshot.sync_snapshot(left_path, right_path)
-    
-    
+
+# cols = iter(st.columns(4))
+# with next(cols):
+#     if sc.long_button(
+#         'Add record',
+#         disabled=not left_path or (left_path, right_path) in records
+#     ):
+#         records.append((left_path, right_path))
+#         if len(records) > 20:
+#             records.pop(0)
+#         st.rerun()
+# with next(cols):
+#     if fs.exist(left_path):
+#         if sc.long_button('Update left'):
+#             snapshot.update_snapshot(left_path)
+#     else:
+#         with st.popover(
+#             'Create left',
+#             use_container_width=True,
+#         ):
+#             x = st.text_input(
+#                 'Source root',
+#                 placeholder=(p := fs.parent(left_path))
+#             ) or p
+#             if st.button('Create'):
+#                 snapshot.create_snapshot(left_path, x)
+# with next(cols):
+#     if sc.long_button('Update right'):
+#         snapshot.update_snapshot(right_path)
+# with next(cols):
+#     if sc.long_button('Sync left and right'):
+#         snapshot.sync_snapshot(left_path, right_path)
+
+
 def _create_snapshot(side: t.Literal['left', 'right']):
     snap = _state[f'snap_{side}']
     with st.popover(
@@ -210,6 +209,39 @@ def _create_snapshot(side: t.Literal['left', 'right']):
                 )
 
 
+def _create_snapshot_2():
+    root_type = st.radio(
+        'Root type', ('Local', 'Remote'), horizontal=True
+    )
+    if root_type == 'Local':
+        root = sc.path_input('Local directory')
+    else:
+        root = ''
+        with st.container(horizontal=True):
+            addr = st.text_input('Address', '172.20.128.101:2160')
+            root = sc.path_input('Remote directory')
+    if not root: return
+    
+    snap_name = st.text_input('Snapshot filename', fs.basename(root))
+    snap_file = 'data/snapshots/{}/{}.json'.format(
+        'likianta-rider-r2' if root_type == 'Local' else
+        'likianta-xiaomi-12s-pro',
+        snap_name
+    )
+    st.markdown('File will be {} at "{}".'.format(
+        ':red[overwritten]' if fs.exist(snap_file) else ':blue[created]',
+        snap_file
+    ))
+    if st.button('Continue', use_container_width=True):
+        with st.spinner('Working...'):
+            snapshot.create_snapshot(
+                snap_file,
+                root if root_type == 'Local' else
+                'air://{}/{}'.format(addr, root[1:])
+            )
+            st.toast('Successfully created snapshot file.')
+
+
 def _guess_right_path(left_path: str):
     left_path = left_path.replace('\\', '/').rstrip('/')
     if '/' in left_path:
@@ -234,8 +266,8 @@ def _input_right_path(default, left_path):
         placeholder=placeholder,
     )
     return x or placeholder
-    
-    
+
+
 def _preload_snap_data(snap: snapshot.Snapshot) -> None:
     if snap.fs.exist(snap.snapshot_file):
         snap.data = snap.load_snapshot()
@@ -248,8 +280,7 @@ if __name__ == '__main__':
     launch steps:
         enter ssh
             android termux: sshd
-            pc:
-                ssh <android_ip> -p 8022
+            pc: ssh <android_ip> -p 8022
                 <input ssh password>
         (optional) upgrade file-sync-pro in android:
             pc: dufs . -p <dufs_port>
@@ -257,7 +288,7 @@ if __name__ == '__main__':
         run server:
             ssh: python -m file_sync_pro run_air_server
         run ui:
-            pc: strun 2163 src/file_sync_pro/ui.py <android_ip>
+            pc: strun 2163 src/file_sync_pro/ui/main.py <android_ip>
     """
     st.set_page_config('File Sync Pro')
     cli.run(main)
