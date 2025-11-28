@@ -42,7 +42,7 @@ def main():
                 root if root_type == 'Local' else
                 'air://{}/{}'.format(addr, root[1:])
             )
-        st.toast('Successfully created snapshot file.')
+        st.toast(':green[Successfully created snapshot file.]')
 
 
 if __name__ == '__main__':

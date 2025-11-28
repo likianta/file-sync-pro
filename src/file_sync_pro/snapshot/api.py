@@ -377,7 +377,7 @@ def _apply_changes(
     root_a: str,
     root_b: str,
 ) -> T.Nodes:
-    print(root_a, root_b, ':l')
+    print(root_a, root_b, ':li0')
     
     _created_dirs_a = set()
     for p in snap_data_a:

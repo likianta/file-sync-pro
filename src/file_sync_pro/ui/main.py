@@ -9,8 +9,6 @@ from lk_utils import fs
 from . import snap_maker
 from ..snapshot import api as snap_api
 
-_state = sc.get_state(version=23)
-
 
 def _init_state(remote_ip: str) -> dict:
     air.config(remote_ip, 2160)
@@ -34,13 +32,20 @@ def _init_state(remote_ip: str) -> dict:
                 load_snap_a('gitbook-source-docs.json'),
                 load_snap_b('gitbook-source-docs.json'),
             ),
-            'Pictures': (
+            'PicturesV1': (
                 load_snap_a('normalized-pictures-2025.json'),
                 load_snap_b('normalized-pictures.json'),
+            ),
+            'PicturesV2': (
+                load_snap_a('pictures-v2.json'),
+                load_snap_b('pictures-v2.json'),
             ),
             'New...': (('', ''), ('', ''))
         }
     }
+
+
+_state = sc.get_state(version=24)
 
 
 @cli
