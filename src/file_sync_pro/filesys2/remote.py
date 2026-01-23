@@ -86,6 +86,19 @@ class FileSystem:
         ):
             yield Path(*tuple_)
     
+    def findall_files(self, root):
+        Path = namedtuple('Path', 'path relpath mtime')
+        for tuple_ in self.client.exec(
+            '''
+            def bar():
+                for f in fs.findall_files(root):
+                    yield f.path, f.relpath, f.mtime
+            return bar()
+            ''',
+            root=root
+        ):
+            yield Path(*tuple_)
+    
     def _fast_call(self, func_name, *args0, **args1):
         return self.client.exec(
             'fs.{}(*args0, **args1)'.format(func_name),

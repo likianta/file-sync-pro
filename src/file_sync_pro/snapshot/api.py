@@ -38,7 +38,6 @@ class T:
     SnapshotItem = t.TypedDict('SnapshotItem', {
         'version': str,  # `<hash>-<time>`
         'files'  : Nodes,
-        'dirs'   : Nodes,
     })
     
     SnapshotFull = t.TypedDict('SnapshotFull', {
@@ -62,14 +61,11 @@ def create_snapshot(snap_file: T.AnyPath, source_root: str) -> None:
     root = fs1.root
     del source_root
     
-    # files = dict(fs1.findall_files(root))
-    # dirs = dict(fs1.findall_dirs(root))
-    files, dirs = fs1.findall_nodes(root)
+    files = fs1.findall_nodes(root)
     full_data = {'root': fs1.url, 'ignores': []}  # noqa
     full_data['current'] = full_data['base'] = {
         'version': _make_version(files),
         'files'  : files,
-        'dirs'   : dirs,
     }
     fs0.dump(full_data, snap_file)
 
@@ -84,15 +80,11 @@ def update_snapshot(snap_file: T.AnyPath):
     fs1 = FileSystem(full_data['root'])
     root = fs1.root
     
-    files, dirs = fs1.findall_nodes(
-        root, (full_data['base']['files'], full_data['base']['dirs'])
-    )
+    changed_files = fs1.findall_nodes(root)
     full_data['current'] = {
-        'version': _make_version(files),
-        'files'  : files,
-        'dirs'   : dirs,
+        'version': _make_version(changed_files),
+        'files'  : changed_files,
     }
-    
     fs0.dump(full_data, snap_file)
 
 
@@ -572,6 +564,5 @@ def _lock_snapshot(full_data, files_data, output_file):
     full_data['base'] = full_data['current'] = {
         'version': _make_version(files_data),
         'files': files_data,
-        'dirs': full_data['current']['dirs'],
     }
     fs0.dump(full_data, output_file)

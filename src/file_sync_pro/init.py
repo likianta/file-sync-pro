@@ -11,6 +11,8 @@ def clone_project(
             `./__main__.py:update_snapshot` to update.
         2. make sure `snapshot_file_o` exists, if not, use
             `./__main__.py:create_snapshot` to create one.
+        3. make sure `snapshot_file_o:root:parent` exists, if not, you need to
+            manually create it in its device.
         FIXME: `root_o` is not available at the moment.
     """
     snap_i = Snapshot(snapshot_file_i)
