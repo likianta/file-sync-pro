@@ -1,6 +1,6 @@
 [project]
 name = "file-sync-pro"
-version = "0.2.0a11"
+version = "0.2.0a15"
 description = ""
 # readme = "README.md"
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
@@ -12,16 +12,17 @@ dynamic = ["dependencies"]
 python = "^3.12"
 # in this group we only list essential packages that are cross platform required.
 # --- essentials
-airmise = { version = "^2.0.0", source = "likianta" }
+airmise = { version = "^2.0.1a1", source = "likianta" }
 argsense = { version = "^1.1.1a0", source = "likianta" }
-lk-utils = { version = "^3.4.2b0", source = "likianta" }
+lk-utils = { version = "^3.5.0a7", source = "likianta" }
+requests = "^2.32.5"
 
 [tool.poetry.group.dev.dependencies]
-ipython = "^9.6.0"
+ipython = "^9.8.0"
 lk-logger = { version = ">=6.0.7,<6.1.0", source = "likianta" }
-requests = { version = "^2.32.5", platform = "!=linux" }
-streamlit = { version = "^1.50.0", platform = "!=linux" }
-streamlit-canary = { version = "^0.1.1a4", source = "likianta", platform = "!=linux" }
+# requests = { version = "^2.32.5", platform = "!=linux" }
+streamlit = { version = "^1.53.0", platform = "!=linux" }
+streamlit-canary = { version = "^0.1.1a13", source = "likianta", platform = "!=linux" }
 
 [[tool.poetry.source]]
 name = "aliyun"
@@ -30,7 +31,7 @@ priority = "primary"
 
 [[tool.poetry.source]]
 name = "likianta"
-url = "http://localhost:2131/"
+url = "http://localhost:2191/"
 priority = "supplemental"
 
 [build-system]
