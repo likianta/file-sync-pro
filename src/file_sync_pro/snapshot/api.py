@@ -364,7 +364,7 @@ def _apply_changes(
     snap_data_base: T.Nodes,
     snap_data_a: T.Nodes,
     snap_data_b: T.Nodes,
-    fs_a: 'fs0',
+    fs_a: 'fs0',  # noqa
     fs_b: RemoteFileSystem,
     root_a: str,
     root_b: str,

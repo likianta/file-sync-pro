@@ -26,7 +26,7 @@
 {
     "root": "some/path/to/A",
     "base": {
-        "tree": {
+        "files": {
             "foo.txt": 1755050328,
             "bar.png": 1613155218,
             ...
@@ -87,7 +87,7 @@
 ### PC
 
 ```sh
-pip install file-sync-pro  # TODO
+pip install -r http://172.20.128.105:2193/file-sync-pro.txt --no-deps
 ```
 
 ...
@@ -96,32 +96,39 @@ pip install file-sync-pro  # TODO
 
 1. 下载 Termux
 
-2. 配置 Termux
+   1. 配置权限: 允许访问所有文件
 
-   1. 允许访问所有文件
-
-   2. 安装 Python 及其依赖
+   2. 首次使用, 需要安装以下软件 (请确保手机已开启 VPN):
 
       ```sh
-      ...
-      pip install -r http://172.20.128.132:2135/reqlock/file_sync_pro.txt
+      pkg upgrade
+      pkg install python
+      python -V  # -> 3.12
+      pip -V
       ```
 
-   3. 开启 SSH
+2. 安装 Python 包
+
+   1. PC 端...
+
+   2. Android 端:
 
       ```sh
-      # setup password
-      passwd
-      #   ...
-      
-      # start service
-      sshd
-      
-      # if kill service
-      pkill sshd
+      pip install -r http://172.20.128.105:2193/file-sync-pro.txt --no-deps
+      python -m file_sync_pro -h
       ```
 
-      注意: 请保持 Termux 应用在前台, 否则 PC 端可能会连不上.
+3. 开启服务
+
+   首先确保要同步的两方设备接在同一局域网.
+
+   在 Termux 中输入:
+
+   ```sh
+   python -m file_sync_pro run-air-server
+   ```
+
+   注意: 请保持 Termux 应用在前台, 否则 PC 端可能会连不上.
 
 ## 使用
 
