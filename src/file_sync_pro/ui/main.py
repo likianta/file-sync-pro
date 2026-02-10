@@ -82,8 +82,10 @@ def main(remote_ip: str = '172.20.128.101') -> None:
     with st.container(horizontal=True, vertical_alignment='center'):
         if st.button('Update left'):
             snap_api.update_snapshot(snap_a)
+            st.toast(':green[Left snapshot updated.]')
         if st.button('Update right'):
             snap_api.update_snapshot(snap_b)
+            st.toast(':green[Right snapshot updated.]')
         place1 = st.empty()
         place2 = st.empty()
         kwargs = {}
@@ -95,6 +97,7 @@ def main(remote_ip: str = '172.20.128.101') -> None:
             )
             kwargs['no_doubt'] = st.toggle('No doubt')
         kwargs['dry_run'] = st.toggle('Dry run')
+        kwargs['consider_moving'] = st.toggle('Consider moving')
         with place1:
             if st.button('Sync', type='primary'):
                 snap_api.sync_snapshot(snap_a, snap_b, **kwargs)

@@ -52,6 +52,7 @@ class FileSystem:
         self.load = partial(self._fast_call, 'load')
         self.make_dir = partial(self._fast_call, 'make_dir')
         self.make_dirs = partial(self._fast_call, 'make_dirs')
+        self.move_file = partial(self._fast_call, 'move_file')
         self.relpath = partial(self._fast_call, 'relpath')
         self.remove_file = partial(self._fast_call, 'remove_file')
         self.remove_tree = partial(self._fast_call, 'remove_tree')

@@ -1,6 +1,6 @@
 [project]
 name = "file-sync-pro"
-version = "0.2.0a16"
+version = "0.2.0a18"
 description = ""
 # readme = "README.md"
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
@@ -14,15 +14,15 @@ python = "^3.12"
 # --- essentials
 airmise = { version = "^2.0.1a1", source = "likianta" }
 argsense = { version = "^1.1.1a0", source = "likianta" }
-lk-utils = { version = "^3.5.0a8", source = "likianta" }
+lk-utils = { version = "^3.5.0a11", source = "likianta" }
 requests = "^2.32.5"
 
 [tool.poetry.group.dev.dependencies]
 ipython = "^9.8.0"
 lk-logger = { version = ">=6.0.7,<6.1.0", source = "likianta" }
 # requests = { version = "^2.32.5", platform = "!=linux" }
-streamlit = { version = "^1.53.0", platform = "!=linux" }
-streamlit-canary = { version = "^0.1.1a13", source = "likianta", platform = "!=linux" }
+streamlit = { version = "^1.54.0", platform = "!=linux" }
+streamlit-canary = { version = "^0.1.1a16", source = "likianta", platform = "!=linux" }
 
 [[tool.poetry.source]]
 name = "aliyun"

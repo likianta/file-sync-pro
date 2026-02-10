@@ -22,17 +22,22 @@ class T:
     #   slashes (\\), 'air://...' paths, 'ftp://...' paths... they are all
     #   allowed.
     Key = str  # a relpath
-    Movement = t.Literal['+>', '=>', '->', '<+', '<=', '<-']
+    Movement = t.Literal['+>', '=>', '->', '~>', '<+', '<=', '<-', '<~', '==']
     #   +>  add to right
     #   =>  overwrite to right
     #   ->  delete to right
+    #   ~>  move to right
     #   <+  add to left
     #   <=  overwrite to left
     #   <-  delete to left
+    #   <~  move to left
     #   ==  no change
     Time = int
     
-    ComposedAction = t.Tuple[Key, Movement, Time]
+    ComposedAction = t.Union[
+        t.Tuple[Key, Movement, Time],
+        t.Tuple[t.Tuple[Key, Key], t.Literal['~>', '<~'], Time],
+    ]
     Nodes = t.Dict[Path, int]  # {relpath: modified_time, ...}
     
     SnapshotItem = t.TypedDict('SnapshotItem', {
@@ -93,11 +98,13 @@ def sync_snapshot(
     snap_file_b: T.AnyPath,
     dry_run: bool = False,
     no_doubt: bool = False,
+    consider_moving: bool = False,
     manual_select_base_side: t.Literal['a', 'b'] = '',
 ) -> None:
     """
     params:
         dry_run (-d):
+        consider_moving (-m):
         manual_select_base_side (-b):
             if set, suggest setting 'b'. it means that `snap_file_b` is -
             passive side.
@@ -180,17 +187,17 @@ def sync_snapshot(
     ) == 0 else {
         k: (m, t_)
         for k, m, t_ in compare_new_to_old(snap_data_a, snap_data_base)
-        # if not k.endswith('/')
     }
     changes_b = {} if compare_version(
         snap_alldata_b['current']['version'], snap_ver_base,
     ) == 0 else {
         k: (m, t_)
         for k, m, t_ in compare_new_to_old(snap_data_b, snap_data_base)
-        # if not k.endswith('/')
     }
     
-    final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
+    final_changes = _compare_changelists(
+        changes_a, changes_b, no_doubt, consider_moving
+    )
     
     if dry_run:
         _preview_changes(final_changes)
@@ -263,8 +270,61 @@ def _compare_changelists(
     changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
     changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
     no_doubt: bool = False,
+    consider_moving: bool = False,
 ) -> t.Iterator[T.ComposedAction]:
+    
+    if consider_moving:
+        moved_keys = []
+        
+        def check_moving(changes_p: dict):
+            minus_arrowed_items = defaultdict(list)
+            #   {(name, time): [relpath, ...], ...}
+            for k, (m, t) in changes_p.items():
+                if m == '->':
+                    minus_arrowed_items[(k.rsplit('/', 1)[-1], t)].append(k)
+            if not minus_arrowed_items:
+                print('no moved items')
+                return
+            
+            # # preview
+            # for i, (k, v) in enumerate(minus_arrowed_items.items()):
+            #     if i > 10: break
+            #     print(':v', 'x -> ...', i, k, v)
+            # for k, (m, t) in changes_p.items():
+            #     if m == '+>':
+            #         print(':vi', k, m, t)
+            #         if k.endswith('260203-171319-7854a0.jpg'):
+            #             print(
+            #                 ':v1',
+            #                 minus_arrowed_items[
+            #                     ('260203-171319-7854a0.jpg', 1770109999)
+            #                 ],
+            #                 (k, m, t)
+            #             )
+            #             assert (k.rsplit('/', 1)[-1], t) in minus_arrowed_items
+            #             break
+            # else:
+            #     raise Exception('test failed: key not in "+>" list')
+            
+            for k, (m, t) in changes_p.items():
+                if m == '+>':
+                    if (x := (k.rsplit('/', 1)[-1], t)) in minus_arrowed_items:
+                        y = minus_arrowed_items[x]
+                        if len(y) == 1:
+                            z = y[0]
+                            moved_keys.append(k)
+                            moved_keys.append(z)
+                            yield (k, z), '~>', t
+            
+        yield from check_moving(changes_a)
+        yield from ((x[0], '<~', x[2]) for x in check_moving(changes_b))
+        resolved_moved_keys = frozenset(moved_keys)
+    else:
+        resolved_moved_keys = None
+        
     for k, (ma, ta) in changes_a.items():
+        if consider_moving and k in resolved_moved_keys:
+            continue
         if k in changes_b:
             mb, tb = changes_b[k]
             if ma == '+>' or ma == '=>':
@@ -297,6 +357,8 @@ def _compare_changelists(
         else:
             yield k, ma, ta
     for k, (mb, tb) in changes_b.items():
+        if consider_moving and k in resolved_moved_keys:
+            continue
         if k not in changes_a:
             if mb == '+>':
                 yield k, '<+', tb
@@ -311,15 +373,14 @@ def _preview_changes(changes: t.Iterator[T.ComposedAction]) -> None:
     table = [('index', 'left', 'action', 'right')]
     action_count = defaultdict(int)
     for k, m, _ in changes:
-        if k.endswith('/') and '=' in m:
-            continue
         i += 1
         colored_key = '[{}]{}[/]'.format(
             'yellow' if '?' in m else
             'green' if '+' in m else
             'blue' if '=' in m else
-            'red',
-            k.replace('[', '\\[')
+            'green dim' if '~' in m else
+            'red',  # '-' in m
+            (k[0] if '~' in m else k).replace('[', '\\[')
         )
         # table.append((
         #     str(i),
@@ -336,18 +397,14 @@ def _preview_changes(changes: t.Iterator[T.ComposedAction]) -> None:
         table.append((
             str(i),
             *(
-                # (colored_key, '+>', '') if m == '+>' else
-                # (colored_key, '=>', '...') if m == '=>' else
-                # ('', '->', colored_key) if m == '->' else
-                # ('', '<+', colored_key) if m == '<+' else
-                # ('...', '<=', colored_key) if m == '<=' else
-                # (colored_key, '<-', '')  # '<-'
                 (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
                 (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
+                (colored_key, '~>', '[dim]<movedto>[/]') if m == '~>' else
                 ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
                 ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
                 ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
-                (colored_key, '<-', '[dim]<deleted>[/]')  # '<-'
+                ('[dim]<movedto>[/]', '<~', colored_key) if m == '<~' else
+                (colored_key, '<-', '[dim]<deleted>[/]')  # m == '<-'
             )
         ))
         action_count[m] += 1
@@ -384,25 +441,25 @@ def _apply_changes(
             d += '/' + x
             _created_dirs_b.add(d)
     
-    def delete_dir_a(dirpath: T.AbsPath) -> None:
-        if fs_a.exist(dirpath):
-            fs_a.remove_tree(dirpath)
-    
-    def delete_dir_b(dirpath: T.AbsPath) -> None:
-        if fs_b.exist(dirpath):
-            fs_b.remove_tree(dirpath)
-    
-    def make_dir_a(dirpath: T.AbsPath) -> None:
-        if dirpath not in _created_dirs_a:
-            if not fs_a.exist(dirpath):
-                fs_a.make_dir(dirpath)
-            _created_dirs_a.add(dirpath)
-    
-    def make_dir_b(dirpath: T.AbsPath) -> None:
-        if dirpath not in _created_dirs_b:
-            if not fs_b.exist(dirpath):
-                fs_b.make_dir(dirpath)
-            _created_dirs_b.add(dirpath)
+    # def delete_dir_a(dirpath: T.AbsPath) -> None:
+    #     if fs_a.exist(dirpath):
+    #         fs_a.remove_tree(dirpath)
+    #
+    # def delete_dir_b(dirpath: T.AbsPath) -> None:
+    #     if fs_b.exist(dirpath):
+    #         fs_b.remove_tree(dirpath)
+    #
+    # def make_dir_a(dirpath: T.AbsPath) -> None:
+    #     if dirpath not in _created_dirs_a:
+    #         if not fs_a.exist(dirpath):
+    #             fs_a.make_dir(dirpath)
+    #         _created_dirs_a.add(dirpath)
+    #
+    # def make_dir_b(dirpath: T.AbsPath) -> None:
+    #     if dirpath not in _created_dirs_b:
+    #         if not fs_b.exist(dirpath):
+    #             fs_b.make_dir(dirpath)
+    #         _created_dirs_b.add(dirpath)
     
     def make_dirs_a(filepath: str) -> None:
         i = filepath.rfind('/')
@@ -443,6 +500,16 @@ def _apply_changes(
         if fs_b.exist(file):
             fs_b.remove_file(file)
     
+    def move_file_a(relsrc: T.Path, reldst: T.Path) -> None:
+        file_i = '{}/{}'.format(root_a, relsrc)
+        file_o = '{}/{}'.format(root_a, reldst)
+        fs_a.move_file(file_i, file_o)
+    
+    def move_file_b(relsrc: T.Path, reldst: T.Path) -> None:
+        file_i = '{}/{}'.format(root_b, relsrc)
+        file_o = '{}/{}'.format(root_b, reldst)
+        fs_b.move_file(file_i, file_o)
+    
     def update_file_a2b(relpath: T.Path) -> None:
         file_i = '{}/{}'.format(root_a, relpath)
         file_o = '{}/{}'.format(root_b, relpath)
@@ -471,72 +538,63 @@ def _apply_changes(
     snap_new: T.Nodes = snap_data_base
     
     for k, m, t in changes:
-        # isdir = k.endswith('/')
-        # if k.endswith('/') and '=' in m:
-        #     continue
-        
         # resolve conflict
         if m.endswith('?'):
             assert m in ('=>?', '<=?')
-            if not k.endswith('/'):
-                if m == '=>?':
-                    backup_conflict_file_b('{}/{}'.format(root_b, k), t)
-                else:
-                    backup_conflict_file_a('{}/{}'.format(root_a, k))
+            if m == '=>?':
+                backup_conflict_file_b('{}/{}'.format(root_b, k), t)
+            else:
+                backup_conflict_file_a('{}/{}'.format(root_a, k))
             m = m[:-1]
         # assert '?' not in m
         
         colored_key = '[{}]{}[/]'.format(
             'green' if '+' in m else
             'blue' if '=' in m else
-            'red',
-            k.replace('[', '\\[')
+            'green dim' if '~' in m else
+            'red',  # '-' in m
+            (k[0] if '~' in m else k).replace('[', '\\[')
         )
         # noinspection PyStringFormat
         print(':ir', '{} {} {}'.format(
             *(
                 (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
                 (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
+                (colored_key, '~>', '[dim]<movedto>[/]') if m == '~>' else
                 ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
                 ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
                 ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
-                (colored_key, '<-', '[dim]<deleted>[/]')  # '<-'
+                ('[dim]<movedto>[/]', '<~', colored_key) if m == '<~' else
+                (colored_key, '<-', '[dim]<deleted>[/]')  # m == '<-'
             )
         ))
         
-        if k.endswith('/'):
-            if m == '+>':
-                make_dir_b('{}/{}'.format(root_b, k))
-                snap_new[k] = t
-            elif m == '->':
-                delete_dir_b('{}/{}'.format(root_b, k))
-                snap_new.pop(k)
-            elif m == '<+':
-                make_dir_a('{}/{}'.format(root_a, k))
-                snap_new[k] = t
-            elif m == '<-':
-                delete_dir_a('{}/{}'.format(root_a, k))
-                snap_new.pop(k)
-            else:
-                snap_new[k] = t
-                # raise Exception(k, m, t)
+        if m in ('+>', '=>'):
+            make_dirs_b('{}/{}'.format(root_b, k))
+            update_file_a2b(k)
+            snap_new[k] = t
+        elif m == '->':
+            delete_file_b('{}/{}'.format(root_b, k))
+            snap_new.pop(k)
+        elif m == '~>':
+            ka, kb = k
+            make_dirs_b('{}/{}'.format(root_b, ka))
+            move_file_b(kb, ka)
+            snap_new[ka] = t
+        elif m in ('<+', '<='):
+            make_dirs_a('{}/{}'.format(root_a, k))
+            update_file_b2a(k, t)
+            snap_new[k] = t
+        elif m == '<-':
+            delete_file_a('{}/{}'.format(root_a, k))
+            snap_new.pop(k)
+        elif m == '<~':
+            kb, ka = k
+            make_dirs_a('{}/{}'.format(root_a, kb))
+            move_file_a(ka, kb)
+            snap_new[kb] = t
         else:
-            if m in ('+>', '=>'):
-                make_dirs_b('{}/{}'.format(root_b, k))
-                update_file_a2b(k)
-                snap_new[k] = t
-            elif m == '->':
-                delete_file_b('{}/{}'.format(root_b, k))
-                snap_new.pop(k)
-            elif m in ('<+', '<='):
-                make_dirs_a('{}/{}'.format(root_a, k))
-                update_file_b2a(k, t)
-                snap_new[k] = t
-            elif m == '<-':
-                delete_file_a('{}/{}'.format(root_a, k))
-                snap_new.pop(k)
-            else:
-                raise Exception(k, m, t)
+            raise Exception(k, m, t)
     
     if fs0.empty(_conflicts_dir):
         fs0.remove_tree(_conflicts_dir)
