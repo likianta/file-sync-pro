@@ -329,10 +329,15 @@ def _compare_changelists(
             mb, tb = changes_b[k]
             if ma == '+>' or ma == '=>':
                 if mb == '+>' or mb == '=>':
-                    if ta >= tb:
+                    if ta > tb:
                         # b created/updated -> a created/updated
                         if no_doubt:
                             yield k, '=>', ta
+                        else:
+                            yield k, '=>?', ta
+                    elif ta == tb:
+                        if no_doubt:
+                            pass
                         else:
                             yield k, '=>?', ta
                     else:  # ta < tb
@@ -619,6 +624,7 @@ def _make_version(files_data):
 
 
 def _lock_snapshot(full_data, files_data, output_file):
+    files_data = dict(sorted(files_data.items()))
     full_data['base'] = full_data['current'] = {
         'version': _make_version(files_data),
         'files': files_data,
