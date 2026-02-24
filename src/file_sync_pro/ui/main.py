@@ -1,7 +1,6 @@
 if __name__ == '__main__':
     __package__ = 'src.file_sync_pro.ui'
 
-import airmise as air
 import streamlit as st
 import streamlit_canary as sc
 from argsense import cli
@@ -11,31 +10,19 @@ from ..snapshot import api as snap_api
 
 
 _state = sc.get_state(lambda: {
-    'air_connected': False,
     'snapshot_names': {},
     'sources': tuple(fs.find_dir_names('data/snapshots')),
-}, version=25)
+}, version=27)
 
 
 @cli
-def main(remote_ip: str = '172.20.128.101') -> None:
-    """
-    params:
-        remote_ip:  # FIXME: optionally required?
-            - 172.20.128.101
-            - 192.168.8.101
-            - ...
-    """
-    # if not _state['air_connected']:
-    #     air.connect(remote_ip, 2160)
-    #     _state['air_connected'] = True
-    
+def main(host_name: str = 'likianta-rider-r2') -> None:
     cols = st.columns(2)
     with cols[0]:
+        assert host_name in _state['sources']
         src0 = st.selectbox(
             'Left source',
-            _state['sources'],
-            index=1,  # index=1 indicates to "likianta-rider-r2"
+            (host_name,),
             disabled=True,  # make this widget "read-only"
         )
         if src0 not in _state['snapshot_names']:
@@ -112,7 +99,7 @@ if __name__ == '__main__':
     1. android termux:
         python -m file_sync_pro run_air_server
     2. pc:
-        strun 2163 src/file_sync_pro/ui/main.py <android_ip>
+        strun 2163 src/file_sync_pro/ui/main.py
     """
     st.set_page_config('File Sync Pro')
     cli.run(main)
