@@ -53,10 +53,13 @@ class AirFileSystem(BaseFileSystem):
     def exist(self, path: T.Path) -> bool:
         return self._fs.exist(path)
     
+    def findall_dirs(self, root):
+        return self._fs.findall_dirs(root)
+    
     def findall_files(
         self, root: T.Path, history: T.Tree = None, ignores: T.Ignores = None
     ) -> t.Iterator[t.Tuple[T.Path, T.Time]]:
-        yield from self._fs.findall_files(root, history, ignores)
+        return self._fs.findall_files(root, history, ignores)
     
     def load(self, file: T.Path, *, binary: bool = False) -> t.Any:
         return self._fs.load(file, binary=binary)

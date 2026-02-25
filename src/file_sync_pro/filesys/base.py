@@ -21,6 +21,9 @@ class BaseFileSystem:
     # ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:
     #     raise NotImplementedError
     
+    def findall_dirs(self, root):
+        raise NotImplementedError
+    
     def findall_files(
         self, root: T.Path, ignores: T.Ignores = None,
     ) -> t.Iterable[t.Tuple[T.Path, T.Time]]:

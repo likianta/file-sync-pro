@@ -90,7 +90,7 @@ def fix_mtime(
                 raise Exception(
                     'you need to sync the content of {} first'.format(key)
                 )
-            
+    
     if dry_run:
         if rowx:
             print(':r2', rows)
