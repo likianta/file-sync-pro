@@ -84,5 +84,12 @@ class FileSystem:
                 reuse_count, total_count, reuse_count / total_count
             ))
     
-    def findall_nodes(self, root: T.DirPath) -> T.TimeChanges:
-        return dict((f.relpath, f.mtime) for f in self._fs1.findall_files(root))
+    def findall_nodes(self, root: T.DirPath, exclusion=()) -> T.TimeChanges:
+        """
+        exclusion: e.g. ('A/', 'B/C/')
+        """
+        return dict(
+            (f.relpath, f.mtime)
+            for f in self._fs1.findall_files(root)
+            if (not f.relpath.startswith(exclusion) if exclusion else True)
+        )

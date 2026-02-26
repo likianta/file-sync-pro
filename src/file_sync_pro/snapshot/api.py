@@ -47,9 +47,13 @@ class T:
     
     SnapshotFull = t.TypedDict('SnapshotFull', {
         'root'   : Path,
-        'ignores': t.Union[t.List[Path], t.FrozenSet[Path]],
-        #   the list type is for saving to ".json" file. frozenset is for
-        #   speeding runtime.
+        'ignores': t.Union[t.List[Path], t.Tuple[Path, ...]],
+        #   this field is optional.
+        #   this field is filled by user with manual edit.
+        #   <t.List[Path]> is used for serializing to the json file.
+        #   <t.Tuple[Path, ...]> is used in the runtime. see also
+        #   <../filesys2/specific.py : FileSystem : findall_nodes : [param]
+        #   exclusion>
         'base'   : SnapshotItem,
         'current': SnapshotItem,
     })
@@ -85,7 +89,9 @@ def update_snapshot(snap_file: T.AnyPath):
     fs1 = FileSystem(full_data['root'])
     root = fs1.root
     
-    changed_files = fs1.findall_nodes(root)
+    changed_files = fs1.findall_nodes(
+        root, exclusion=tuple(full_data.get('ignores', ()))
+    )
     full_data['current'] = {
         'version': _make_version(changed_files),
         'files'  : changed_files,
