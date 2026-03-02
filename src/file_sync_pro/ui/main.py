@@ -9,17 +9,22 @@ from . import snap_maker
 from ..snapshot import api as snap_api
 
 
-_state = sc.get_state(lambda: {
+_state = sc.init_state(lambda: {
     'snapshot_names': {},
-    'sources': tuple(fs.find_dir_names('data/snapshots')),
-}, version=27)
+    'source_names': (),
+}, version=28)
 
 
 @cli
 def main(host_name: str = 'likianta-rider-r2') -> None:
+    if not _state['source_names']:
+        dirnames = fs.find_dir_names('data/snapshots')
+        assert host_name in dirnames
+        dirnames.remove(host_name)
+        _state['source_names'] = tuple(dirnames)
+    
     cols = st.columns(2)
     with cols[0]:
-        assert host_name in _state['sources']
         src0 = st.selectbox(
             'Left source',
             (host_name,),
@@ -33,12 +38,8 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
     with cols[1]:
         src1 = st.selectbox(
             'Right source',
-            _state['sources'],
+            _state['source_names'],
         )
-    if src1 == src0:
-        st.warning('Cannot select the same source in both sides.')
-        return
-    else:
         if src1 not in _state['snapshot_names']:
             _state['snapshot_names'][src1] = tuple(
                 x.removesuffix('.json') for x in
@@ -90,7 +91,8 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
                 snap_api.sync_snapshot(snap_a, snap_b, **kwargs)
         with place2:
             if st.button('Merge'):
-                kwargs.pop('manual_select_base_side', None)
+                kwargs.pop('manual_select_base_side')
+                kwargs.pop('consider_moving')
                 snap_api.merge_snapshot(snap_a, snap_b, **kwargs)
 
 
