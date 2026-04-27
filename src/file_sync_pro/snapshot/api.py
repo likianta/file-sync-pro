@@ -105,7 +105,8 @@ def sync_snapshot(
     dry_run: bool = False,
     no_doubt: bool = False,
     consider_moving: bool = False,
-    manual_select_base_side: t.Literal['a', 'b'] = '',
+    manual_select_base_side: t.Literal['a', 'b', ''] = '',
+    _preview_handler: t.Optional[t.Callable] = None,
 ) -> None:
     """
     params:
@@ -206,7 +207,10 @@ def sync_snapshot(
     )
     
     if dry_run:
-        _preview_changes(final_changes)
+        if _preview_handler:
+            _preview_handler(final_changes)
+        else:
+            _preview_changes(final_changes)
     else:
         fs_a = FileSystem(snap_alldata_a['root'])
         fs_b = FileSystem(snap_alldata_b['root'])

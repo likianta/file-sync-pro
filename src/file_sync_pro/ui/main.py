@@ -9,6 +9,13 @@ from . import snap_maker
 from ..snapshot import api as snap_api
 
 
+# @sc.init_state
+# class State:
+#     snapshot_names = {}
+#     source_names = ()
+#     __version__ = 29
+
+
 _state = sc.init_state(lambda: {
     'snapshot_names': {},
     'source_names': (),
@@ -84,8 +91,8 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
                 horizontal=True
             )
             kwargs['no_doubt'] = st.toggle('No doubt')
+            kwargs['consider_moving'] = st.toggle('Consider moving')
         kwargs['dry_run'] = st.toggle('Dry run')
-        kwargs['consider_moving'] = st.toggle('Consider moving')
         with place1:
             if st.button('Sync', type='primary'):
                 snap_api.sync_snapshot(snap_a, snap_b, **kwargs)
@@ -95,6 +102,8 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
                 kwargs.pop('consider_moving')
                 snap_api.merge_snapshot(snap_a, snap_b, **kwargs)
 
+def _preview_changes(changes):
+    ...
 
 if __name__ == '__main__':
     """
