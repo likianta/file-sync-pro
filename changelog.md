@@ -1,6 +1,6 @@
 # Changelog
 
-### 0.2.1 (wip)
+### 0.2.1 (2026-05-06)
 
 - Snapshot relates only with device tree, not device address.
 
