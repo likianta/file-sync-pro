@@ -18,7 +18,7 @@ from ..filesys import LocalFileSystem
 class T:
     FileSystem = t.Union[AirFileSystem, FtpFileSystem, LocalFileSystem]
     
-    AbsPath = AnyPath = Path = str
+    AbsPath = AnyPath = Path = RelPath = str
     #   AbsPath: be noted this can be a local path, or remote path.
     #       for examples:
     #           C:/Likianta/documents/gitbook
@@ -47,10 +47,10 @@ class T:
     })
     
     SnapshotFull = t.TypedDict('SnapshotFull', {
-        'root'   : Path,
-        'ignores': t.Union[t.List[Path], t.FrozenSet[Path]],
-        #   the list type is for saving to ".json" file. frozenset is for
-        #   speeding runtime.
+        'root'   : AbsPath,
+        'ignores': t.Union[t.List[RelPath], t.FrozenSet[RelPath]],
+        #   `List[RelPath]` is for saving to ".json" file. `FrozenSet[RelPath]` 
+        #   is for speeding runtime.
         'base'   : SnapshotItem,
         'current': SnapshotItem,
     })
@@ -69,7 +69,7 @@ class Snapshot:
         if snapshot_file.startswith(('air://', 'ftp://')):
             self.is_snapshot_remote = True
             prefix = snapshot_file.split('://', 1)[0]
-            syscls = {'air': AirFileSystem, 'ftp': FtpFileSystem}[prefix]
+            syscls = prefix == 'air' and AirFileSystem or FtpFileSystem
             self.fs, self.snapshot_file = syscls.create_from_url(snapshot_file)
             if self.fs.exist(self.snapshot_file):
                 self.source_root = self.load_snapshot()['root']

@@ -1,3 +1,4 @@
+import airmise as air
 from collections import defaultdict
 from typing import Dict
 from typing import Iterator
@@ -15,19 +16,33 @@ class T:
 
 
 class FileSystem:
-    
-    def __init__(self, root):
+    def __init__(self, root: str, addr: str = '') -> None:
+        """
+        params:
+            addr: empty string or `<ip>:<port>` format.
+        """
+        assert not root.startswith(('air://', 'ftp://')), (
+            'Root path should not contain IP information. Please pass this '
+            'through the `addr` parameter.'
+        )
         self._fs0 = local.fs
-        self.is_remote = remote.is_remote_path(root)
+        ip = addr.split(':')[0]
+        self.is_remote = not (
+            ip == '' or ip == 'localhost' or ip == air.get_local_ip_address()
+        )
+        print(ip, self.is_remote, ':v')
         if self.is_remote:
-            self._fs1, self.root = remote.create_fs_from_url(root)
+            assert ip
+            self._fs1, self.root = remote.create_fs_from_url(
+                'air://{}/{}'.format(addr, root.lstrip('/'))
+            )
         else:
             self._fs1, self.root = local.fs, local.fs.abspath(root)
-    
+
     @property
     def core(self):
         return self._fs1
-    
+
     @property
     def url(self):
         if self.is_remote:
@@ -35,13 +50,13 @@ class FileSystem:
             return '{}/{}'.format(self._fs1.url, self.root[1:])  # noqa
         else:
             return self.root
-    
+
     def findall_dirs(
         self, root: T.DirPath
     ) -> Iterator[Tuple[T.RelPath, T.Time]]:
         for d in self._fs1.findall_dirs(root):
             yield d.relpath, d.mtime
-    
+
     def findall_files(
         self, root: T.DirPath, history: Tuple[T.Tree, T.Time] = None
     ) -> Iterator[Tuple[T.RelPath, T.Time]]:
@@ -54,10 +69,10 @@ class FileSystem:
             for k, v in file_2_mtime.items():
                 d = k.rsplit('/', 1)[0] if '/' in k else '.'
                 dir_2_files[d].append((k, v))
-        
+
         total_count = 0
         reuse_count = 0
-        
+
         def submit_files(dirpath):
             nonlocal total_count, reuse_count
             for f in self._fs1.find_files(dirpath):
@@ -68,7 +83,7 @@ class FileSystem:
                     reuse_count += 1
                 else:
                     print(':i3p', key)
-        
+
         yield from submit_files(root)
         for d in self._fs1.findall_dirs(root):
             key = d.relpath
@@ -78,12 +93,15 @@ class FileSystem:
                 reuse_count += len(xlist)
             else:
                 yield from submit_files(d.path)
-        
+
         if history:
-            print(':v2p', 'reuse {} of {} files ({:.2%})'.format(
-                reuse_count, total_count, reuse_count / total_count
-            ))
-    
+            print(
+                ':v2p',
+                'reuse {} of {} files ({:.2%})'.format(
+                    reuse_count, total_count, reuse_count / total_count
+                ),
+            )
+
     def findall_nodes(self, root: T.DirPath, exclusion=()) -> T.TimeChanges:
         """
         exclusion: e.g. ('A/', 'B/C/')

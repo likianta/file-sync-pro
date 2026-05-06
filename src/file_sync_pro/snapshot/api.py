@@ -84,9 +84,9 @@ def rebuild_snapshot(snap_file: T.AnyPath):
     create_snapshot(snap_file, fs0.load(snap_file)['root'])
 
 
-def update_snapshot(snap_file: T.AnyPath):
+def update_snapshot(snap_file: T.AnyPath, addr=''):
     full_data = fs0.load(snap_file)
-    fs1 = FileSystem(full_data['root'])
+    fs1 = FileSystem(full_data['root'], addr)
     root = fs1.root
     
     changed_files = fs1.findall_nodes(
@@ -101,7 +101,9 @@ def update_snapshot(snap_file: T.AnyPath):
 
 def sync_snapshot(
     snap_file_a: T.AnyPath,
+    source_addr_a: str,
     snap_file_b: T.AnyPath,
+    source_addr_b: str,
     dry_run: bool = False,
     no_doubt: bool = False,
     consider_moving: bool = False,
@@ -212,8 +214,8 @@ def sync_snapshot(
         else:
             _preview_changes(final_changes)
     else:
-        fs_a = FileSystem(snap_alldata_a['root'])
-        fs_b = FileSystem(snap_alldata_b['root'])
+        fs_a = FileSystem(snap_alldata_a['root'], source_addr_a)
+        fs_b = FileSystem(snap_alldata_b['root'], source_addr_b)
         snap_data_new = _apply_changes(
             final_changes,
             snap_data_base,
@@ -231,7 +233,9 @@ def sync_snapshot(
 
 def merge_snapshot(
     snap_file_a: T.AnyPath,
+    source_addr_a: str,
     snap_file_b: T.AnyPath,
+    source_addr_b: str,
     dry_run: bool = False,
     no_doubt: bool = False,
 ):
