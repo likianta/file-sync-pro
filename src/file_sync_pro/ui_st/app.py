@@ -124,27 +124,30 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
         - :{}[{} **{}** ({})]
         """.format(
             *(
-                l_addr == '' 
+                l_addr == ''
                 and ('gray', ':material/desktop_windows:', l_path, 'local')
                 or ('red', ':material/desktop_cloud:', l_path, 'remote')
             ),
             *(
-                r_addr == '' 
+                r_addr == ''
                 and ('gray', ':material/desktop_windows:', r_path, 'local')
                 or ('red', ':material/desktop_cloud:', r_path, 'remote')
             ),
         )
     )
 
-    with st.container(horizontal=True, vertical_alignment='center'):
+    place1 = st.container(horizontal=True, vertical_alignment='center')
+    place2 = st.empty()
+
+    with place1:
         if st.button('Update left'):
             snap_api.update_snapshot(l_snap_file, l_addr)
             st.toast(':green[Left snapshot updated.]')
         if st.button('Update right'):
             snap_api.update_snapshot(r_snap_file, r_addr)
             st.toast(':green[Right snapshot updated.]')
-        place1 = st.empty()
-        place2 = st.empty()
+        do_sync = st.button('Sync', type='primary')
+        do_merge = st.button('Merge')
         kwargs = {}
         with st.popover('More options'):
             kwargs['manual_select_base_side'] = sc.radio(
@@ -155,18 +158,23 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
             kwargs['no_doubt'] = st.toggle('No doubt')
             kwargs['consider_moving'] = st.toggle('Consider moving')
         kwargs['dry_run'] = st.toggle('Dry run')
-        with place1:
-            if st.button('Sync', type='primary'):
-                snap_api.sync_snapshot(
-                    l_snap_file, l_addr, r_snap_file, r_addr, **kwargs
-                )
-        with place2:
-            if st.button('Merge'):
-                kwargs.pop('manual_select_base_side')
-                kwargs.pop('consider_moving')
-                snap_api.merge_snapshot(
-                    l_snap_file, l_addr, r_snap_file, r_addr, **kwargs
-                )
+        if do_sync:
+            with place2:
+                with sc.progress('Syncing...') as prog:
+                    snap_api.sync_snapshot(
+                        l_snap_file,
+                        l_addr,
+                        r_snap_file,
+                        r_addr,
+                        _progress=prog,
+                        **kwargs,
+                    )
+        if do_merge:
+            kwargs.pop('manual_select_base_side')
+            kwargs.pop('consider_moving')
+            snap_api.merge_snapshot(
+                l_snap_file, l_addr, r_snap_file, r_addr, **kwargs
+            )
 
 
 def _preview_changes(changes): ...

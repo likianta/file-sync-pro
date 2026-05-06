@@ -4551,13 +4551,13 @@ reference = "aliyun"
 
 [[package]]
 name = "streamlit-canary"
-version = "0.3.0a14"
+version = "0.3.0a15"
 description = "LK-flavored Streamlit components."
 optional = false
 python-versions = ">=3.9"
 groups = ["dev"]
 files = [
-    {file = "streamlit_canary-0.3.0a14-py3-none-any.whl", hash = "sha256:87000216356864afe7d7c7041e4b2db4725c098cb40223a984491ca2f3f09584"},
+    {file = "streamlit_canary-0.3.0a15-py3-none-any.whl", hash = "sha256:4b1ef2f261c909599b181887089b2d4f1f207c803927abf1af7a50dca7c27f01"},
 ]
 
 [package.dependencies]
@@ -5261,4 +5261,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "34f1a1fc71220e62078bae6a1dba918bed52039fe6308d8d402f144b5f50289e"
+content-hash = "cd3b40c02c5ceacdbadee6f7d45905fa250b03b3a9b6b229b01a613312f76d9b"

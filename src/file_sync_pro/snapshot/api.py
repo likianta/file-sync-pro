@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import streamlit_canary as sc
 import typing as t
 from collections import defaultdict
 from lk_utils import fs as fs0
@@ -109,6 +110,7 @@ def sync_snapshot(
     consider_moving: bool = False,
     manual_select_base_side: t.Literal['a', 'b', ''] = '',
     _preview_handler: t.Optional[t.Callable] = None,
+    _progress: t.Optional[sc.Progress] = None,
 ) -> None:
     """
     params:
@@ -217,7 +219,7 @@ def sync_snapshot(
         fs_a = FileSystem(snap_alldata_a['root'], source_addr_a)
         fs_b = FileSystem(snap_alldata_b['root'], source_addr_b)
         snap_data_new = _apply_changes(
-            final_changes,
+            tuple(final_changes),
             snap_data_base,
             snap_data_a,
             snap_data_b,
@@ -225,6 +227,7 @@ def sync_snapshot(
             fs_b.core,
             fs_a.root,
             fs_b.root,
+            progress=_progress,
         )
         print(':v3', 'lock snapshot')
         _lock_snapshot(snap_alldata_a, snap_data_new, snap_file_a)
@@ -265,7 +268,7 @@ def merge_snapshot(
         fs_a = FileSystem(snap_alldata_a['root'])
         fs_b = FileSystem(snap_alldata_b['root'])
         snap_data_new = _apply_changes(
-            final_changes,
+            tuple(final_changes),
             {},
             snap_alldata_a['current']['files'],
             snap_alldata_b['current']['files'],
@@ -434,9 +437,8 @@ def _preview_changes(changes: t.Iterator[T.ComposedAction]) -> None:
         print('no change', ':v4')
 
 
-# noinspection PyTypeChecker
 def _apply_changes(
-    changes: t.Iterator[T.ComposedAction],
+    changes: t.Sequence[T.ComposedAction],
     snap_data_base: T.Nodes,
     snap_data_a: T.Nodes,
     snap_data_b: T.Nodes,
@@ -444,6 +446,7 @@ def _apply_changes(
     fs_b: RemoteFileSystem,
     root_a: str,
     root_b: str,
+    progress: t.Optional[sc.Progress] = None,
 ) -> T.Nodes:
     print(root_a, root_b, ':li0')
     
@@ -556,7 +559,9 @@ def _apply_changes(
     # snap_new = snap_data_base.copy()
     snap_new: T.Nodes = snap_data_base
     
-    for k, m, t in changes:
+    if progress:
+        progress.total = len(changes)
+    for k, m, t in changes:  # noqa
         # resolve conflict
         if m.endswith('?'):
             assert m in ('=>?', '<=?')
@@ -574,7 +579,6 @@ def _apply_changes(
             'red',  # '-' in m
             (k[0] if '~' in m else k).replace('[', '\\[')
         )
-        # noinspection PyStringFormat
         print(':ir', '{} {} {}'.format(
             *(
                 (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
@@ -587,6 +591,26 @@ def _apply_changes(
                 (colored_key, '<-', '[dim]<deleted>[/]')  # m == '<-'
             )
         ))
+        if progress:
+            colored_key = ':{}[{}]'.format(
+                'green' if '+' in m else
+                'blue' if '=' in m else
+                'green' if '~' in m else
+                'red',  # '-' in m
+                (k[0] if '~' in m else k).replace('[', '\\[')
+            )
+            progress.update('{} {} {}'.format(
+                *(
+                    (colored_key, '+>', '...') if m == '+>' else
+                    (colored_key, '=>', '...') if m == '=>' else
+                    (colored_key, '~>', '...') if m == '~>' else
+                    ('...', '->', colored_key) if m == '->' else
+                    ('...', '<+', colored_key) if m == '<+' else
+                    ('...', '<=', colored_key) if m == '<=' else
+                    ('...', '<~', colored_key) if m == '<~' else
+                    (colored_key, '<-', '...')  # m == '<-'
+                )
+            ))
         
         if m in ('+>', '=>'):
             make_dirs_b('{}/{}'.format(root_b, k))
