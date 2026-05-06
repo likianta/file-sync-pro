@@ -361,18 +361,18 @@ reference = "aliyun"
 
 [[package]]
 name = "argsense"
-version = "1.1.1"
+version = "1.2.0a2"
 description = "New command line interface based on Rich library."
 optional = false
 python-versions = ">=3.8"
 groups = ["main", "dev"]
 files = [
-    {file = "argsense-1.1.1-py3-none-any.whl", hash = "sha256:3ae655478a3c0b80f431e5cbfebe9e3a397ab207edf0b32f8901ee8c79652b27"},
+    {file = "argsense-1.2.0a2-py3-none-any.whl", hash = "sha256:cd557787c51e5c554a6795b95e24c8097947a858719c1db094e87dd7a270020b"},
 ]
 
 [package.dependencies]
 lk-logger = ">=6.0.7,<7.0.0"
-rich = ">=14.0.0,<15.0.0"
+rich = {version = ">=15.0.0,<16.0.0", markers = "python_version >= \"3.9\" and python_version < \"4.0\""}
 
 [package.source]
 type = "legacy"
@@ -1912,13 +1912,13 @@ reference = "aliyun"
 
 [[package]]
 name = "lk-utils"
-version = "3.6.0b1"
+version = "3.6.0b3"
 description = "A set of utility wrappers made for data processing."
 optional = false
 python-versions = ">=3.8"
 groups = ["main", "dev"]
 files = [
-    {file = "lk_utils-3.6.0b1-py3-none-any.whl", hash = "sha256:24ee2b16f032268a6ee75f87bfdbe1bfaeb629a49966c9a99eab4d97a6cf58d5"},
+    {file = "lk_utils-3.6.0b3-py3-none-any.whl", hash = "sha256:24afa6898a54c5442a00c30bbe38380d3f48eed3052bf7ee35fdc69d0ca50889"},
 ]
 
 [package.dependencies]
@@ -1926,7 +1926,7 @@ argsense = ">=1.1.1,<2.0.0"
 lk-logger = ">=6.0.7,<7.0.0"
 psutil = ">=7.2.2,<8.0.0"
 pyyaml = ">=6.0.0,<7.0.0"
-rich = ">=14.0.0,<15.0.0"
+rich = {version = ">=15.0.0,<16.0.0", markers = "python_version >= \"3.9\" and python_version < \"4.0\""}
 typing-extensions = ">=4.0.0,<5.0.0"
 
 [package.extras]
@@ -4094,14 +4094,14 @@ reference = "aliyun"
 
 [[package]]
 name = "rich"
-version = "14.3.1"
+version = "15.0.0"
 description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
 optional = false
-python-versions = ">=3.8.0"
+python-versions = ">=3.9.0"
 groups = ["main", "dev"]
 files = [
-    {file = "rich-14.3.1-py3-none-any.whl", hash = "sha256:da750b1aebbff0b372557426fb3f35ba56de8ef954b3190315eb64076d6fb54e"},
-    {file = "rich-14.3.1.tar.gz", hash = "sha256:b8c5f568a3a749f9290ec6bddedf835cec33696bfc1e48bcfecb276c7386e4b8"},
+    {file = "rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"},
+    {file = "rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36"},
 ]
 
 [package.dependencies]
@@ -5261,4 +5261,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "cd3b40c02c5ceacdbadee6f7d45905fa250b03b3a9b6b229b01a613312f76d9b"
+content-hash = "1325538bef0a5d8aa3482d863929a2ca1f3e3332145c40704c68d193ccdad9bc"

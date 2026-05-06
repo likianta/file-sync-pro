@@ -2,11 +2,12 @@ import hashlib
 import json
 import os
 import streamlit_canary as sc
-import typing as t
+import typing as tp
 from collections import defaultdict
 from lk_utils import fs as fs0
 from lk_utils import timestamp
 from time import time
+from types import ModuleType
 from ..filesys2 import FileSystem
 from ..filesys2 import is_local_path
 from ..filesys2.remote import FileSystem as RemoteFileSystem
@@ -23,7 +24,7 @@ class T:
     #   slashes (\\), 'air://...' paths, 'ftp://...' paths... they are all
     #   allowed.
     Key = str  # a relpath
-    Movement = t.Literal['+>', '=>', '->', '~>', '<+', '<=', '<-', '<~', '==']
+    Movement = tp.Literal['+>', '=>', '->', '~>', '<+', '<=', '<-', '<~', '==']
     #   +>  add to right
     #   =>  overwrite to right
     #   ->  delete to right
@@ -34,30 +35,36 @@ class T:
     #   <~  move to left
     #   ==  no change
     Time = int
-    
-    ComposedAction = t.Union[
-        t.Tuple[Key, Movement, Time],
-        t.Tuple[t.Tuple[Key, Key], t.Literal['~>', '<~'], Time],
+
+    ComposedAction = tp.Union[
+        tp.Tuple[Key, Movement, Time],
+        tp.Tuple[tp.Tuple[Key, Key], tp.Literal['~>', '<~'], Time],
     ]
-    Nodes = t.Dict[Path, int]  # {relpath: modified_time, ...}
-    
-    SnapshotItem = t.TypedDict('SnapshotItem', {
-        'version': str,  # `<hash>-<time>`
-        'files'  : Nodes,
-    })
-    
-    SnapshotFull = t.TypedDict('SnapshotFull', {
-        'root'   : Path,
-        'ignores': t.Union[t.List[Path], t.Tuple[Path, ...]],
-        #   this field is optional.
-        #   this field is filled by user with manual edit.
-        #   <t.List[Path]> is used for serializing to the json file.
-        #   <t.Tuple[Path, ...]> is used in the runtime. see also
-        #   <../filesys2/specific.py : FileSystem : findall_nodes : [param]
-        #   exclusion>
-        'base'   : SnapshotItem,
-        'current': SnapshotItem,
-    })
+    Nodes = tp.Dict[Path, int]  # {relpath: modified_time, ...}
+
+    SnapshotItem = tp.TypedDict(
+        'SnapshotItem',
+        {
+            'version': str,  # `<hash>-<time>`
+            'files': Nodes,
+        },
+    )
+
+    SnapshotFull = tp.TypedDict(
+        'SnapshotFull',
+        {
+            'root': Path,
+            'ignores': tp.Union[tp.List[Path], tp.Tuple[Path, ...]],
+            #   this field is optional.
+            #   this field is filled by user with manual edit.
+            #   `tp.List[Path]` is used for serializing to the json file.
+            #   `tp.Tuple[Path, ...]` is used in the runtime. see also
+            #   `../filesys2/specific.py : FileSystem : findall_nodes : [param]
+            #   exclusion`
+            'base': SnapshotItem,
+            'current': SnapshotItem,
+        },
+    )
 
 
 def create_snapshot(snap_file: T.AnyPath, source_root: str) -> None:
@@ -70,16 +77,16 @@ def create_snapshot(snap_file: T.AnyPath, source_root: str) -> None:
     fs1 = FileSystem(source_root)
     root = fs1.root
     del source_root
-    
+
     files = fs1.findall_nodes(root)
     full_data = {'root': fs1.url, 'ignores': []}  # noqa
     full_data['current'] = full_data['base'] = {
         'version': _make_version(files),
-        'files'  : files,
+        'files': files,
     }
     fs0.dump(full_data, snap_file)
 
-    
+
 def rebuild_snapshot(snap_file: T.AnyPath):
     # assert fs0.exist(snap_file)
     create_snapshot(snap_file, fs0.load(snap_file)['root'])
@@ -89,13 +96,13 @@ def update_snapshot(snap_file: T.AnyPath, addr=''):
     full_data = fs0.load(snap_file)
     fs1 = FileSystem(full_data['root'], addr)
     root = fs1.root
-    
+
     changed_files = fs1.findall_nodes(
         root, exclusion=tuple(full_data.get('ignores', ()))
     )
     full_data['current'] = {
         'version': _make_version(changed_files),
-        'files'  : changed_files,
+        'files': changed_files,
     }
     fs0.dump(full_data, snap_file)
 
@@ -108,9 +115,9 @@ def sync_snapshot(
     dry_run: bool = False,
     no_doubt: bool = False,
     consider_moving: bool = False,
-    manual_select_base_side: t.Literal['a', 'b', ''] = '',
-    _preview_handler: t.Optional[t.Callable] = None,
-    _progress: t.Optional[sc.Progress] = None,
+    manual_select_base_side: tp.Literal['a', 'b', ''] = '',
+    _preview: tp.Optional[tp.Callable] = None,
+    _progress: tp.Optional[sc.Progress] = None,
 ) -> None:
     """
     params:
@@ -122,8 +129,8 @@ def sync_snapshot(
     """
     snap_alldata_a = fs0.load(snap_file_a)
     snap_alldata_b = fs0.load(snap_file_b)
-    
-    def select_base_side() -> t.Tuple[str, T.Nodes]:
+
+    def select_base_side() -> tp.Tuple[str, T.Nodes]:
         if manual_select_base_side:
             if manual_select_base_side == 'a':
                 base = snap_alldata_a['base']
@@ -147,7 +154,7 @@ def sync_snapshot(
                     raise Exception
         # noinspection PyUnboundLocalVariable
         return base['version'], base['files']
-    
+
     def compare_version(ver_a: str, ver_b: str) -> int:
         """
         tip: we'd prefer put newer ver at first argument, the older as `ver_b`.
@@ -160,17 +167,17 @@ def sync_snapshot(
             return 1
         else:
             return 2
-    
+
     snap_ver_base, snap_data_base = select_base_side()
     snap_data_a = snap_alldata_a['current']['files']
     snap_data_b = snap_alldata_b['current']['files']
-    
+
     # -------------------------------------------------------------------------
-    
+
     # noinspection PyTypeChecker
     def compare_new_to_old(
         snap_new: T.Nodes, snap_old: T.Nodes
-    ) -> t.Iterator[T.ComposedAction]:
+    ) -> tp.Iterator[T.ComposedAction]:
         """
         note: the yieled movement can only be the following:
             '+>', '=>', '->'.
@@ -192,34 +199,46 @@ def sync_snapshot(
         for k, time_old in snap_old.items():
             if k not in snap_new:
                 yield k, '->', time_old
-    
-    changes_a = {} if compare_version(
-        snap_alldata_a['current']['version'], snap_ver_base,
-    ) == 0 else {
-        k: (m, t_)
-        for k, m, t_ in compare_new_to_old(snap_data_a, snap_data_base)
-    }
-    changes_b = {} if compare_version(
-        snap_alldata_b['current']['version'], snap_ver_base,
-    ) == 0 else {
-        k: (m, t_)
-        for k, m, t_ in compare_new_to_old(snap_data_b, snap_data_base)
-    }
-    
-    final_changes = _compare_changelists(
-        changes_a, changes_b, no_doubt, consider_moving
+
+    changes_a = (
+        {}
+        if compare_version(
+            snap_alldata_a['current']['version'],
+            snap_ver_base,
+        )
+        == 0
+        else {
+            k: (m, t)
+            for k, m, t in compare_new_to_old(snap_data_a, snap_data_base)
+        }
     )
-    
+    changes_b = (
+        {}
+        if compare_version(
+            snap_alldata_b['current']['version'],
+            snap_ver_base,
+        )
+        == 0
+        else {
+            k: (m, t)
+            for k, m, t in compare_new_to_old(snap_data_b, snap_data_base)
+        }
+    )
+
+    final_changes = tuple(
+        _compare_changelists(changes_a, changes_b, no_doubt, consider_moving)
+    )
+
     if dry_run:
-        if _preview_handler:
-            _preview_handler(final_changes)
+        if _preview:
+            _preview(final_changes)
         else:
             _preview_changes(final_changes)
     else:
         fs_a = FileSystem(snap_alldata_a['root'], source_addr_a)
         fs_b = FileSystem(snap_alldata_b['root'], source_addr_b)
         snap_data_new = _apply_changes(
-            tuple(final_changes),
+            final_changes,
             snap_data_base,
             snap_data_a,
             snap_data_b,
@@ -248,7 +267,7 @@ def merge_snapshot(
     """
     snap_alldata_a = fs0.load(snap_file_a)
     snap_alldata_b = fs0.load(snap_file_b)
-    
+
     files_a = frozenset(snap_alldata_a['current']['files'].keys())
     files_b = frozenset(snap_alldata_b['current']['files'].keys())
     changes_a = {
@@ -261,7 +280,7 @@ def merge_snapshot(
     }
     # noinspection PyTypeChecker
     final_changes = _compare_changelists(changes_a, changes_b, no_doubt)
-    
+
     if dry_run:
         _preview_changes(final_changes)
     else:
@@ -284,15 +303,15 @@ def merge_snapshot(
 
 # noinspection PyTypeChecker
 def _compare_changelists(
-    changes_a: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
-    changes_b: t.Dict[T.Key, t.Tuple[T.Movement, T.Time]],
+    changes_a: tp.Dict[T.Key, tp.Tuple[T.Movement, T.Time]],
+    changes_b: tp.Dict[T.Key, tp.Tuple[T.Movement, T.Time]],
     no_doubt: bool = False,
     consider_moving: bool = False,
-) -> t.Iterator[T.ComposedAction]:
-    
+) -> tp.Iterator[T.ComposedAction]:
+
     if consider_moving:
         moved_keys = []
-        
+
         def check_moving(changes_p: dict):
             minus_arrowed_items = defaultdict(list)
             #   {(name, time): [relpath, ...], ...}
@@ -302,7 +321,7 @@ def _compare_changelists(
             if not minus_arrowed_items:
                 print('no moved items')
                 return
-            
+
             # # preview
             # for i, (k, v) in enumerate(minus_arrowed_items.items()):
             #     if i > 10: break
@@ -322,7 +341,7 @@ def _compare_changelists(
             #             break
             # else:
             #     raise Exception('test failed: key not in "+>" list')
-            
+
             for k, (m, t) in changes_p.items():
                 if m == '+>':
                     if (x := (k.rsplit('/', 1)[-1], t)) in minus_arrowed_items:
@@ -332,13 +351,13 @@ def _compare_changelists(
                             moved_keys.append(k)
                             moved_keys.append(z)
                             yield (k, z), '~>', t
-            
+
         yield from check_moving(changes_a)
         yield from ((x[0], '<~', x[2]) for x in check_moving(changes_b))
         resolved_moved_keys = frozenset(moved_keys)
     else:
         resolved_moved_keys = None
-        
+
     for k, (ma, ta) in changes_a.items():
         if consider_moving and k in resolved_moved_keys:
             continue
@@ -390,19 +409,23 @@ def _compare_changelists(
                 yield k, '<-', tb
 
 
-def _preview_changes(changes: t.Iterator[T.ComposedAction]) -> None:
+def _preview_changes(changes: tp.Iterable[T.ComposedAction]) -> None:
     i = 0
     table = [('index', 'left', 'action', 'right')]
     action_count = defaultdict(int)
     for k, m, _ in changes:
         i += 1
         colored_key = '[{}]{}[/]'.format(
-            'yellow' if '?' in m else
-            'green' if '+' in m else
-            'blue' if '=' in m else
-            'green dim' if '~' in m else
-            'red',  # '-' in m
-            (k[0] if '~' in m else k).replace('[', '\\[')
+            'yellow'
+            if '?' in m
+            else 'green'
+            if '+' in m
+            else 'blue'
+            if '=' in m
+            else 'green dim'
+            if '~' in m
+            else 'red',  # '-' in m
+            (isinstance(k, str) and k or k[0]).replace('[', '\\['),
         )
         # table.append((
         #     str(i),
@@ -416,19 +439,28 @@ def _preview_changes(changes: t.Iterator[T.ComposedAction]) -> None:
         # ))
         m = m.rstrip('?')
         # noinspection PyTypeChecker
-        table.append((
-            str(i),
-            *(
-                (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
-                (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
-                (colored_key, '~>', '[dim]<movedto>[/]') if m == '~>' else
-                ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
-                ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
-                ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
-                ('[dim]<movedto>[/]', '<~', colored_key) if m == '<~' else
-                (colored_key, '<-', '[dim]<deleted>[/]')  # m == '<-'
+        table.append(
+            (
+                str(i),
+                *(
+                    (colored_key, '+>', '[dim]<tocreate>[/]')
+                    if m == '+>'
+                    else (colored_key, '=>', '[dim]<outdated>[/]')
+                    if m == '=>'
+                    else (colored_key, '~>', '[dim]<movedto>[/]')
+                    if m == '~>'
+                    else ('[dim]<deleted>[/]', '->', colored_key)
+                    if m == '->'
+                    else ('[dim]<tocreate>[/]', '<+', colored_key)
+                    if m == '<+'
+                    else ('[dim]<outdated>[/]', '<=', colored_key)
+                    if m == '<='
+                    else ('[dim]<movedto>[/]', '<~', colored_key)
+                    if m == '<~'
+                    else (colored_key, '<-', '[dim]<deleted>[/]')  # m == '<-'
+                ),
             )
-        ))
+        )
         action_count[m] += 1
     if len(table) > 1:
         print(table, ':r2')
@@ -438,18 +470,18 @@ def _preview_changes(changes: t.Iterator[T.ComposedAction]) -> None:
 
 
 def _apply_changes(
-    changes: t.Sequence[T.ComposedAction],
+    changes: tp.Sequence[T.ComposedAction],
     snap_data_base: T.Nodes,
     snap_data_a: T.Nodes,
     snap_data_b: T.Nodes,
-    fs_a: 'fs0',  # noqa
+    fs_a: ModuleType,
     fs_b: RemoteFileSystem,
     root_a: str,
     root_b: str,
-    progress: t.Optional[sc.Progress] = None,
+    progress: tp.Optional[sc.Progress] = None,
 ) -> T.Nodes:
     print(root_a, root_b, ':li0')
-    
+
     _created_dirs_a = set()
     for p in snap_data_a:
         d = root_a
@@ -462,7 +494,7 @@ def _apply_changes(
         for x in p.split('/')[:-1]:
             d += '/' + x
             _created_dirs_b.add(d)
-    
+
     # def delete_dir_a(dirpath: T.AbsPath) -> None:
     #     if fs_a.exist(dirpath):
     #         fs_a.remove_tree(dirpath)
@@ -482,7 +514,7 @@ def _apply_changes(
     #         if not fs_b.exist(dirpath):
     #             fs_b.make_dir(dirpath)
     #         _created_dirs_b.add(dirpath)
-    
+
     def make_dirs_a(filepath: str) -> None:
         i = filepath.rfind('/')
         dirpath = filepath[:i]
@@ -490,7 +522,7 @@ def _apply_changes(
             if not fs_a.exist(dirpath):
                 fs_a.make_dirs(dirpath)
             _created_dirs_a.add(dirpath)
-    
+
     def make_dirs_b(filepath: str) -> None:
         i = filepath.rfind('/')
         dirpath = filepath[:i]
@@ -498,67 +530,65 @@ def _apply_changes(
             if not fs_b.exist(dirpath):
                 fs_b.make_dirs(dirpath)
             _created_dirs_b.add(dirpath)
-    
+
     _conflicts_dir = 'data/conflicts/{}'.format(timestamp('ymd_hns'))
     fs0.make_dir(_conflicts_dir)
-    
+
     def backup_conflict_file_a(file: T.Path) -> None:
         file_i = file
-        m, n, o = fs0.split(file_i, 3)
+        m, n, o = fs0.split(file_i, 3)  # type: ignore
         file_o = '{}/{}.a.{}'.format(_conflicts_dir, n, o)
         fs0.copy_file(file_i, file_o, reserve_metadata=True)
-    
+
     def backup_conflict_file_b(file: T.Path, mtime: int) -> None:
         file_i = file
-        m, n, o = fs0.split(file_i, 3)
+        m, n, o = fs0.split(file_i, 3)  # type: ignore
         file_o = '{}/{}.b.{}'.format(_conflicts_dir, n, o)
         _download_file(file_i, file_o, mtime)
-    
+
     def delete_file_a(file: T.Path) -> None:
         if fs_a.exist(file):
             fs_a.remove_file(file)
-    
+
     def delete_file_b(file: T.Path) -> None:
         if fs_b.exist(file):
             fs_b.remove_file(file)
-    
+
     def move_file_a(relsrc: T.Path, reldst: T.Path) -> None:
         file_i = '{}/{}'.format(root_a, relsrc)
         file_o = '{}/{}'.format(root_a, reldst)
         fs_a.move_file(file_i, file_o)
-    
+
     def move_file_b(relsrc: T.Path, reldst: T.Path) -> None:
         file_i = '{}/{}'.format(root_b, relsrc)
         file_o = '{}/{}'.format(root_b, reldst)
         fs_b.move_file(file_i, file_o)
-    
+
     def update_file_a2b(relpath: T.Path) -> None:
         file_i = '{}/{}'.format(root_a, relpath)
         file_o = '{}/{}'.format(root_b, relpath)
-        _upload_file(file_i, file_o, fs0.filetime(file_i))
-    
+        _upload_file(file_i, file_o, tp.cast(int, fs0.filetime(file_i)))
+
     def update_file_b2a(relpath: T.Path, mtime: int) -> None:
         file_i = '{}/{}'.format(root_b, relpath)
         file_o = '{}/{}'.format(root_a, relpath)
         _download_file(file_i, file_o, mtime)
-    
+
     def _download_file(file_i: T.Path, file_o: T.Path, mtime: T.Time):
         data = fs_b.load(file_i, 'binary')
         fs_a.dump(data, file_o, 'binary')
         os.utime(file_o, (mtime, mtime))
-    
-    def _upload_file(
-        file_i: T.Path, file_o: T.Path, mtime: T.Time
-    ) -> None:
+
+    def _upload_file(file_i: T.Path, file_o: T.Path, mtime: T.Time) -> None:
         data = fs_a.load(file_i, 'binary')
         fs_b.dump(data, file_o, 'binary')
         fs_b.client.exec(
             'os.utime(file, (mtime, mtime))', file=file_o, mtime=mtime
         )
-    
+
     # snap_new = snap_data_base.copy()
     snap_new: T.Nodes = snap_data_base
-    
+
     if progress:
         progress.total = len(changes)
     for k, m, t in changes:  # noqa
@@ -571,47 +601,72 @@ def _apply_changes(
                 backup_conflict_file_a('{}/{}'.format(root_a, k))
             m = m[:-1]
         # assert '?' not in m
-        
+
         colored_key = '[{}]{}[/]'.format(
-            'green' if '+' in m else
-            'blue' if '=' in m else
-            'green dim' if '~' in m else
-            'red',  # '-' in m
-            (k[0] if '~' in m else k).replace('[', '\\[')
+            'green'
+            if '+' in m
+            else 'blue'
+            if '=' in m
+            else 'green dim'
+            if '~' in m
+            else 'red',  # '-' in m
+            (k[0] if '~' in m else k).replace('[', '\\['),
         )
-        print(':ir', '{} {} {}'.format(
-            *(
-                (colored_key, '+>', '[dim]<tocreate>[/]') if m == '+>' else
-                (colored_key, '=>', '[dim]<outdated>[/]') if m == '=>' else
-                (colored_key, '~>', '[dim]<movedto>[/]') if m == '~>' else
-                ('[dim]<deleted>[/]', '->', colored_key) if m == '->' else
-                ('[dim]<tocreate>[/]', '<+', colored_key) if m == '<+' else
-                ('[dim]<outdated>[/]', '<=', colored_key) if m == '<=' else
-                ('[dim]<movedto>[/]', '<~', colored_key) if m == '<~' else
-                (colored_key, '<-', '[dim]<deleted>[/]')  # m == '<-'
-            )
-        ))
+        print(
+            ':ir',
+            '{} {} {}'.format(
+                *(
+                    (colored_key, '+>', '[dim]<tocreate>[/]')
+                    if m == '+>'
+                    else (colored_key, '=>', '[dim]<outdated>[/]')
+                    if m == '=>'
+                    else (colored_key, '~>', '[dim]<movedto>[/]')
+                    if m == '~>'
+                    else ('[dim]<deleted>[/]', '->', colored_key)
+                    if m == '->'
+                    else ('[dim]<tocreate>[/]', '<+', colored_key)
+                    if m == '<+'
+                    else ('[dim]<outdated>[/]', '<=', colored_key)
+                    if m == '<='
+                    else ('[dim]<movedto>[/]', '<~', colored_key)
+                    if m == '<~'
+                    else (colored_key, '<-', '[dim]<deleted>[/]')  # m == '<-'
+                )
+            ),
+        )
         if progress:
             colored_key = ':{}[{}]'.format(
-                'green' if '+' in m else
-                'blue' if '=' in m else
-                'green' if '~' in m else
-                'red',  # '-' in m
-                (k[0] if '~' in m else k).replace('[', '\\[')
+                'green'
+                if '+' in m
+                else 'blue'
+                if '=' in m
+                else 'green'
+                if '~' in m
+                else 'red',  # '-' in m
+                (k[0] if '~' in m else k).replace('[', '\\['),
             )
-            progress.update('{} {} {}'.format(
-                *(
-                    (colored_key, '+>', '...') if m == '+>' else
-                    (colored_key, '=>', '...') if m == '=>' else
-                    (colored_key, '~>', '...') if m == '~>' else
-                    ('...', '->', colored_key) if m == '->' else
-                    ('...', '<+', colored_key) if m == '<+' else
-                    ('...', '<=', colored_key) if m == '<=' else
-                    ('...', '<~', colored_key) if m == '<~' else
-                    (colored_key, '<-', '...')  # m == '<-'
+            progress.update(
+                '{} {} {}'.format(
+                    *(
+                        (colored_key, '+>', '...')
+                        if m == '+>'
+                        else (colored_key, '=>', '...')
+                        if m == '=>'
+                        else (colored_key, '~>', '...')
+                        if m == '~>'
+                        else ('...', '->', colored_key)
+                        if m == '->'
+                        else ('...', '<+', colored_key)
+                        if m == '<+'
+                        else ('...', '<=', colored_key)
+                        if m == '<='
+                        else ('...', '<~', colored_key)
+                        if m == '<~'
+                        else (colored_key, '<-', '...')  # m == '<-'
+                    )
                 )
-            ))
-        
+            )
+
         if m in ('+>', '=>'):
             make_dirs_b('{}/{}'.format(root_b, k))
             update_file_a2b(k)
@@ -638,15 +693,17 @@ def _apply_changes(
             snap_new[kb] = t
         else:
             raise Exception(k, m, t)
-    
+
     if fs0.empty(_conflicts_dir):
         fs0.remove_tree(_conflicts_dir)
     else:
-        print('found {} conflicts, see in {}'.format(
-            len(fs0.find_file_names(_conflicts_dir)),
-            _conflicts_dir
-        ), ':v6')
-    
+        print(
+            'found {} conflicts, see in {}'.format(
+                len(fs0.find_file_names(_conflicts_dir)), _conflicts_dir
+            ),
+            ':v6',
+        )
+
     return snap_new
 
 

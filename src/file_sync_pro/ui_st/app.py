@@ -152,7 +152,7 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
         with st.popover('More options'):
             kwargs['manual_select_base_side'] = sc.radio(
                 'Manual select base side',
-                {'': 'None', 'a': 'A', 'b': 'B'},
+                {'': 'Auto', 'a': 'A', 'b': 'B'},
                 horizontal=True,
             )
             kwargs['no_doubt'] = st.toggle('No doubt')
@@ -160,15 +160,25 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
         kwargs['dry_run'] = st.toggle('Dry run')
         if do_sync:
             with place2:
-                with sc.progress('Syncing...') as prog:
+                if kwargs['dry_run']:
                     snap_api.sync_snapshot(
                         l_snap_file,
                         l_addr,
                         r_snap_file,
                         r_addr,
-                        _progress=prog,
+                        _preview=_preview_changes,
                         **kwargs,
                     )
+                else:
+                    with sc.progress('Syncing...') as prog:
+                        snap_api.sync_snapshot(
+                            l_snap_file,
+                            l_addr,
+                            r_snap_file,
+                            r_addr,
+                            _progress=prog,
+                            **kwargs,
+                        )
         if do_merge:
             kwargs.pop('manual_select_base_side')
             kwargs.pop('consider_moving')
@@ -177,7 +187,47 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
             )
 
 
-def _preview_changes(changes): ...
+def _preview_changes(changes: tp.Iterable[snap_api.T.ComposedAction]) -> None:
+    i = 0
+    table = [('Index', 'Left', 'Action', 'Right')]
+    for k, m, _ in changes:
+        i += 1
+        colored_key = ':{}[{}]'.format(
+            'yellow'
+            if '?' in m
+            else 'green'
+            if '+' in m
+            else 'blue'
+            if '=' in m
+            else 'green dim'
+            if '~' in m
+            else 'red',  # '-' in m
+            (isinstance(k, str) and k or k[0]).replace('[', '\\['),
+        )
+        m = m.rstrip('?')
+        table.append(
+            (
+                str(i),
+                *(
+                    (colored_key, '+>', '...')
+                    if m == '+>'
+                    else (colored_key, '=>', '...')
+                    if m == '=>'
+                    else (colored_key, '~>', '...')
+                    if m == '~>'
+                    else ('...', '->', colored_key)
+                    if m == '->'
+                    else ('...', '<+', colored_key)
+                    if m == '<+'
+                    else ('...', '<=', colored_key)
+                    if m == '<='
+                    else ('...', '<~', colored_key)
+                    if m == '<~'
+                    else (colored_key, '<-', '...')  # m == '<-'
+                ),
+            )
+        )
+    st.table(table)
 
 
 if __name__ == '__main__':
