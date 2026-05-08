@@ -208,20 +208,20 @@ reference = "aliyun"
 
 [[package]]
 name = "airmise"
-version = "3.0.0b3"
+version = "3.0.0b15"
 description = "The native experience of calling remote functions, like local ones."
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "airmise-3.0.0b3-py3-none-any.whl", hash = "sha256:82c7d8bc3ab42b4949580015355bec0401efb351fc591d63c53f7d7de1c8f4aa"},
+    {file = "airmise-3.0.0b15-py3-none-any.whl", hash = "sha256:201c839d5dbd8b9118bcb744134c9a991251d1235617af1d4d0bd2a223c52ba9"},
 ]
 
 [package.dependencies]
-aiohttp = ">=3.13.3,<4.0.0"
-argsense = ">=1.1.1,<2.0.0"
-lk-logger = ">=6.0.7,<7.0.0"
-lk-utils = ">=3.5.2,<4.0.0"
+aiohttp = ">=3.13.3"
+argsense = ">=1.2.0a2"
+lk-logger = ">=6.0.8a1"
+lk-utils = ">=3.6.0b3"
 
 [package.source]
 type = "legacy"
@@ -1890,25 +1890,25 @@ reference = "aliyun"
 
 [[package]]
 name = "lk-logger"
-version = "6.0.7"
+version = "6.0.8a1"
 description = "Python print with source map and varnames."
 optional = false
 python-versions = ">=3.8"
 groups = ["main", "dev"]
 files = [
-    {file = "lk_logger-6.0.7-py3-none-any.whl", hash = "sha256:8bbc003240e294849eabea8b29ee3ba3abcdf29459cdbd0625160edb075945a0"},
+    {file = "lk_logger-6.0.8a1-py3-none-any.whl", hash = "sha256:c1096b0362ee25663fab6cb1ec3c403cd3f7a007cff210de73eadf07ebee4ccc"},
 ]
 
 [package.dependencies]
-rich = ">=13.9.0"
+rich = {version = ">=15.0.0,<16.0.0", markers = "python_version >= \"3.9\" and python_version < \"4.0\""}
 
 [package.extras]
 ext = ["svg-ultralight"]
 
 [package.source]
 type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
+url = "http://localhost:2191"
+reference = "likianta"
 
 [[package]]
 name = "lk-utils"
@@ -5261,4 +5261,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "1325538bef0a5d8aa3482d863929a2ca1f3e3332145c40704c68d193ccdad9bc"
+content-hash = "b5df255b40f76c2be76f1d45249e7da9aff21c068eca5933970228f6ef204092"

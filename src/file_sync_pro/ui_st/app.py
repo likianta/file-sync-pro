@@ -125,12 +125,12 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
         """.format(
             *(
                 l_addr == ''
-                and ('gray', ':material/desktop_windows:', l_path, 'local')
+                and ('blue', ':material/desktop_windows:', l_path, 'local')
                 or ('red', ':material/desktop_cloud:', l_path, 'remote')
             ),
             *(
                 r_addr == ''
-                and ('gray', ':material/desktop_windows:', r_path, 'local')
+                and ('blue', ':material/desktop_windows:', r_path, 'local')
                 or ('red', ':material/desktop_cloud:', r_path, 'remote')
             ),
         )
@@ -202,28 +202,35 @@ def _preview_changes(changes: tp.Iterable[snap_api.T.ComposedAction]) -> None:
             else 'green dim'
             if '~' in m
             else 'red',  # '-' in m
-            (isinstance(k, str) and k or k[0]).replace('[', '\\['),
+            (isinstance(k, str) and k or k[0])
+            .replace('[', '\\[')
+            .replace(']', '\\]'),
         )
         m = m.rstrip('?')
+        arrow_f0 = ':material/line_end_arrow:'
+        arrow_f1 = ':material/line_end_arrow_notch:'
+        arrow_b0 = ':material/line_start_arrow:'
+        arrow_b1 = ':material/line_start_arrow_notch:'
         table.append(
             (
                 str(i),
                 *(
-                    (colored_key, '+>', '...')
+                    (colored_key, f':green[{arrow_f1}]', '...')
                     if m == '+>'
-                    else (colored_key, '=>', '...')
+                    else (colored_key, f':blue[{arrow_f1}]', '...')
                     if m == '=>'
-                    else (colored_key, '~>', '...')
+                    else (colored_key, f':blue[{arrow_f0}]', '...')
                     if m == '~>'
-                    else ('...', '->', colored_key)
+                    else ('...', f':red[{arrow_f1}]', colored_key)
                     if m == '->'
-                    else ('...', '<+', colored_key)
+                    else ('...', f':green[{arrow_b1}]', colored_key)
                     if m == '<+'
-                    else ('...', '<=', colored_key)
+                    else ('...', f':blue[{arrow_b1}]', colored_key)
                     if m == '<='
-                    else ('...', '<~', colored_key)
+                    else ('...', f':blue[{arrow_b0}]', colored_key)
                     if m == '<~'
-                    else (colored_key, '<-', '...')  # m == '<-'
+                    else (colored_key, f':red[{arrow_b0}]', '...')
+                    # if m == '<-'
                 ),
             )
         )

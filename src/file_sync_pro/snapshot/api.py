@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import streamlit_canary as sc
 import typing as tp
 from collections import defaultdict
 from lk_utils import fs as fs0
@@ -11,6 +10,9 @@ from types import ModuleType
 from ..filesys2 import FileSystem
 from ..filesys2 import is_local_path
 from ..filesys2.remote import FileSystem as RemoteFileSystem
+
+if os.getenv('PSEUDO_TYPING'):  # always false
+    import streamlit_canary as sc
 
 
 class T:
@@ -92,7 +94,7 @@ def rebuild_snapshot(snap_file: T.AnyPath):
     create_snapshot(snap_file, fs0.load(snap_file)['root'])
 
 
-def update_snapshot(snap_file: T.AnyPath, addr=''):
+def update_snapshot(snap_file: T.AnyPath, addr: str = '') -> None:
     full_data = fs0.load(snap_file)
     fs1 = FileSystem(full_data['root'], addr)
     root = fs1.root
@@ -117,7 +119,7 @@ def sync_snapshot(
     consider_moving: bool = False,
     manual_select_base_side: tp.Literal['a', 'b', ''] = '',
     _preview: tp.Optional[tp.Callable] = None,
-    _progress: tp.Optional[sc.Progress] = None,
+    _progress: tp.Optional['sc.Progress'] = None,
 ) -> None:
     """
     params:
@@ -478,7 +480,7 @@ def _apply_changes(
     fs_b: RemoteFileSystem,
     root_a: str,
     root_b: str,
-    progress: tp.Optional[sc.Progress] = None,
+    progress: tp.Optional['sc.Progress'] = None,
 ) -> T.Nodes:
     print(root_a, root_b, ':li0')
 

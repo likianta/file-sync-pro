@@ -1,6 +1,6 @@
 [project]
 name = "file-sync-pro"
-version = "0.2.2"
+version = "0.2.3a4"
 description = ""
 # readme = "README.md"
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
@@ -11,7 +11,7 @@ dynamic = ["dependencies"]
 [tool.poetry.dependencies]
 python = "^3.12"
 # in this group we only list essential packages that are cross platform required.
-airmise = { version = "^3.0.0b3", source = "likianta" }
+airmise = { version = "^3.0.0b15", source = "likianta" }
 argsense = { version = "^1.2.0a2", source = "likianta" }
 lk-utils = { version = "^3.6.0b3", source = "likianta" }
 requests = "^2.32.5"
