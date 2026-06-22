@@ -22,8 +22,8 @@ dev = [
     "ipython>=9.13.0",
     # "qmlease[ui]>=4.0.0a5",
     "streamlit>=1.58.0",
-    "streamlit-canary>=0.3.0a26",
-    "violit>=0.8.29",
+    "streamlit-canary>=0.3.0b4",
+    # "violit>=0.8.29",
 ]
 
 # [project.optional-dependencies]
