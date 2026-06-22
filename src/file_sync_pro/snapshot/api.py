@@ -69,16 +69,15 @@ class T:
     )
 
 
-def create_snapshot(snap_file: T.AnyPath, source_root: str) -> None:
+def create_snapshot(snap_file: T.AnyPath, url: str) -> None:
     """
     params:
         snap_file: can be inexistent file. if exists, will be overwritten.
             usually saved in `data/snapshots/<host>/<name>.json`.
     """
     assert is_local_path(snap_file)
-    fs1 = FileSystem(source_root)
+    fs1 = FileSystem.from_url(url)
     root = fs1.root
-    del source_root
 
     files = fs1.findall_nodes(root)
     full_data = {'root': fs1.url, 'ignores': []}  # noqa

@@ -9,7 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     "airmise>=3.0.0b17",
     "argsense>=1.2.0a6",
-    "lk-utils>=3.6.0b14",
+    "lk-utils>=3.6.0b16",
     "requests>=2.32.5",
 ]
 

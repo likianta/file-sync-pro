@@ -16,6 +16,15 @@ class T:
 
 
 class FileSystem:
+    @classmethod
+    def from_url(cls, url: str) -> 'FileSystem':
+        if url.startswith('air://'):
+            a, b, c, d = url.split('/')
+            return cls('/' + d, c)
+        else:
+            assert '://' not in url
+            return cls(url)
+
     def __init__(self, root: str, addr: str = '') -> None:
         """
         params:

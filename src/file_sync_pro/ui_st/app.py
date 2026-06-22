@@ -1,13 +1,15 @@
 if __name__ == '__main__':
     __package__ = 'src.file_sync_pro.ui_st'
 
+import typing as tp
+
 import airmise as air
 import streamlit as st
 import streamlit_canary as sc
-import typing as tp
 from argsense import cli
 from lk_utils import fs
-from . import snap_maker
+
+from . import create_snapshot
 from ..snapshot import api as snap_api
 
 _state = sc.init_state(
@@ -100,11 +102,15 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
         )[1]
 
     with cols[1]:
-        r_key = st.selectbox(
-            'Right source',
-            _state['devices'].keys(),
-            format_func=lambda x: _state['devices'][x]['name'],
-        )
+        with sc.row('bottom'):
+            r_key = st.selectbox(
+                'Right source',
+                _state['devices'].keys(),
+                format_func=lambda x: _state['devices'][x]['name'],
+            )
+            if st.button(':material/add_circle:'):
+                create_snapshot.dialog()
+
         r_addr = st.text_input(
             'Right address', '{}:2160'.format(_state['devices'][r_key]['ip'])
         )
