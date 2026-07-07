@@ -12,60 +12,71 @@ from lk_utils import fs
 from . import create_snapshot
 from ..snapshot import api as snap_api
 
+
+def _refresh_devices() -> tp.Dict[
+    str,
+    tp.TypedDict(  # ty: ignore
+        'Device',
+        {'name': str, 'ip': str, 'files': tp.Sequence[tp.Tuple[str, str]]},
+    ),
+]:
+    return {
+        # 'likianta-home-pc': {
+        #     'name': 'Likianta Home PC',
+        #     'ip': '192.168.1.100',
+        #     # 'dir': 'data/snapshots/likianta-home-pc',
+        #     'files': tuple(
+        #         (f.name, f.path)
+        #         for f in fs.find_files(
+        #             'data/snapshots/likianta-home-pc', '.json'
+        #         )
+        #     ),
+        # },
+        'likianta-oneplus-11': {
+            'name': 'Likianta Oneplus 11',
+            'ip': '172.20.128.106',
+            # 'dir': 'data/snapshots/likianta-oneplus-11',
+            'files': tuple(
+                (f.name, f.path)
+                for f in fs.find_files(
+                    'data/snapshots/likianta-oneplus-11', '.json'
+                )
+            ),
+        },
+        'likianta-rider-r2': {
+            'name': 'Likianta Rider R2',
+            'ip': '172.20.128.100',
+            # 'dir': 'data/snapshots/likianta-rider-r2',
+            'files': tuple(
+                (f.name, f.path)
+                for f in fs.find_files(
+                    'data/snapshots/likianta-rider-r2', '.json'
+                )
+            ),
+        },
+        'likianta-xiaomi-12s-pro': {
+            'name': 'Likianta Xiaomi 12s Pro',
+            'ip': '172.20.128.101',
+            # 'dir': 'data/snapshots/likianta-xiaomi-12s-pro',
+            'files': tuple(
+                (f.name, f.path)
+                for f in fs.find_files(
+                    'data/snapshots/likianta-xiaomi-12s-pro', '.json'
+                )
+            ),
+        },
+    }
+
+
 _state = sc.init_state(
     lambda: {
         'default_index': -1,
-        'devices': {
-            # 'likianta-home-pc': {
-            #     'name': 'Likianta Home PC',
-            #     'ip': '192.168.1.100',
-            #     # 'dir': 'data/snapshots/likianta-home-pc',
-            #     'files': tuple(
-            #         (f.name, f.path)
-            #         for f in fs.find_files(
-            #             'data/snapshots/likianta-home-pc', '.json'
-            #         )
-            #     ),
-            # },
-            'likianta-oneplus-11': {
-                'name': 'Likianta Oneplus 11',
-                'ip': '172.20.128.106',
-                # 'dir': 'data/snapshots/likianta-oneplus-11',
-                'files': tuple(
-                    (f.name, f.path)
-                    for f in fs.find_files(
-                        'data/snapshots/likianta-oneplus-11', '.json'
-                    )
-                ),
-            },
-            'likianta-rider-r2': {
-                'name': 'Likianta Rider R2',
-                'ip': '172.20.128.100',
-                # 'dir': 'data/snapshots/likianta-rider-r2',
-                'files': tuple(
-                    (f.name, f.path)
-                    for f in fs.find_files(
-                        'data/snapshots/likianta-rider-r2', '.json'
-                    )
-                ),
-            },
-            'likianta-xiaomi-12s-pro': {
-                'name': 'Likianta Xiaomi 12s Pro',
-                'ip': '172.20.128.101',
-                # 'dir': 'data/snapshots/likianta-xiaomi-12s-pro',
-                'files': tuple(
-                    (f.name, f.path)
-                    for f in fs.find_files(
-                        'data/snapshots/likianta-xiaomi-12s-pro', '.json'
-                    )
-                ),
-            },
-        },
+        'devices': _refresh_devices(),
         'local_ips': ('', 'localhost', air.get_local_ip_address()),
         # 'snapshot_names': {},
         # 'source_names': (),
     },
-    version=34,
+    version=36,
 )
 
 
@@ -108,7 +119,7 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
                 _state['devices'].keys(),
                 format_func=lambda x: _state['devices'][x]['name'],
             )
-            if st.button(':material/add_circle:'):
+            if st.button(':material/add_circle:', help='Create snapshot.'):
                 create_snapshot.dialog()
 
         r_addr = st.text_input(
@@ -116,11 +127,16 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
         )
         if r_addr.split(':')[0] in _state['local_ips']:
             r_addr = ''
-        r_snap_file = st.selectbox(
-            'Right snapshot',
-            _state['devices'][r_key]['files'],
-            format_func=lambda x: x[0],
-        )[1]
+        with sc.row('bottom'):
+            r_snap_file = st.selectbox(
+                'Right snapshot',
+                _state['devices'][r_key]['files'],
+                format_func=lambda x: x[0],
+            )[1]
+            if st.button(
+                ':material/refresh:', help='Refresh device and snapshot list.'
+            ):
+                _state['devices'] = _refresh_devices()
 
     l_path = fs.load(l_snap_file)['root']
     r_path = fs.load(r_snap_file)['root']
