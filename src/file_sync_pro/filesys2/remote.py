@@ -35,15 +35,15 @@ def create_fs_from_url(url: str) -> t.Tuple['FileSystem', str]:
     client = air.Client(host=e, port=int(f))
     client.open()
     return FileSystem(client), '/' + d
-    
-    
+
+
 class FileSystem:
     # _client = None
     #
     # @property
     # def available(self) -> bool:
     #     return self._client is not None
-    
+
     # noinspection PyAttributeOutsideInit
     def __init__(self, client: air.Client):
         self.client = client
@@ -56,52 +56,53 @@ class FileSystem:
         self.relpath = partial(self._fast_call, 'relpath')
         self.remove_file = partial(self._fast_call, 'remove_file')
         self.remove_tree = partial(self._fast_call, 'remove_tree')
-    
+
     @property
     def url(self):
         return 'air://{}:{}'.format(self.client.host, self.client.port)
-    
+
     def find_files(self, root):
         Path = namedtuple('Path', 'path relpath mtime')
         for tuple_ in self.client.exec(
-            '''
+            """
             def foo():
                 for f in fs.find_files(root):
                     yield f.path, f.relpath, f.mtime
             return foo()
-            ''',
-            root=root
+            """,
+            root=root,
         ):
             yield Path(*tuple_)
-    
+
     def findall_dirs(self, root):
         Path = namedtuple('Path', 'path relpath mtime')
         for tuple_ in self.client.exec(
-            '''
+            """
             def foo():
                 for d in fs.findall_dirs(root):
                     yield d.path, d.relpath, d.mtime
             return foo()
-            ''',
-            root=root
+            """,
+            root=root,
         ):
             yield Path(*tuple_)
-    
+
     def findall_files(self, root):
         Path = namedtuple('Path', 'path relpath mtime')
         for tuple_ in self.client.exec(
-            '''
+            """
             def bar():
                 for f in fs.findall_files(root):
                     yield f.path, f.relpath, f.mtime
             return bar()
-            ''',
-            root=root
+            """,
+            root=root,
         ):
             yield Path(*tuple_)
-    
-    def _fast_call(self, func_name, *args0, **args1):
+
+    def _fast_call(self, func_name, verbose: bool = False, *args0, **args1):
+        if verbose:
+            print('remote call', func_name, args0, args1, ':pv')
         return self.client.exec(
-            'fs.{}(*args0, **args1)'.format(func_name),
-            args0=args0, args1=args1
+            'fs.{}(*args0, **args1)'.format(func_name), args0=args0, args1=args1
         )

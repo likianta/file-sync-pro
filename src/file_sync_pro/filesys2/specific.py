@@ -1,8 +1,9 @@
-import airmise as air
+import typing as tp
 from collections import defaultdict
-from typing import Dict
-from typing import Iterator
-from typing import Tuple
+from types import ModuleType
+
+import airmise as air
+
 from . import local
 from . import remote
 
@@ -11,11 +12,16 @@ class T:
     DirPath = str
     RelPath = str
     Time = int
-    TimeChanges = Dict[RelPath, Time]
-    Tree = Dict[RelPath, Time]
+    TimeChanges = tp.Dict[RelPath, Time]
+    Tree = tp.Dict[RelPath, Time]
 
 
 class FileSystem:
+    is_remote: bool
+    root: str
+    _fs0: ModuleType
+    _fs1: tp.Union[ModuleType, remote.FileSystem]
+
     @classmethod
     def from_url(cls, url: str) -> 'FileSystem':
         if url.startswith('air://'):
@@ -39,7 +45,7 @@ class FileSystem:
         self.is_remote = not (
             ip == '' or ip == 'localhost' or ip == air.get_local_ip_address()
         )
-        print(ip, self.is_remote, ':v')
+        print(ip, self.is_remote, ':nv')
         if self.is_remote:
             assert ip
             self._fs1, self.root = remote.create_fs_from_url(
@@ -62,13 +68,13 @@ class FileSystem:
 
     def findall_dirs(
         self, root: T.DirPath
-    ) -> Iterator[Tuple[T.RelPath, T.Time]]:
+    ) -> tp.Iterator[tp.Tuple[T.RelPath, T.Time]]:
         for d in self._fs1.findall_dirs(root):
             yield d.relpath, d.mtime
 
     def findall_files(
-        self, root: T.DirPath, history: Tuple[T.Tree, T.Time] = None
-    ) -> Iterator[Tuple[T.RelPath, T.Time]]:
+        self, root: T.DirPath, history: tp.Tuple[T.Tree, T.Time] = None
+    ) -> tp.Iterator[tp.Tuple[T.RelPath, T.Time]]:
         file_2_mtime = {}
         dir_2_mtime = {}
         dir_2_files = defaultdict(list)

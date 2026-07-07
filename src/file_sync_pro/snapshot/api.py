@@ -78,13 +78,21 @@ def create_snapshot(snap_file: T.AnyPath, url: str) -> None:
     assert is_local_path(snap_file)
     fs1 = FileSystem.from_url(url)
     root = fs1.root
-
-    files = fs1.findall_nodes(root)
-    full_data = {'root': fs1.url, 'ignores': []}  # noqa
-    full_data['current'] = full_data['base'] = {
-        'version': _make_version(files),
-        'files': files,
-    }
+    if fs1.core.exist(root):
+        files = fs1.findall_nodes(root)
+        full_data = {'root': fs1.url, 'ignores': []}  # noqa
+        full_data['current'] = full_data['base'] = {
+            'version': _make_version(files),
+            'files': files,
+        }
+    else:
+        fs1.core.make_dirs(root)
+        full_data = {
+            'root': fs1.url,
+            'ignores': [],
+            'current': {'version': 'null-0', 'files': {}},
+            'base': {'version': 'null-0', 'files': {}},
+        }
     fs0.dump(full_data, snap_file)
 
 
@@ -203,10 +211,7 @@ def sync_snapshot(
 
     changes_a = (
         {}
-        if compare_version(
-            snap_alldata_a['current']['version'],
-            snap_ver_base,
-        )
+        if compare_version(snap_alldata_a['current']['version'], snap_ver_base)
         == 0
         else {
             k: (m, t)
@@ -215,10 +220,7 @@ def sync_snapshot(
     )
     changes_b = (
         {}
-        if compare_version(
-            snap_alldata_b['current']['version'],
-            snap_ver_base,
-        )
+        if compare_version(snap_alldata_b['current']['version'], snap_ver_base)
         == 0
         else {
             k: (m, t)
@@ -715,7 +717,7 @@ def _hash_data(data):
     ).hexdigest()
 
 
-def _make_version(files_data):
+def _make_version(files_data: T.Nodes) -> str:
     return '{}-{}'.format(_hash_data(files_data), int(time()))
 
 
