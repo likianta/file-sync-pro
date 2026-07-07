@@ -78,17 +78,17 @@ def create_snapshot(snap_file: T.AnyPath, url: str) -> None:
     assert is_local_path(snap_file)
     fs1 = FileSystem.from_url(url)
     root = fs1.root
-    if fs1.core.exist(root):
+    if fs1.core.exist(root, verbose=True):
         files = fs1.findall_nodes(root)
-        full_data = {'root': fs1.url, 'ignores': []}  # noqa
-        full_data['current'] = full_data['base'] = {
+        full_data = {'root': fs1.root, 'ignores': []}
+        full_data['current'] = full_data['base'] = {  # type: ignore
             'version': _make_version(files),
             'files': files,
         }
     else:
         fs1.core.make_dirs(root)
         full_data = {
-            'root': fs1.url,
+            'root': fs1.root,
             'ignores': [],
             'current': {'version': 'null-0', 'files': {}},
             'base': {'version': 'null-0', 'files': {}},

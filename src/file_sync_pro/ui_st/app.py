@@ -65,7 +65,7 @@ _state = sc.init_state(
         # 'snapshot_names': {},
         # 'source_names': (),
     },
-    version=33,
+    version=34,
 )
 
 

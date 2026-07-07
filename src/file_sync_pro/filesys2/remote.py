@@ -100,7 +100,7 @@ class FileSystem:
         ):
             yield Path(*tuple_)
 
-    def _fast_call(self, func_name, verbose: bool = False, *args0, **args1):
+    def _fast_call(self, func_name, *args0, verbose: bool = False, **args1):
         if verbose:
             print('remote call', func_name, args0, args1, ':pv')
         return self.client.exec(

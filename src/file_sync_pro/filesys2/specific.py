@@ -25,7 +25,7 @@ class FileSystem:
     @classmethod
     def from_url(cls, url: str) -> 'FileSystem':
         if url.startswith('air://'):
-            a, b, c, d = url.split('/')
+            a, b, c, d = url.split('/', 3)
             return cls('/' + d, c)
         else:
             assert '://' not in url

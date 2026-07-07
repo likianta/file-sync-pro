@@ -10,7 +10,7 @@ dependencies = [
     "airmise>=3.0.0b17",
     "argsense>=1.1.2",
     "lk-utils>=3.7.0a6",
-    "neoprint>=0.1.6",
+    "neoprint>=0.1.7a0",
     "requests>=2.32.5",
 ]
 
