@@ -7,9 +7,9 @@ authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
 # readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "airmise>=3.0.0b17",
+    "airmise>=3.0.0",
     "argsense>=1.1.2",
-    "lk-utils>=3.7.0a6",
+    "lk-utils>=3.7.0b4",
     "neoprint>=0.1.7a0",
     "requests>=2.32.5",
 ]

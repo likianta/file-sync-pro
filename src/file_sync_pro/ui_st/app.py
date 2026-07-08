@@ -137,6 +137,7 @@ def main(host_name: str = 'likianta-rider-r2') -> None:
                 ':material/refresh:', help='Refresh device and snapshot list.'
             ):
                 _state['devices'] = _refresh_devices()
+                st.rerun()
 
     l_path = fs.load(l_snap_file)['root']
     r_path = fs.load(r_snap_file)['root']
