@@ -3,7 +3,7 @@ from .snapshot import Snapshot
 
 
 def clone_project(
-    snapshot_file_i: str, snapshot_file_o: str, root_o: str = None
+    snapshot_file_i: str, snapshot_file_o: str, root_o: str = ''
 ) -> None:
     """
     note:

@@ -23,7 +23,8 @@ def main():
                 'Remote directory',
                 placeholder='/storage/emulated/0/Likianta/...'
             )
-    if not root: return
+    if not root: 
+        return
     
     snap_name = st.text_input('Snapshot filename', fs.basename(root))
     snap_file = 'data/snapshots/{}/{}.json'.format(

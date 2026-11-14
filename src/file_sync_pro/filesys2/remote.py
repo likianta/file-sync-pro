@@ -1,6 +1,6 @@
 import airmise as air
 import os
-import typing as t
+import typing as tp
 from collections import namedtuple
 from functools import partial
 
@@ -21,7 +21,7 @@ def is_remote_path(path: str):
         return False
 
 
-def create_fs_from_url(url: str) -> t.Tuple['FileSystem', str]:
+def create_fs_from_url(url: str) -> tp.Tuple['FileSystem', str]:
     a, b, c, d = url.split('/', 3)
     #   e.g. 'air://172.20.128.123:2160/storage/emulated/0/Likianta/test
     #   /snapshot.json'
@@ -32,8 +32,7 @@ def create_fs_from_url(url: str) -> t.Tuple['FileSystem', str]:
     assert a == 'air:' and b == '' and ':' in c
     assert d == '' or d.startswith('storage/emulated/0/Likianta')
     e, f = c.split(':')
-    client = air.Client(host=e, port=int(f))
-    client.open()
+    client = air.Client().connect(host=e, port=int(f))
     return FileSystem(client), '/' + d
 
 
@@ -63,41 +62,17 @@ class FileSystem:
 
     def find_files(self, root):
         Path = namedtuple('Path', 'path relpath mtime')
-        for tuple_ in self.client.exec(
-            """
-            def foo():
-                for f in fs.find_files(root):
-                    yield f.path, f.relpath, f.mtime
-            return foo()
-            """,
-            root=root,
-        ):
+        for tuple_ in self.client.call('find_files', root):
             yield Path(*tuple_)
 
     def findall_dirs(self, root):
         Path = namedtuple('Path', 'path relpath mtime')
-        for tuple_ in self.client.exec(
-            """
-            def foo():
-                for d in fs.findall_dirs(root):
-                    yield d.path, d.relpath, d.mtime
-            return foo()
-            """,
-            root=root,
-        ):
+        for tuple_ in self.client.call('findall_dirs', root):
             yield Path(*tuple_)
 
     def findall_files(self, root):
         Path = namedtuple('Path', 'path relpath mtime')
-        for tuple_ in self.client.exec(
-            """
-            def bar():
-                for f in fs.findall_files(root):
-                    yield f.path, f.relpath, f.mtime
-            return bar()
-            """,
-            root=root,
-        ):
+        for tuple_ in self.client.call('findall_files', root):
             yield Path(*tuple_)
 
     def _fast_call(self, func_name, *args0, verbose: bool = False, **args1):

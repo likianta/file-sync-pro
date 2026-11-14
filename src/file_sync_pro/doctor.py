@@ -69,12 +69,12 @@ def fix_mtime(
                 key.replace('[', '\\['),
                 '[{}]{}[/]'.format(
                     'dim' if is_a_newer else primary_color,
-                    timestamp(time_sec=mtime_a),
+                    timestamp(t=mtime_a),
                 ),
                 '<-' if is_a_newer else '->',
                 '[{}]{}[/]'.format(
                     primary_color if is_a_newer else 'dim',
-                    timestamp(time_sec=mtime_b),
+                    timestamp(t=mtime_b),
                 ),
             ))
         else:

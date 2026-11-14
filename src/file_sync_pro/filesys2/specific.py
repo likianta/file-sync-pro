@@ -73,7 +73,11 @@ class FileSystem:
             yield d.relpath, d.mtime
 
     def findall_files(
-        self, root: T.DirPath, history: tp.Tuple[T.Tree, T.Time] = None
+        self,
+        root: T.DirPath,
+        history: tp.Optional[
+            tp.Tuple[tp.Dict[T.RelPath, T.Time], tp.Dict[T.RelPath, T.Time]]
+        ] = None,
     ) -> tp.Iterator[tp.Tuple[T.RelPath, T.Time]]:
         file_2_mtime = {}
         dir_2_mtime = {}

@@ -1,16 +1,16 @@
 [project]
 name = "file-sync-pro"
-version = "0.2.3a4"
+version = "0.2.3a8"
 description = ""
 authors = [{ name = "Likianta", email = "likianta@foxmail.com" }]
 # license = "MIT"
 # readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "airmise>=3.0.0",
-    "argsense>=1.1.2",
-    "lk-utils>=3.7.0b4",
-    "neoprint>=0.1.7a0",
+    "airmise>=3.2.3a2",
+    "argsense>=1.1.3a1",
+    "lk-utils>=3.8.2a2",
+    "neoprint>=0.1.11",
     "requests>=2.32.5",
 ]
 
@@ -20,10 +20,10 @@ requires = ["hatchling>=1.29.0"]
 
 [dependency-groups]
 dev = [
-    "ipython>=9.15.0",
-    # "qmlease[ui]>=4.0.0a5",
-    "streamlit>=1.58.0",
-    "streamlit-canary>=0.3.0b7",
+    "ipython>=9.17.0",
+    # "qmlease[gui]>=4.0.0a5",
+    "streamlit>=1.63.0",
+    "streamlit-canary>=0.4.0a9",
     # "violit>=0.8.29",
 ]
 
@@ -73,8 +73,8 @@ default = true
 
 [[tool.uv.index]]
 name = "likianta"
-url = "http://localhost:2191/"
-# explicit = true
+url = "http://localhost:2131/"
+explicit = true
 
 [tool.uv.sources]
 airmise = { index = "likianta" }
