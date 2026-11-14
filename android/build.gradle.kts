@@ -1,5 +1,8 @@
 allprojects {
     repositories {
+        // Domestic mirrors first, official repositories as fallback.
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/central")
         google()
         mavenCentral()
     }
