@@ -3,7 +3,10 @@ import 'package:flutter/widgets.dart';
 import 'package:forui/forui.dart';
 
 import '../features/server/presentation/file_server_page.dart';
+import '../features/sync/application/sync_config_store.dart';
+import '../features/sync/presentation/devices_page.dart';
 import '../features/sync/presentation/sync_workspace_page.dart';
+import 'forui_theme.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({
@@ -27,60 +30,83 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   late int _index;
+  late final SyncConfigStore _store;
 
   @override
   void initState() {
     super.initState();
-    _index = defaultTargetPlatform == TargetPlatform.windows ? 1 : 0;
+    _index = defaultTargetPlatform == TargetPlatform.windows ? 2 : 0;
+    _store = SyncConfigStore(
+      path: widget.clientConfigPath,
+      projectRoot: widget.projectRoot,
+    );
+    _store.load();
+  }
+
+  @override
+  void dispose() {
+    _store.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.theme;
     return FScaffold(
       childPad: false,
-      sidebar: FSidebar(
-        header: const _Brand(),
-        footer: _SidebarFooter(
-          isDark: widget.isDark,
-          onToggleTheme: widget.onToggleTheme,
+      scaffoldStyle: AppForuiTheme.scaffoldStyle(dark: widget.isDark),
+      sidebar: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(right: BorderSide(color: theme.colors.border)),
         ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
-            child: Text(
-              'WORKSPACE',
-              style: context.theme.typography.body.xs.copyWith(
-                color: context.theme.colors.mutedForeground,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.9,
+        child: FSidebar(
+          header: const _Brand(),
+          footer: _SidebarFooter(
+            isDark: widget.isDark,
+            onToggleTheme: widget.onToggleTheme,
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+              child: Text(
+                'WORKSPACE',
+                style: theme.typography.body.xs.copyWith(
+                  color: theme.colors.mutedForeground,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.9,
+                ),
               ),
             ),
-          ),
-          FSidebarGroup(
-            children: [
-              FSidebarItem(
-                icon: const Icon(FLucideIcons.refreshCw),
-                label: const Text('Sync'),
-                selected: _index == 0,
-                onPress: () => setState(() => _index = 0),
-              ),
-              FSidebarItem(
-                icon: const Icon(FLucideIcons.server),
-                label: const Text('File server'),
-                selected: _index == 1,
-                onPress: () => setState(() => _index = 1),
-              ),
-            ],
-          ),
-        ],
+            FSidebarGroup(
+              children: [
+                FSidebarItem(
+                  icon: const Icon(FLucideIcons.refreshCw),
+                  label: const Text('Sync'),
+                  selected: _index == 0,
+                  onPress: () => setState(() => _index = 0),
+                ),
+                FSidebarItem(
+                  icon: const Icon(FLucideIcons.router),
+                  label: const Text('Devices'),
+                  selected: _index == 1,
+                  onPress: () => setState(() => _index = 1),
+                ),
+                FSidebarItem(
+                  icon: const Icon(FLucideIcons.server),
+                  label: const Text('File server'),
+                  selected: _index == 2,
+                  onPress: () => setState(() => _index = 2),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
       child: IndexedStack(
         index: _index,
         children: [
-          SyncWorkspacePage(
-            configPath: widget.clientConfigPath,
-            projectRoot: widget.projectRoot,
-          ),
+          SyncWorkspacePage(store: _store),
+          DevicesPage(store: _store),
           FileServerPage(
             configPath: widget.serverConfigPath,
             projectRoot: widget.projectRoot,

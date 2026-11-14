@@ -46,6 +46,14 @@ final class SyncDashboardController extends ChangeNotifier {
 
   String? get currentPath => _currentPath;
 
+  /// Conflicts from the last check, or from the last sync when the preview
+  /// has already been cleared.
+  List<SyncConflict> get conflicts {
+    return _preview?.plan.conflicts ??
+        _report?.preview.plan.conflicts ??
+        const <SyncConflict>[];
+  }
+
   List<String> get log => List.unmodifiable(_log);
 
   bool get busy =>
@@ -154,6 +162,9 @@ final class SyncDashboardController extends ChangeNotifier {
         },
       );
       _report = report;
+      // The table is cleared after a sync; the preview area then shows a
+      // summary instead of a stale plan.
+      _preview = null;
       _status = SyncDashboardStatus.idle;
 
       final apply = report.applyReport;
@@ -190,13 +201,12 @@ final class SyncDashboardController extends ChangeNotifier {
   }
 
   Future<void> resolveAllConflicts(ConflictSide side) {
-    final conflicts = _preview?.plan.conflicts ?? const <SyncConflict>[];
     return _resolve({for (final conflict in conflicts) conflict.path: side});
   }
 
   Future<void> _resolve(Map<String, ConflictSide> choices) async {
     if (busy || choices.isEmpty) return;
-    final preview = _preview;
+    final preview = _preview ?? _report?.preview;
     if (preview == null) return;
 
     final side = choices.values.first;

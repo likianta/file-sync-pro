@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_sync_pro/app/forui_theme.dart';
+import 'package:file_sync_pro/features/sync/application/sync_config_store.dart';
+import 'package:file_sync_pro/features/sync/presentation/devices_page.dart';
 import 'package:file_sync_pro/features/sync/presentation/sync_workspace_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,7 +24,7 @@ void main() {
     await temp.delete(recursive: true);
   });
 
-  Widget wrap(String configPath) {
+  Widget wrap(Widget child) {
     return MaterialApp(
       localizationsDelegates: FLocalizations.localizationsDelegates,
       supportedLocales: FLocalizations.supportedLocales,
@@ -30,11 +32,17 @@ void main() {
         data: AppForuiTheme.light,
         child: FToaster(child: FTooltipGroup(child: child!)),
       ),
-      home: SyncWorkspacePage(configPath: configPath, projectRoot: temp.path),
+      home: child,
     );
   }
 
-  testWidgets('renders the sync workspace with a configured pair', (
+  Future<SyncConfigStore> loadStore(String configPath) async {
+    final store = SyncConfigStore(path: configPath, projectRoot: temp.path);
+    await store.load();
+    return store;
+  }
+
+  testWidgets('renders the device pair, tabs, and the action bar', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1280, 860));
@@ -57,37 +65,46 @@ void main() {
       }),
     );
 
-    await tester.pumpWidget(wrap(configPath));
+    final store = await loadStore(configPath);
+    await tester.pumpWidget(wrap(SyncWorkspacePage(store: store)));
     await tester.pumpAndSettle();
 
     expect(
-      find.byKey(const ValueKey<String>('sync.pair.select')),
+      find.byKey(const ValueKey<String>('sync.device.select')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('sync.pair.tab.demo')),
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey<String>('sync.run')), findsOneWidget);
+    expect(find.text('THIS MACHINE'), findsOneWidget);
+    expect(find.text('PEER DEVICE'), findsOneWidget);
     expect(find.text('demo'), findsWidgets);
-    expect(find.text('Sync'), findsWidgets);
   });
 
-  testWidgets('shows the empty state when no pairs are configured', (
+  testWidgets('shows the empty state when no devices are configured', (
     tester,
   ) async {
     final configPath = p.join(toolDir, 'sync.config.json');
     File(
       configPath,
-    ).writeAsStringSync(jsonEncode({'version': 2, 'token': '', 'pairs': []}));
+    ).writeAsStringSync(jsonEncode({'version': 3, 'token': '', 'pairs': []}));
 
-    await tester.pumpWidget(wrap(configPath));
+    final store = await loadStore(configPath);
+    await tester.pumpWidget(wrap(SyncWorkspacePage(store: store)));
     await tester.pumpAndSettle();
 
-    expect(find.text('No sync pairs yet.'), findsOneWidget);
+    expect(find.text('No devices yet.'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey<String>('sync.pair.emptyAdd')),
-      findsOneWidget,
+      find.byKey(const ValueKey<String>('sync.device.select')),
+      findsNothing,
     );
   });
 
-  testWidgets('pair editor exposes per-pair ignores', (tester) async {
+  testWidgets('device pair list exposes the pair editor with ignores', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1280, 860));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -95,12 +112,23 @@ void main() {
     final configPath = p.join(toolDir, 'sync.config.json');
     File(configPath).writeAsStringSync(
       jsonEncode({
-        'version': 2,
+        'version': 3,
         'token': 'test-token',
         'ignores': ['.venv/'],
+        'devices': [
+          {
+            'id': 'dev-test',
+            'name': 'Windows box',
+            'type': 'windows',
+            'hostType': 'remote',
+            'host': '127.0.0.1',
+            'port': 1,
+          },
+        ],
         'pairs': [
           {
             'name': 'demo',
+            'deviceId': 'dev-test',
             'localRoot': local.path,
             'remoteUrl': 'http://127.0.0.1:1/demo',
             'stateDir': 'data/sync_pairs/demo',
@@ -110,10 +138,14 @@ void main() {
       }),
     );
 
-    await tester.pumpWidget(wrap(configPath));
+    final store = await loadStore(configPath);
+    await tester.pumpWidget(wrap(DevicesPage(store: store)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey<String>('sync.pair.edit')));
+    expect(find.text('Windows box'), findsWidgets);
+    await tester.tap(
+      find.byKey(const ValueKey<String>('devices.pair.edit.dev-test.demo')),
+    );
     await tester.pumpAndSettle();
 
     expect(

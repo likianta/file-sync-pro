@@ -2,230 +2,49 @@ import 'package:flutter/widgets.dart';
 import 'package:forui/forui.dart';
 
 import '../application/sync_engine.dart';
-import '../application/sync_pair_config.dart';
 import '../domain/sync_plan.dart';
 import 'sync_dashboard_controller.dart';
 
-class SyncDashboardPage extends StatefulWidget {
-  const SyncDashboardPage({super.key, required this.config});
+/// The comparison/todo table plus the activity log.
+class SyncPreviewArea extends StatelessWidget {
+  const SyncPreviewArea({super.key, required this.controller});
 
-  final SyncPairConfig config;
-
-  @override
-  State<SyncDashboardPage> createState() => _SyncDashboardPageState();
-}
-
-class _SyncDashboardPageState extends State<SyncDashboardPage> {
-  late final SyncDashboardController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = SyncDashboardController(config: widget.config);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  final SyncDashboardController controller;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        return Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1160),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-              child: Column(
-                children: [
-                  _PairCard(config: _controller.config),
-                  const SizedBox(height: 12),
-                  _Toolbar(controller: _controller),
-                  if (_controller.errorMessage != null) ...[
-                    const SizedBox(height: 12),
-                    _ErrorBanner(controller: _controller),
-                  ],
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final plan = _PlanPanel(controller: _controller);
-                        final log = _LogPanel(controller: _controller);
-                        if (constraints.maxWidth >= 900) {
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(flex: 3, child: plan),
-                              const SizedBox(width: 12),
-                              Expanded(flex: 2, child: log),
-                            ],
-                          );
-                        }
-                        return Column(
-                          children: [
-                            Expanded(flex: 3, child: plan),
-                            const SizedBox(height: 12),
-                            Expanded(flex: 2, child: log),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _PairCard extends StatelessWidget {
-  const _PairCard({required this.config});
-
-  final SyncPairConfig config;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.theme;
-    return FCard(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(
-                    child: _Endpoint(
-                      icon: FLucideIcons.computer,
-                      overline: 'THIS DEVICE',
-                      location: config.localRoot,
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Center(
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: theme.colors.muted,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          FLucideIcons.arrowRightLeft,
-                          size: 14,
-                          color: theme.colors.mutedForeground,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: _Endpoint(
-                      icon: FLucideIcons.cloud,
-                      overline: 'REMOTE',
-                      location: config.remoteUrl,
-                      online: true,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(
-                  FLucideIcons.database,
-                  size: 13,
-                  color: theme.colors.mutedForeground,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'State: ${config.stateDir}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.typography.body.xs.copyWith(
-                      color: theme.colors.mutedForeground,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Endpoint extends StatelessWidget {
-  const _Endpoint({
-    required this.icon,
-    required this.overline,
-    required this.location,
-    this.online = false,
-  });
-
-  final IconData icon;
-  final String overline;
-  final String location;
-  final bool online;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.theme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colors.muted.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colors.border),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 14, color: theme.colors.mutedForeground),
-              const SizedBox(width: 6),
-              Text(
-                overline,
-                style: theme.typography.body.xs.copyWith(
-                  color: theme.colors.mutedForeground,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.8,
-                ),
-              ),
-              const Spacer(),
-              if (online)
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2EA121),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            location,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.typography.body.sm.copyWith(
-              fontFamily: 'monospace',
-              height: 1.4,
+          if (controller.errorMessage != null) ...[
+            _ErrorBanner(controller: controller),
+            const SizedBox(height: 12),
+          ],
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final preview = _PreviewPanel(controller: controller);
+                final log = _LogPanel(controller: controller);
+                if (constraints.maxWidth >= 900) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(flex: 3, child: preview),
+                      const SizedBox(width: 12),
+                      Expanded(flex: 2, child: log),
+                    ],
+                  );
+                }
+                return Column(
+                  children: [
+                    Expanded(flex: 3, child: preview),
+                    const SizedBox(height: 12),
+                    Expanded(flex: 2, child: log),
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -234,8 +53,9 @@ class _Endpoint extends StatelessWidget {
   }
 }
 
-class _Toolbar extends StatelessWidget {
-  const _Toolbar({required this.controller});
+/// The bottom action row: check, sync, and progress.
+class SyncBottomBar extends StatelessWidget {
+  const SyncBottomBar({super.key, required this.controller});
 
   final SyncDashboardController controller;
 
@@ -248,72 +68,81 @@ class _Toolbar extends StatelessWidget {
         : controller.applied / controller.total;
     final busy = controller.busy;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            FButton(
-              key: const ValueKey<String>('sync.check'),
-              variant: FButtonVariant.outline,
-              onPress: busy ? null : controller.check,
-              prefix: const Icon(FLucideIcons.listChecks, size: 15),
-              child: const Text('Check'),
-            ),
-            const SizedBox(width: 8),
-            FButton(
-              key: const ValueKey<String>('sync.run'),
-              onPress: busy ? null : controller.sync,
-              prefix: const Icon(FLucideIcons.refreshCw, size: 15),
-              child: const Text('Sync'),
-            ),
-            const SizedBox(width: 14),
-            if (busy)
-              const SizedBox(width: 16, height: 16, child: FCircularProgress())
-            else
-              Icon(
-                controller.status == SyncDashboardStatus.error
-                    ? FLucideIcons.circleAlert
-                    : FLucideIcons.circleCheck,
-                size: 16,
-                color: controller.status == SyncDashboardStatus.error
-                    ? theme.colors.destructive
-                    : const Color(0xFF2EA121),
-              ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                controller.statusLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.typography.body.sm.copyWith(
-                  color: theme.colors.mutedForeground,
-                ),
-              ),
-            ),
-            if (plan != null)
-              FBadge(
-                variant: FBadgeVariant.outline,
-                child: Text(
-                  '${plan.createCount + plan.updateCount} changes · '
-                  '${plan.conflicts.length} conflicts',
-                ),
-              ),
-          ],
-        ),
-        if (controller.status == SyncDashboardStatus.scanning) ...[
-          const SizedBox(height: 10),
-          const FProgress(),
-        ],
-        if (controller.status == SyncDashboardStatus.applying ||
-            controller.status == SyncDashboardStatus.resolving) ...[
-          const SizedBox(height: 10),
-          if (controller.status == SyncDashboardStatus.applying &&
-              progress != null)
-            FDeterminateProgress(value: progress)
-          else
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+      decoration: BoxDecoration(
+        color: theme.colors.card,
+        border: Border(top: BorderSide(color: theme.colors.border)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (controller.status == SyncDashboardStatus.scanning)
             const FProgress(),
-          if (controller.currentPath != null) ...[
+          if (controller.status == SyncDashboardStatus.applying)
+            if (progress != null)
+              FDeterminateProgress(value: progress)
+            else
+              const FProgress(),
+          if (controller.status == SyncDashboardStatus.resolving)
+            const FProgress(),
+          if (busy) const SizedBox(height: 10),
+          Row(
+            children: [
+              FButton(
+                key: const ValueKey<String>('sync.check'),
+                variant: FButtonVariant.outline,
+                onPress: busy ? null : controller.check,
+                prefix: const Icon(FLucideIcons.listChecks, size: 15),
+                child: const Text('Check'),
+              ),
+              const SizedBox(width: 8),
+              FButton(
+                key: const ValueKey<String>('sync.run'),
+                onPress: busy ? null : controller.sync,
+                prefix: const Icon(FLucideIcons.refreshCw, size: 15),
+                child: const Text('Sync'),
+              ),
+              const SizedBox(width: 14),
+              if (busy)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: FCircularProgress(),
+                )
+              else
+                Icon(
+                  controller.status == SyncDashboardStatus.error
+                      ? FLucideIcons.circleAlert
+                      : FLucideIcons.circleCheck,
+                  size: 16,
+                  color: controller.status == SyncDashboardStatus.error
+                      ? theme.colors.destructive
+                      : const Color(0xFF2EA121),
+                ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  controller.statusLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.typography.body.sm.copyWith(
+                    color: theme.colors.mutedForeground,
+                  ),
+                ),
+              ),
+              if (plan != null)
+                FBadge(
+                  variant: FBadgeVariant.outline,
+                  child: Text(
+                    '${plan.createCount + plan.updateCount} changes · '
+                    '${plan.conflicts.length} conflicts',
+                  ),
+                ),
+            ],
+          ),
+          if (controller.currentPath != null &&
+              controller.status == SyncDashboardStatus.applying) ...[
             const SizedBox(height: 6),
             Text(
               controller.currentPath!,
@@ -326,7 +155,7 @@ class _Toolbar extends StatelessWidget {
             ),
           ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -362,32 +191,151 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-class _PlanPanel extends StatelessWidget {
-  const _PlanPanel({required this.controller});
+class _PreviewPanel extends StatelessWidget {
+  const _PreviewPanel({required this.controller});
 
   final SyncDashboardController controller;
 
   @override
   Widget build(BuildContext context) {
-    final plan = controller.preview?.plan;
-    final conflicts = plan?.conflicts ?? const <SyncConflict>[];
+    final preview = controller.preview;
+    final report = controller.report;
+    final conflicts = controller.conflicts;
+
+    final String subtitle;
+    if (preview != null) {
+      subtitle =
+          '${preview.plan.actions.length} actions · '
+          '${conflicts.length} conflicts';
+    } else if (report != null) {
+      subtitle =
+          '${report.applyReport?.created ?? 0} created · '
+          '${report.applyReport?.updated ?? 0} updated · '
+          '${report.applyReport?.deleted ?? 0} deleted';
+    } else {
+      subtitle = 'Run Check to compare both sides.';
+    }
 
     return _PanelCard(
       title: 'Changes',
-      subtitle: plan == null
-          ? 'Run Check to compare both sides.'
-          : '${plan.actions.length} actions · ${conflicts.length} conflicts',
-      child: plan == null
-          ? const _EmptyState(
+      subtitle: subtitle,
+      child: preview != null
+          ? (preview.plan.isEmpty && conflicts.isEmpty)
+                ? const _EmptyState(
+                    icon: FLucideIcons.circleCheck,
+                    text: 'Already in sync.',
+                  )
+                : _PlanList(plan: preview.plan, controller: controller)
+          : report != null
+          ? _SummaryView(report: report, controller: controller)
+          : const _EmptyState(
               icon: FLucideIcons.listChecks,
               text: 'Click Check to scan both sides.',
-            )
-          : plan.isEmpty && conflicts.isEmpty
-          ? const _EmptyState(
-              icon: FLucideIcons.circleCheck,
-              text: 'Already in sync.',
-            )
-          : _PlanList(plan: plan, controller: controller),
+            ),
+    );
+  }
+}
+
+class _SummaryView extends StatelessWidget {
+  const _SummaryView({required this.report, required this.controller});
+
+  final SyncReport report;
+  final SyncDashboardController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    final apply = report.applyReport;
+    final conflicts = controller.conflicts;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 30, 16, 18),
+      children: [
+        Icon(
+          report.hasConflicts
+              ? FLucideIcons.alertTriangle
+              : FLucideIcons.circleCheck,
+          size: 30,
+          color: report.hasConflicts
+              ? const Color(0xFFD4A106)
+              : const Color(0xFF2EA121),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          report.hasConflicts
+              ? 'Sync finished with conflicts'
+              : 'Sync complete',
+          textAlign: TextAlign.center,
+          style: theme.typography.body.lg.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          report.conflictBackupRoot == null
+              ? 'Both sides now match.'
+              : 'Conflicting files were left untouched. Their copies are in '
+                    '${report.conflictBackupRoot}.',
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: theme.typography.body.xs.copyWith(
+            color: theme.colors.mutedForeground,
+          ),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _Stat(label: 'Created', value: apply?.created ?? 0),
+            const SizedBox(width: 10),
+            _Stat(label: 'Updated', value: apply?.updated ?? 0),
+            const SizedBox(width: 10),
+            _Stat(label: 'Deleted', value: apply?.deleted ?? 0),
+            const SizedBox(width: 10),
+            _Stat(label: 'Conflicts', value: conflicts.length),
+          ],
+        ),
+        if (conflicts.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _ConflictSection(conflicts: conflicts, controller: controller),
+        ],
+      ],
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat({required this.label, required this.value});
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colors.muted.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colors.border),
+      ),
+      child: Column(
+        children: [
+          Text(
+            '$value',
+            style: theme.typography.body.lg.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: theme.typography.body.xs.copyWith(
+              color: theme.colors.mutedForeground,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -425,7 +373,7 @@ class _PlanList extends StatelessWidget {
         if (uploads.isNotEmpty)
           _ActionSection(
             key: const ValueKey<String>('sync.section.uploads'),
-            title: 'Upload to Windows',
+            title: 'Upload to the peer',
             icon: FLucideIcons.arrowUp,
             color: const Color(0xFF2EA121),
             actions: uploads,

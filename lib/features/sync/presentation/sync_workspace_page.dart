@@ -1,327 +1,505 @@
-import 'package:file_selector/file_selector.dart';
+import 'dart:io';
+
 import 'package:flutter/widgets.dart';
 import 'package:forui/forui.dart';
-import 'package:path/path.dart' as p;
 
-import '../../transport/http_transport.dart';
 import '../application/sync_client_config.dart';
+import '../application/sync_config_store.dart';
 import '../application/sync_pair_config.dart';
+import 'sync_dashboard_controller.dart';
 import 'sync_dashboard_page.dart';
 
 class SyncWorkspacePage extends StatefulWidget {
-  const SyncWorkspacePage({
-    super.key,
-    required this.configPath,
-    required this.projectRoot,
-  });
+  const SyncWorkspacePage({super.key, required this.store});
 
-  final String configPath;
-  final String projectRoot;
+  final SyncConfigStore store;
 
   @override
   State<SyncWorkspacePage> createState() => _SyncWorkspacePageState();
 }
 
 class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
-  late SyncClientConfig _config;
-  String? _selectedName;
-  SyncPairConfig? _runtime;
-  String? _configError;
+  String? _deviceId;
+  String? _pairName;
+  SyncDashboardController? _controller;
+  String? _controllerKey;
 
   @override
   void initState() {
     super.initState();
-    try {
-      _config = SyncClientConfig.load(
-        path: widget.configPath,
-        projectRoot: widget.projectRoot,
-      );
-      if (_config.pairs.isNotEmpty) {
-        _selectedName = _config.pairs.first.name;
-      }
-      _refreshRuntime();
-    } catch (error) {
-      _configError = error.toString();
-      _config = SyncClientConfig(
-        token: '',
-        timeoutSeconds: 300,
-        extraIgnores: const [],
-        pairs: const [],
-      );
+    widget.store.addListener(_syncSelection);
+    _syncSelection();
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_syncSelection);
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  /// Keeps the device/pair selection and the dashboard controller in sync with
+  /// the shared config.
+  void _syncSelection() {
+    if (!widget.store.loaded) return;
+
+    final devices = widget.store.devices;
+    var deviceId = _deviceId;
+    if (deviceId == null || !devices.any((device) => device.id == deviceId)) {
+      deviceId = devices.isEmpty ? null : devices.first.id;
+    }
+
+    final pairs = deviceId == null
+        ? const <SyncPairEntry>[]
+        : widget.store.config.pairsForDevice(deviceId);
+    var pairName = _pairName;
+    if (pairName == null || !pairs.any((pair) => pair.name == pairName)) {
+      pairName = pairs.isEmpty ? null : pairs.first.name;
+    }
+
+    final runtime = pairName == null
+        ? null
+        : widget.store.config.runtimeFor(pairName);
+    final key = runtime == null ? null : _keyOf(runtime);
+
+    var changed = deviceId != _deviceId || pairName != _pairName;
+    _deviceId = deviceId;
+    _pairName = pairName;
+
+    if (key != _controllerKey) {
+      _controller?.dispose();
+      _controller = runtime == null
+          ? null
+          : SyncDashboardController(config: runtime);
+      _controllerKey = key;
+      changed = true;
+    }
+
+    if (changed && mounted) {
+      setState(() {});
     }
   }
 
-  void _refreshRuntime() {
-    final name = _selectedName;
-    _runtime = name == null ? null : _config.runtimeFor(name);
+  static String _keyOf(SyncPairConfig config) {
+    return [
+      config.localRoot,
+      config.remoteUrl,
+      config.token,
+      config.timeoutSeconds,
+      config.stateDir,
+      config.extraIgnores.join('\u0000'),
+    ].join('\u0001');
   }
 
-  Future<void> _saveConfig() async {
-    try {
-      await _config.save(path: widget.configPath);
-    } catch (error) {
-      if (!mounted) return;
-      _showMessage('Failed to save config: $error');
-    }
+  void _selectDevice(String deviceId) {
+    if (deviceId == _deviceId) return;
+    _deviceId = deviceId;
+    _pairName = null;
+    _syncSelection();
   }
 
-  Future<void> _addPair() async {
-    final result = await _showPairEditor();
-    if (result == null || !mounted) return;
-    if (_config.pairs.any((pair) => pair.name == result.entry.name)) {
-      _showMessage('A pair named "${result.entry.name}" already exists.');
-      return;
-    }
-
-    setState(() {
-      _config.token = result.token;
-      _config.pairs.add(result.entry);
-      _selectedName = result.entry.name;
-      _refreshRuntime();
-    });
-    await _saveConfig();
-  }
-
-  Future<void> _editPair() async {
-    final name = _selectedName;
-    if (name == null) return;
-    final entry = _config.pairs.firstWhere((pair) => pair.name == name);
-    final result = await _showPairEditor(entry: entry);
-    if (result == null || !mounted) return;
-    if (_config.pairs.any(
-      (pair) => pair.name == result.entry.name && pair.name != name,
-    )) {
-      _showMessage('A pair named "${result.entry.name}" already exists.');
-      return;
-    }
-
-    setState(() {
-      _config.token = result.token;
-      final index = _config.pairs.indexWhere((pair) => pair.name == name);
-      if (index >= 0) {
-        _config.pairs[index] = result.entry;
-      }
-      _selectedName = result.entry.name;
-      _refreshRuntime();
-    });
-    await _saveConfig();
-  }
-
-  Future<_PairEditorResult?> _showPairEditor({SyncPairEntry? entry}) {
-    return showFDialog<_PairEditorResult>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context, style, animation) => _PairEditorDialog(
-        animation: animation,
-        projectRoot: widget.projectRoot,
-        token: _config.token,
-        entry: entry,
-      ),
-    );
-  }
-
-  Future<void> _deletePair() async {
-    final name = _selectedName;
-    if (name == null) return;
-    final confirmed = await showFDialog<bool>(
-      context: context,
-      builder: (context, style, animation) => FDialog(
-        animation: animation,
-        constraints: const BoxConstraints(minWidth: 380, maxWidth: 460),
-        builder: (context, style) => Padding(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Delete sync pair?', style: style.titleTextStyle),
-              const SizedBox(height: 8),
-              Text(
-                'Remove "$name" from this device. Files are not deleted; only '
-                'the pair configuration and its state remain on disk.',
-                style: style.bodyTextStyle,
-              ),
-              const SizedBox(height: 22),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  FButton(
-                    variant: FButtonVariant.outline,
-                    onPress: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  FButton(
-                    key: const ValueKey<String>('sync.pair.deleteConfirm'),
-                    variant: FButtonVariant.destructive,
-                    onPress: () => Navigator.of(context).pop(true),
-                    child: const Text('Delete'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    setState(() {
-      _config.pairs.removeWhere((pair) => pair.name == name);
-      _selectedName = _config.pairs.isEmpty ? null : _config.pairs.first.name;
-      _refreshRuntime();
-    });
-    await _saveConfig();
-  }
-
-  void _showMessage(String message) {
-    showFToast(
-      context: context,
-      title: Text(message),
-      icon: const Icon(FLucideIcons.circleAlert),
-    );
+  void _selectPair(String name) {
+    if (name == _pairName) return;
+    _pairName = name;
+    _syncSelection();
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
-    if (_configError != null) {
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: FAlert(
-            variant: FAlertVariant.destructive,
-            title: const Text('Cannot read sync config'),
-            subtitle: Text(_configError!),
-            icon: const Icon(FLucideIcons.circleAlert),
-          ),
-        ),
-      );
-    }
+    final store = widget.store;
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final theme = context.theme;
+        if (!store.loaded) {
+          return Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: FCircularProgress(),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Loading sync pairs...',
+                  style: theme.typography.body.sm.copyWith(
+                    color: theme.colors.mutedForeground,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
 
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-          decoration: BoxDecoration(
-            color: theme.colors.background,
-            border: Border(bottom: BorderSide(color: theme.colors.border)),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+        if (store.error != null) {
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: FAlert(
+                variant: FAlertVariant.destructive,
+                title: const Text('Cannot read sync config'),
+                subtitle: Text(store.error!),
+                icon: const Icon(FLucideIcons.circleAlert),
+              ),
+            ),
+          );
+        }
+
+        final config = store.config;
+        final devices = config.devices;
+        final selectedDevice = _deviceId == null
+            ? null
+            : config.deviceById(_deviceId!);
+        final pairs = selectedDevice == null
+            ? const <SyncPairEntry>[]
+            : config.pairsForDevice(selectedDevice.id);
+        SyncPairEntry? pair;
+        for (final entry in pairs) {
+          if (entry.name == _pairName) {
+            pair = entry;
+            break;
+          }
+        }
+        final controller = _controller;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+              child: _DevicePairStrip(
+                device: selectedDevice,
+                localRoot: pair?.localRoot,
+                devices: devices,
+                onSelectDevice: _selectDevice,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+              child: _PairTabs(
+                pairs: pairs,
+                selected: _pairName,
+                onSelect: _selectPair,
+              ),
+            ),
+            Expanded(
+              child: controller == null
+                  ? _EmptyPairs(hasDevice: selectedDevice != null)
+                  : ListenableBuilder(
+                      listenable: controller,
+                      builder: (context, _) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: SyncPreviewArea(controller: controller),
+                          ),
+                          SyncBottomBar(controller: controller),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _DevicePairStrip extends StatelessWidget {
+  const _DevicePairStrip({
+    required this.device,
+    required this.localRoot,
+    required this.devices,
+    required this.onSelectDevice,
+  });
+
+  final SyncDeviceEntry? device;
+  final String? localRoot;
+  final List<SyncDeviceEntry> devices;
+  final ValueChanged<String> onSelectDevice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    return FCard(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _Endpoint(
+                icon: FLucideIcons.computer,
+                overline: 'THIS MACHINE',
+                title: _localMachineName(),
+                subtitle: localRoot ?? 'Choose a pair on the right.',
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 22),
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: theme.colors.muted,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    FLucideIcons.arrowRightLeft,
+                    size: 14,
+                    color: theme.colors.mutedForeground,
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: _PeerEndpoint(
+                device: device,
+                devices: devices,
+                onSelectDevice: onSelectDevice,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _localMachineName() {
+    final hostname = Platform.localHostname;
+    return hostname.isEmpty ? _platformName() : hostname;
+  }
+
+  static String _platformName() {
+    return switch (Platform.operatingSystem) {
+      'macos' => 'This Mac',
+      'windows' => 'This PC',
+      'linux' => 'This machine',
+      _ => 'This device',
+    };
+  }
+}
+
+class _Endpoint extends StatelessWidget {
+  const _Endpoint({
+    required this.icon,
+    required this.overline,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String overline;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colors.muted.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Sync',
-                      style: theme.typography.body.xl.copyWith(
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.3,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Keep a local folder and a remote mount in step.',
-                      style: theme.typography.body.sm.copyWith(
-                        color: theme.colors.mutedForeground,
-                      ),
-                    ),
-                  ],
+              Icon(icon, size: 14, color: theme.colors.mutedForeground),
+              const SizedBox(width: 6),
+              Text(
+                overline,
+                style: theme.typography.body.xs.copyWith(
+                  color: theme.colors.mutedForeground,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.8,
                 ),
               ),
-              if (_config.pairs.isNotEmpty) ...[
-                SizedBox(
-                  width: 220,
-                  child: FSelect<String>(
-                    key: const ValueKey<String>('sync.pair.select'),
-                    control: FSelectControl<String>.lifted(
-                      value: _selectedName,
-                      onChange: (value) {
-                        if (value == null) return;
-                        setState(() {
-                          _selectedName = value;
-                          _refreshRuntime();
-                        });
-                      },
-                    ),
-                    items: {
-                      for (final pair in _config.pairs) pair.name: pair.name,
-                    },
-                    label: const Text('Sync pair'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ] else
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8, right: 8),
-                  child: Text(
-                    'No pairs yet',
-                    style: theme.typography.body.sm.copyWith(
-                      color: theme.colors.mutedForeground,
-                    ),
-                  ),
-                ),
-              FButton.icon(
-                key: const ValueKey<String>('sync.pair.add'),
-                variant: FButtonVariant.outline,
-                onPress: _addPair,
-                semanticsTooltip: 'Add sync pair',
-                child: const Icon(FLucideIcons.plus, size: 16),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.typography.body.sm.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            subtitle,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.typography.body.xs.copyWith(
+              fontFamily: 'monospace',
+              color: theme.colors.mutedForeground,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PeerEndpoint extends StatelessWidget {
+  const _PeerEndpoint({
+    required this.device,
+    required this.devices,
+    required this.onSelectDevice,
+  });
+
+  final SyncDeviceEntry? device;
+  final List<SyncDeviceEntry> devices;
+  final ValueChanged<String> onSelectDevice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    final selected = device;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colors.muted.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                FLucideIcons.router,
+                size: 14,
+                color: theme.colors.mutedForeground,
               ),
               const SizedBox(width: 6),
-              FButton.icon(
-                key: const ValueKey<String>('sync.pair.edit'),
-                variant: FButtonVariant.outline,
-                onPress: _selectedName == null ? null : _editPair,
-                semanticsTooltip: 'Edit sync pair',
-                child: const Icon(FLucideIcons.pencil, size: 16),
-              ),
-              const SizedBox(width: 6),
-              FButton.icon(
-                key: const ValueKey<String>('sync.pair.delete'),
-                variant: FButtonVariant.outline,
-                onPress: _selectedName == null ? null : _deletePair,
-                semanticsTooltip: 'Delete sync pair',
-                child: const Icon(FLucideIcons.trash2, size: 16),
+              Text(
+                'PEER DEVICE',
+                style: theme.typography.body.xs.copyWith(
+                  color: theme.colors.mutedForeground,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.8,
+                ),
               ),
               const Spacer(),
-              if (_config.token.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 12, bottom: 2),
-                  child: FButton(
-                    variant: FButtonVariant.outline,
-                    size: FButtonSizeVariant.sm,
-                    onPress: _selectedName == null ? null : _editPair,
-                    prefix: const Icon(FLucideIcons.circleAlert, size: 14),
-                    child: const Text('Token not set'),
+              if (selected != null)
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2EA121),
+                    shape: BoxShape.circle,
                   ),
                 ),
             ],
           ),
-        ),
-        Expanded(
-          child: _runtime == null
-              ? _EmptyPairs(onAdd: _addPair)
-              : SyncDashboardPage(
-                  key: ValueKey<String>(
-                    'sync.dashboard.${_runtime!.pairName}'
-                    '.${_runtime!.localRoot}.${_runtime!.remoteUrl}'
-                    '.${_runtime!.extraIgnores.join('|')}',
-                  ),
-                  config: _runtime!,
-                ),
-        ),
-      ],
+          const SizedBox(height: 8),
+          if (devices.isEmpty)
+            Text(
+              'No devices yet. Add one in Devices.',
+              style: theme.typography.body.xs.copyWith(
+                color: theme.colors.mutedForeground,
+              ),
+            )
+          else
+            FSelect<String>(
+              key: const ValueKey<String>('sync.device.select'),
+              control: FSelectControl<String>.lifted(
+                value: selected?.name,
+                onChange: (value) {
+                  if (value == null) return;
+                  final device = devices.firstWhere(
+                    (entry) => entry.name == value,
+                  );
+                  onSelectDevice(device.id);
+                },
+              ),
+              items: {for (final entry in devices) entry.name: entry.name},
+              hint: 'Select a peer device',
+            ),
+          if (selected != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              selected.baseUrl,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.typography.body.xs.copyWith(
+                fontFamily: 'monospace',
+                color: theme.colors.mutedForeground,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PairTabs extends StatelessWidget {
+  const _PairTabs({
+    required this.pairs,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final List<SyncPairEntry> pairs;
+  final String? selected;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    return SizedBox(
+      height: 32,
+      child: Row(
+        children: [
+          if (pairs.isEmpty)
+            Text(
+              'No pairs for this device.',
+              style: theme.typography.body.sm.copyWith(
+                color: theme.colors.mutedForeground,
+              ),
+            )
+          else
+            Expanded(
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final pair in pairs)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: FButton(
+                        key: ValueKey<String>('sync.pair.tab.${pair.name}'),
+                        variant: pair.name == selected
+                            ? FButtonVariant.secondary
+                            : FButtonVariant.ghost,
+                        size: FButtonSizeVariant.sm,
+                        onPress: () => onSelect(pair.name),
+                        child: Text(pair.name),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
 
 class _EmptyPairs extends StatelessWidget {
-  const _EmptyPairs({required this.onAdd});
+  const _EmptyPairs({required this.hasDevice});
 
-  final VoidCallback onAdd;
+  final bool hasDevice;
 
   @override
   Widget build(BuildContext context) {
@@ -345,457 +523,22 @@ class _EmptyPairs extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Text(
-            'No sync pairs yet.',
+            hasDevice ? 'No pairs for this device.' : 'No devices yet.',
             style: theme.typography.body.md.copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 4),
           Text(
-            'Add a pair to choose a local folder and a remote mount.',
+            hasDevice
+                ? 'Add a pair in Devices to choose a local folder and a mount.'
+                : 'Add a device in Devices, then add a pair to it.',
             style: theme.typography.body.sm.copyWith(
               color: theme.colors.mutedForeground,
             ),
           ),
-          const SizedBox(height: 18),
-          FButton(
-            key: const ValueKey<String>('sync.pair.emptyAdd'),
-            onPress: onAdd,
-            prefix: const Icon(FLucideIcons.plus, size: 16),
-            child: const Text('Add sync pair'),
-          ),
         ],
       ),
-    );
-  }
-}
-
-final class _PairEditorResult {
-  const _PairEditorResult({required this.entry, required this.token});
-
-  final SyncPairEntry entry;
-  final String token;
-}
-
-class _PairEditorDialog extends StatefulWidget {
-  const _PairEditorDialog({
-    required this.animation,
-    required this.projectRoot,
-    required this.token,
-    this.entry,
-  });
-
-  final Animation<double> animation;
-  final String projectRoot;
-  final String token;
-  final SyncPairEntry? entry;
-
-  @override
-  State<_PairEditorDialog> createState() => _PairEditorDialogState();
-}
-
-class _PairEditorDialogState extends State<_PairEditorDialog> {
-  final TextEditingController _name = TextEditingController();
-  final TextEditingController _localRoot = TextEditingController();
-  final TextEditingController _server = TextEditingController();
-  final TextEditingController _token = TextEditingController();
-  final TextEditingController _mount = TextEditingController();
-  final TextEditingController _subpath = TextEditingController();
-  final TextEditingController _ignores = TextEditingController();
-
-  List<String> _mounts = const [];
-  bool _loadingMounts = false;
-  String? _mountError;
-
-  @override
-  void initState() {
-    super.initState();
-    final entry = widget.entry;
-    if (entry != null) {
-      _name.text = entry.name;
-      _localRoot.text = entry.localRoot;
-      _ignores.text = entry.ignores.join('\n');
-      final uri = Uri.tryParse(entry.remoteUrl);
-      if (uri != null && uri.hasScheme) {
-        _server.text = '${uri.scheme}://${uri.authority}';
-        final segments = uri.pathSegments
-            .where((segment) => segment.isNotEmpty)
-            .toList();
-        if (segments.isNotEmpty) {
-          _mount.text = segments.first;
-          _subpath.text = segments.skip(1).join('/');
-        }
-      }
-    } else {
-      final defaultLocal = p.normalize(
-        p.join(widget.projectRoot, '..', 'photolens'),
-      );
-      _localRoot.text = defaultLocal;
-      _name.text = p.basename(defaultLocal);
-      _server.text = 'http://47.102.108.149:2160';
-      _mount.text = 'photolens';
-    }
-    _token.text = widget.token;
-    _fetchMounts();
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _localRoot.dispose();
-    _server.dispose();
-    _token.dispose();
-    _mount.dispose();
-    _subpath.dispose();
-    _ignores.dispose();
-    super.dispose();
-  }
-
-  Future<void> _fetchMounts() async {
-    final server = _server.text.trim();
-    if (server.isEmpty) return;
-    setState(() {
-      _loadingMounts = true;
-      _mountError = null;
-    });
-    final transport = HttpTransport(
-      baseUrl: server,
-      token: _token.text.trim(),
-      timeout: const Duration(seconds: 20),
-    );
-    try {
-      final json = await transport.getJson('');
-      final mounts = json['mounts'];
-      if (!mounted) return;
-      setState(() {
-        _mounts = mounts is List
-            ? mounts.whereType<String>().toList(growable: false)
-            : const [];
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _mountError = error.toString());
-    } finally {
-      await transport.close();
-      if (mounted) {
-        setState(() => _loadingMounts = false);
-      }
-    }
-  }
-
-  Future<void> _browseLocalRoot() async {
-    final path = await getDirectoryPath(
-      initialDirectory: _localRoot.text.isEmpty
-          ? widget.projectRoot
-          : _localRoot.text,
-      confirmButtonText: 'Select folder',
-    );
-    if (path == null) return;
-    setState(() {
-      _localRoot.text = path;
-      if (_name.text.trim().isEmpty) {
-        _name.text = p.basename(path);
-      }
-    });
-  }
-
-  String get _sanitizedName {
-    final value = _name.text.trim().isEmpty ? 'pair' : _name.text.trim();
-    return value.replaceAll(RegExp(r'[<>:"/\\|?*]'), '-');
-  }
-
-  void _save() {
-    final server = _server.text.trim().replaceAll(RegExp(r'/+$'), '');
-    final mount = _mount.text.trim().replaceAll(RegExp(r'^/+|/+$'), '');
-    final subpath = _subpath.text.trim().replaceAll(RegExp(r'^/+|/+$'), '');
-    final remoteUrl = subpath.isEmpty
-        ? '$server/$mount'
-        : '$server/$mount/$subpath';
-    final entry = SyncPairEntry(
-      name: _name.text.trim(),
-      localRoot: p.normalize(_localRoot.text.trim()),
-      remoteUrl: remoteUrl,
-      stateDir: widget.entry?.stateDir.isNotEmpty == true
-          ? widget.entry!.stateDir
-          : p.normalize(
-              p.join(widget.projectRoot, 'data', 'sync_pairs', _sanitizedName),
-            ),
-      ignores: [
-        for (final line in _ignores.text.split('\n'))
-          if (line.trim().isNotEmpty && !line.trim().startsWith('#'))
-            line.trim(),
-      ],
-    );
-    Navigator.of(context)
-        .pop(_PairEditorResult(entry: entry, token: _token.text.trim()));
-  }
-
-  bool get _canSave {
-    return _name.text.trim().isNotEmpty &&
-        _localRoot.text.trim().isNotEmpty &&
-        _server.text.trim().isNotEmpty &&
-        _mount.text.trim().isNotEmpty;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.theme;
-    return FDialog(
-      animation: widget.animation,
-      constraints: const BoxConstraints(minWidth: 560, maxWidth: 680),
-      builder: (context, style) => SingleChildScrollView(
-        padding: const EdgeInsets.all(22),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: theme.colors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    FLucideIcons.arrowRightLeft,
-                    size: 16,
-                    color: theme.colors.primary,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  widget.entry == null ? 'Add sync pair' : 'Edit sync pair',
-                  style: style.titleTextStyle,
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            _Field(
-              label: 'Pair name',
-              child: FTextField(
-                key: const ValueKey<String>('sync.pair.name'),
-                control: FTextFieldControl.managed(
-                  controller: _name,
-                  onChange: (_) => setState(() {}),
-                ),
-                hint: 'photolens',
-              ),
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Local folder',
-              child: Row(
-                children: [
-                  Expanded(
-                    child: FTextField(
-                      key: const ValueKey<String>('sync.pair.localRoot'),
-                      control: FTextFieldControl.managed(
-                        controller: _localRoot,
-                        onChange: (_) => setState(() {}),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FButton(
-                    key: const ValueKey<String>('sync.pair.browseLocal'),
-                    variant: FButtonVariant.outline,
-                    onPress: _browseLocalRoot,
-                    prefix: const Icon(FLucideIcons.folderOpen, size: 15),
-                    child: const Text('Browse'),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Remote server',
-              child: FTextField(
-                key: const ValueKey<String>('sync.pair.server'),
-                control: FTextFieldControl.managed(
-                  controller: _server,
-                  onChange: (_) => setState(() {}),
-                ),
-                hint: 'http://47.102.108.149:2160',
-              ),
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Token (shared by all pairs)',
-              child: FTextField(
-                key: const ValueKey<String>('sync.pair.token'),
-                control: FTextFieldControl.managed(
-                  controller: _token,
-                  onChange: (_) => setState(() {}),
-                ),
-                obscureText: true,
-              ),
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Remote mount',
-              child: Row(
-                children: [
-                  Expanded(
-                    child: FTextField(
-                      key: const ValueKey<String>('sync.pair.mount'),
-                      control: FTextFieldControl.managed(
-                        controller: _mount,
-                        onChange: (_) => setState(() {}),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FButton.icon(
-                    key: const ValueKey<String>('sync.pair.refreshMounts'),
-                    variant: FButtonVariant.outline,
-                    onPress: _loadingMounts ? null : _fetchMounts,
-                    semanticsTooltip: 'Refresh mounts',
-                    child: _loadingMounts
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: FCircularProgress(),
-                          )
-                        : const Icon(FLucideIcons.refreshCw, size: 15),
-                  ),
-                ],
-              ),
-            ),
-            if (_mounts.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final mount in _mounts)
-                    FButton(
-                      variant: FButtonVariant.outline,
-                      size: FButtonSizeVariant.sm,
-                      onPress: () => setState(() => _mount.text = mount),
-                      child: Text(mount),
-                    ),
-                ],
-              ),
-            ],
-            if (_mountError != null) ...[
-              const SizedBox(height: 8),
-              FAlert(
-                variant: FAlertVariant.destructive,
-                title: const Text('Cannot list remote mounts'),
-                subtitle: Text(_mountError!),
-                icon: const Icon(FLucideIcons.circleAlert),
-              ),
-            ],
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Remote subfolder (optional)',
-              child: FTextField(
-                key: const ValueKey<String>('sync.pair.subpath'),
-                control: FTextFieldControl.managed(controller: _subpath),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Container(height: 1, color: theme.colors.border),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Icon(
-                  FLucideIcons.settings,
-                  size: 15,
-                  color: theme.colors.mutedForeground,
-                ),
-                const SizedBox(width: 7),
-                Text(
-                  'Ignores',
-                  style: theme.typography.body.sm.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'One pattern per line. This pair uses its own list instead of '
-              'the global ignores.',
-              style: theme.typography.body.xs.copyWith(
-                color: theme.colors.mutedForeground,
-              ),
-            ),
-            const SizedBox(height: 10),
-            FTextField(
-              key: const ValueKey<String>('sync.pair.ignores'),
-              control: FTextFieldControl.managed(controller: _ignores),
-              hint: '/.git/\n/blog/\n*.b64.html',
-              description: const Text(
-                'Gitignore-like syntax: /path anchors at the sync root, '
-                'dir/ matches a directory, * and ** match names.',
-              ),
-              minLines: 5,
-              maxLines: 9,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Remote URL: '
-              '${_server.text.trim().replaceAll(RegExp(r'/+$'), '')}/'
-              '${_mount.text.trim().replaceAll(RegExp(r'^/+|/+$'), '')}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.typography.body.xs.copyWith(
-                color: theme.colors.mutedForeground,
-                fontFamily: 'monospace',
-              ),
-            ),
-            const SizedBox(height: 22),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                FButton(
-                  key: const ValueKey<String>('sync.pair.cancel'),
-                  variant: FButtonVariant.ghost,
-                  onPress: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 8),
-                FButton(
-                  key: const ValueKey<String>('sync.pair.save'),
-                  onPress: _canSave ? _save : null,
-                  child: const Text('Save pair'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Field extends StatelessWidget {
-  const _Field({required this.label, required this.child});
-
-  final String label;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.theme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 6),
-          child: Text(
-            label,
-            style: theme.typography.body.xs.copyWith(
-              color: theme.colors.mutedForeground,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        child,
-      ],
     );
   }
 }
