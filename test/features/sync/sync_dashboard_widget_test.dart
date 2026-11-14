@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_sync_pro/app/forui_theme.dart';
 import 'package:file_sync_pro/features/sync/presentation/sync_workspace_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
@@ -22,18 +24,22 @@ void main() {
 
   Widget wrap(String configPath) {
     return MaterialApp(
-      home: Scaffold(
-        body: SyncWorkspacePage(
-          configPath: configPath,
-          projectRoot: temp.path,
-        ),
+      localizationsDelegates: FLocalizations.localizationsDelegates,
+      supportedLocales: FLocalizations.supportedLocales,
+      builder: (context, child) => FTheme(
+        data: AppForuiTheme.light,
+        child: FToaster(child: FTooltipGroup(child: child!)),
       ),
+      home: SyncWorkspacePage(configPath: configPath, projectRoot: temp.path),
     );
   }
 
   testWidgets('renders the sync workspace with a configured pair', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 860));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
     final local = Directory(p.join(temp.path, 'local'))..createSync();
     final configPath = p.join(toolDir, 'sync.config.json');
     File(configPath).writeAsStringSync(
@@ -60,7 +66,7 @@ void main() {
     );
     expect(find.byKey(const ValueKey<String>('sync.run')), findsOneWidget);
     expect(find.text('demo'), findsWidgets);
-    expect(find.text('File Sync Pro'), findsOneWidget);
+    expect(find.text('Sync'), findsWidgets);
   });
 
   testWidgets('shows the empty state when no pairs are configured', (

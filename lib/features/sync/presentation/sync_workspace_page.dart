@@ -1,5 +1,6 @@
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
+import 'package:forui/forui.dart';
 import 'package:path/path.dart' as p;
 
 import '../../transport/http_transport.dart';
@@ -60,22 +61,13 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
       await _config.save(path: widget.configPath);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to save config: $error')));
+      _showMessage('Failed to save config: $error');
     }
   }
 
   Future<void> _addPair() async {
-    final result = await showDialog<_PairEditorResult>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _PairEditorDialog(
-        projectRoot: widget.projectRoot,
-        token: _config.token,
-      ),
-    );
-    if (result == null) return;
+    final result = await _showPairEditor();
+    if (result == null || !mounted) return;
     if (_config.pairs.any((pair) => pair.name == result.entry.name)) {
       _showMessage('A pair named "${result.entry.name}" already exists.');
       return;
@@ -94,16 +86,8 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     final name = _selectedName;
     if (name == null) return;
     final entry = _config.pairs.firstWhere((pair) => pair.name == name);
-    final result = await showDialog<_PairEditorResult>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _PairEditorDialog(
-        projectRoot: widget.projectRoot,
-        token: _config.token,
-        entry: entry,
-      ),
-    );
-    if (result == null) return;
+    final result = await _showPairEditor(entry: entry);
+    if (result == null || !mounted) return;
     if (_config.pairs.any(
       (pair) => pair.name == result.entry.name && pair.name != name,
     )) {
@@ -123,36 +107,64 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     await _saveConfig();
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+  Future<_PairEditorResult?> _showPairEditor({SyncPairEntry? entry}) {
+    return showFDialog<_PairEditorResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context, style, animation) => _PairEditorDialog(
+        animation: animation,
+        projectRoot: widget.projectRoot,
+        token: _config.token,
+        entry: entry,
+      ),
+    );
   }
 
   Future<void> _deletePair() async {
     final name = _selectedName;
     if (name == null) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showFDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete sync pair?'),
-        content: Text(
-          'Remove "$name" from this device. Files are not deleted; only the '
-          'pair configuration and its state remain on disk.',
+      builder: (context, style, animation) => FDialog(
+        animation: animation,
+        constraints: const BoxConstraints(minWidth: 380, maxWidth: 460),
+        builder: (context, style) => Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Delete sync pair?', style: style.titleTextStyle),
+              const SizedBox(height: 8),
+              Text(
+                'Remove "$name" from this device. Files are not deleted; only '
+                'the pair configuration and its state remain on disk.',
+                style: style.bodyTextStyle,
+              ),
+              const SizedBox(height: 22),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  FButton(
+                    variant: FButtonVariant.outline,
+                    onPress: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FButton(
+                    key: const ValueKey<String>('sync.pair.deleteConfirm'),
+                    variant: FButtonVariant.destructive,
+                    onPress: () => Navigator.of(context).pop(true),
+                    child: const Text('Delete'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey<String>('sync.pair.deleteConfirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
 
     setState(() {
       _config.pairs.removeWhere((pair) => pair.name == name);
@@ -162,16 +174,26 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     await _saveConfig();
   }
 
+  void _showMessage(String message) {
+    showFToast(
+      context: context,
+      title: Text(message),
+      icon: const Icon(FLucideIcons.circleAlert),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.theme;
     if (_configError != null) {
-      return Scaffold(
-        body: Center(
-          child: Text(
-            'Cannot read sync config:\n$_configError',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: theme.colorScheme.error),
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: FAlert(
+            variant: FAlertVariant.destructive,
+            title: const Text('Cannot read sync config'),
+            subtitle: Text(_configError!),
+            icon: const Icon(FLucideIcons.circleAlert),
           ),
         ),
       );
@@ -180,74 +202,101 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     return Column(
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            border: Border(bottom: BorderSide(color: theme.dividerColor)),
+            color: theme.colors.background,
+            border: Border(bottom: BorderSide(color: theme.colors.border)),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                'Sync pair',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Sync',
+                      style: theme.typography.body.xl.copyWith(
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Keep a local folder and a remote mount in step.',
+                      style: theme.typography.body.sm.copyWith(
+                        color: theme.colors.mutedForeground,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 12),
-              if (_config.pairs.isNotEmpty)
-                DropdownButton<String>(
-                  key: const ValueKey<String>('sync.pair.select'),
-                  value: _selectedName,
-                  underline: const SizedBox.shrink(),
-                  items: [
-                    for (final pair in _config.pairs)
-                      DropdownMenuItem<String>(
-                        value: pair.name,
-                        child: Text(pair.name),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _selectedName = value;
-                      _refreshRuntime();
-                    });
-                  },
-                )
-              else
-                Text(
-                  'No pairs yet',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+              if (_config.pairs.isNotEmpty) ...[
+                SizedBox(
+                  width: 220,
+                  child: FSelect<String>(
+                    key: const ValueKey<String>('sync.pair.select'),
+                    control: FSelectControl<String>.lifted(
+                      value: _selectedName,
+                      onChange: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _selectedName = value;
+                          _refreshRuntime();
+                        });
+                      },
+                    ),
+                    items: {
+                      for (final pair in _config.pairs) pair.name: pair.name,
+                    },
+                    label: const Text('Sync pair'),
                   ),
                 ),
-              const SizedBox(width: 6),
-              IconButton(
+                const SizedBox(width: 8),
+              ] else
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8, right: 8),
+                  child: Text(
+                    'No pairs yet',
+                    style: theme.typography.body.sm.copyWith(
+                      color: theme.colors.mutedForeground,
+                    ),
+                  ),
+                ),
+              FButton.icon(
                 key: const ValueKey<String>('sync.pair.add'),
-                tooltip: 'Add sync pair',
-                onPressed: _addPair,
-                icon: const Icon(Icons.add, size: 18),
-                visualDensity: VisualDensity.compact,
+                variant: FButtonVariant.outline,
+                onPress: _addPair,
+                semanticsTooltip: 'Add sync pair',
+                child: const Icon(FLucideIcons.plus, size: 16),
               ),
-              IconButton(
+              const SizedBox(width: 6),
+              FButton.icon(
                 key: const ValueKey<String>('sync.pair.edit'),
-                tooltip: 'Edit sync pair',
-                onPressed: _selectedName == null ? null : _editPair,
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                visualDensity: VisualDensity.compact,
+                variant: FButtonVariant.outline,
+                onPress: _selectedName == null ? null : _editPair,
+                semanticsTooltip: 'Edit sync pair',
+                child: const Icon(FLucideIcons.pencil, size: 16),
               ),
-              IconButton(
+              const SizedBox(width: 6),
+              FButton.icon(
                 key: const ValueKey<String>('sync.pair.delete'),
-                tooltip: 'Delete sync pair',
-                onPressed: _selectedName == null ? null : _deletePair,
-                icon: const Icon(Icons.delete_outline, size: 18),
-                visualDensity: VisualDensity.compact,
+                variant: FButtonVariant.outline,
+                onPress: _selectedName == null ? null : _deletePair,
+                semanticsTooltip: 'Delete sync pair',
+                child: const Icon(FLucideIcons.trash2, size: 16),
               ),
               const Spacer(),
               if (_config.token.isEmpty)
-                _WarningChip(
-                  label: 'Token not set',
-                  onTap: _selectedName == null ? null : _editPair,
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, bottom: 2),
+                  child: FButton(
+                    variant: FButtonVariant.outline,
+                    size: FButtonSizeVariant.sm,
+                    onPress: _selectedName == null ? null : _editPair,
+                    prefix: const Icon(FLucideIcons.circleAlert, size: 14),
+                    child: const Text('Token not set'),
+                  ),
                 ),
             ],
           ),
@@ -275,73 +324,46 @@ class _EmptyPairs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.theme;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.folder_copy_outlined,
-            size: 36,
-            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-          ),
-          const SizedBox(height: 10),
-          Text('No sync pairs yet.', style: theme.textTheme.bodyMedium),
-          const SizedBox(height: 4),
-          Text(
-            'Add a pair to choose a local folder and a remote mount.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: theme.colors.muted,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              FLucideIcons.folderOpen,
+              size: 24,
+              color: theme.colors.mutedForeground,
             ),
           ),
           const SizedBox(height: 14),
-          FilledButton.icon(
+          Text(
+            'No sync pairs yet.',
+            style: theme.typography.body.md.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Add a pair to choose a local folder and a remote mount.',
+            style: theme.typography.body.sm.copyWith(
+              color: theme.colors.mutedForeground,
+            ),
+          ),
+          const SizedBox(height: 18),
+          FButton(
             key: const ValueKey<String>('sync.pair.emptyAdd'),
-            onPressed: onAdd,
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Add sync pair'),
+            onPress: onAdd,
+            prefix: const Icon(FLucideIcons.plus, size: 16),
+            child: const Text('Add sync pair'),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _WarningChip extends StatelessWidget {
-  const _WarningChip({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFFD4A106).withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.warning_amber_rounded,
-              size: 14,
-              color: Color(0xFFD4A106),
-            ),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF8A6A00),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -356,11 +378,13 @@ final class _PairEditorResult {
 
 class _PairEditorDialog extends StatefulWidget {
   const _PairEditorDialog({
+    required this.animation,
     required this.projectRoot,
     required this.token,
     this.entry,
   });
 
+  final Animation<double> animation;
   final String projectRoot;
   final String token;
   final SyncPairEntry? entry;
@@ -506,188 +530,224 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Dialog(
-      key: const ValueKey<String>('sync.pair.editor'),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: SizedBox(
-        width: 640,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.sync_alt,
-                    size: 22,
-                    color: theme.colorScheme.primary,
+    final theme = context.theme;
+    return FDialog(
+      animation: widget.animation,
+      constraints: const BoxConstraints(minWidth: 560, maxWidth: 680),
+      builder: (context, style) => SingleChildScrollView(
+        padding: const EdgeInsets.all(22),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: theme.colors.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(width: 10),
-                  Text(
-                    widget.entry == null ? 'Add sync pair' : 'Edit sync pair',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Icon(
+                    FLucideIcons.arrowRightLeft,
+                    size: 16,
+                    color: theme.colors.primary,
                   ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              TextField(
-                key: const ValueKey<String>('sync.pair.name'),
-                controller: _name,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  labelText: 'Pair name',
-                  border: OutlineInputBorder(),
                 ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey<String>('sync.pair.localRoot'),
-                      controller: _localRoot,
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(
-                        labelText: 'Local folder',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    key: const ValueKey<String>('sync.pair.browseLocal'),
-                    onPressed: _browseLocalRoot,
-                    icon: const Icon(Icons.folder_open, size: 18),
-                    label: const Text('Browse'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                key: const ValueKey<String>('sync.pair.server'),
-                controller: _server,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  labelText: 'Remote server',
-                  hintText: 'http://47.102.108.149:2160',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                key: const ValueKey<String>('sync.pair.token'),
-                controller: _token,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  labelText: 'Token (shared by all pairs)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey<String>('sync.pair.mount'),
-                      controller: _mount,
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(
-                        labelText: 'Remote mount',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  PopupMenuButton<String>(
-                    key: const ValueKey<String>('sync.pair.mountMenu'),
-                    tooltip: 'Choose a mount',
-                    onSelected: (value) => setState(() => _mount.text = value),
-                    itemBuilder: (context) {
-                      if (_mounts.isEmpty) {
-                        return const [
-                          PopupMenuItem<String>(
-                            enabled: false,
-                            child: Text('No mounts found'),
-                          ),
-                        ];
-                      }
-                      return [
-                        for (final mount in _mounts)
-                          PopupMenuItem<String>(
-                            value: mount,
-                            child: Text(mount),
-                          ),
-                      ];
-                    },
-                    icon: const Icon(Icons.arrow_drop_down),
-                  ),
-                  IconButton(
-                    key: const ValueKey<String>('sync.pair.refreshMounts'),
-                    tooltip: 'Refresh mounts',
-                    onPressed: _loadingMounts ? null : _fetchMounts,
-                    icon: _loadingMounts
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh, size: 18),
-                  ),
-                ],
-              ),
-              if (_mountError != null) ...[
-                const SizedBox(height: 6),
+                const SizedBox(width: 10),
                 Text(
-                  _mountError!,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
+                  widget.entry == null ? 'Add sync pair' : 'Edit sync pair',
+                  style: style.titleTextStyle,
                 ),
               ],
-              const SizedBox(height: 14),
-              TextField(
-                key: const ValueKey<String>('sync.pair.subpath'),
-                controller: _subpath,
-                decoration: const InputDecoration(
-                  labelText: 'Remote subfolder (optional)',
-                  border: OutlineInputBorder(),
+            ),
+            const SizedBox(height: 20),
+            _Field(
+              label: 'Pair name',
+              child: FTextField(
+                key: const ValueKey<String>('sync.pair.name'),
+                control: FTextFieldControl.managed(
+                  controller: _name,
+                  onChange: (_) => setState(() {}),
                 ),
+                hint: 'photolens',
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Remote URL: ${_server.text.trim().replaceAll(RegExp(r'/+$'), '')}/'
-                '${_mount.text.trim().replaceAll(RegExp(r'^/+|/+$'), '')}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+            ),
+            const SizedBox(height: 14),
+            _Field(
+              label: 'Local folder',
+              child: Row(
                 children: [
-                  TextButton(
-                    key: const ValueKey<String>('sync.pair.cancel'),
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
+                  Expanded(
+                    child: FTextField(
+                      key: const ValueKey<String>('sync.pair.localRoot'),
+                      control: FTextFieldControl.managed(
+                        controller: _localRoot,
+                        onChange: (_) => setState(() {}),
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  FilledButton(
-                    key: const ValueKey<String>('sync.pair.save'),
-                    onPressed: _canSave ? _save : null,
-                    child: const Text('Save pair'),
+                  FButton(
+                    key: const ValueKey<String>('sync.pair.browseLocal'),
+                    variant: FButtonVariant.outline,
+                    onPress: _browseLocalRoot,
+                    prefix: const Icon(FLucideIcons.folderOpen, size: 15),
+                    child: const Text('Browse'),
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _Field(
+              label: 'Remote server',
+              child: FTextField(
+                key: const ValueKey<String>('sync.pair.server'),
+                control: FTextFieldControl.managed(
+                  controller: _server,
+                  onChange: (_) => setState(() {}),
+                ),
+                hint: 'http://47.102.108.149:2160',
+              ),
+            ),
+            const SizedBox(height: 14),
+            _Field(
+              label: 'Token (shared by all pairs)',
+              child: FTextField(
+                key: const ValueKey<String>('sync.pair.token'),
+                control: FTextFieldControl.managed(
+                  controller: _token,
+                  onChange: (_) => setState(() {}),
+                ),
+                obscureText: true,
+              ),
+            ),
+            const SizedBox(height: 14),
+            _Field(
+              label: 'Remote mount',
+              child: Row(
+                children: [
+                  Expanded(
+                    child: FTextField(
+                      key: const ValueKey<String>('sync.pair.mount'),
+                      control: FTextFieldControl.managed(
+                        controller: _mount,
+                        onChange: (_) => setState(() {}),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FButton.icon(
+                    key: const ValueKey<String>('sync.pair.refreshMounts'),
+                    variant: FButtonVariant.outline,
+                    onPress: _loadingMounts ? null : _fetchMounts,
+                    semanticsTooltip: 'Refresh mounts',
+                    child: _loadingMounts
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: FCircularProgress(),
+                          )
+                        : const Icon(FLucideIcons.refreshCw, size: 15),
+                  ),
+                ],
+              ),
+            ),
+            if (_mounts.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final mount in _mounts)
+                    FButton(
+                      variant: FButtonVariant.outline,
+                      size: FButtonSizeVariant.sm,
+                      onPress: () => setState(() => _mount.text = mount),
+                      child: Text(mount),
+                    ),
                 ],
               ),
             ],
-          ),
+            if (_mountError != null) ...[
+              const SizedBox(height: 8),
+              FAlert(
+                variant: FAlertVariant.destructive,
+                title: const Text('Cannot list remote mounts'),
+                subtitle: Text(_mountError!),
+                icon: const Icon(FLucideIcons.circleAlert),
+              ),
+            ],
+            const SizedBox(height: 14),
+            _Field(
+              label: 'Remote subfolder (optional)',
+              child: FTextField(
+                key: const ValueKey<String>('sync.pair.subpath'),
+                control: FTextFieldControl.managed(controller: _subpath),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Remote URL: '
+              '${_server.text.trim().replaceAll(RegExp(r'/+$'), '')}/'
+              '${_mount.text.trim().replaceAll(RegExp(r'^/+|/+$'), '')}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.typography.body.xs.copyWith(
+                color: theme.colors.mutedForeground,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(height: 22),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                FButton(
+                  key: const ValueKey<String>('sync.pair.cancel'),
+                  variant: FButtonVariant.ghost,
+                  onPress: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                FButton(
+                  key: const ValueKey<String>('sync.pair.save'),
+                  onPress: _canSave ? _save : null,
+                  child: const Text('Save pair'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _Field extends StatelessWidget {
+  const _Field({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 6),
+          child: Text(
+            label,
+            style: theme.typography.body.xs.copyWith(
+              color: theme.colors.mutedForeground,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        child,
+      ],
     );
   }
 }

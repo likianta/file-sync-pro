@@ -1,8 +1,9 @@
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:forui/forui.dart';
 
 import 'file_server_controller.dart';
 
@@ -65,71 +66,89 @@ class _FileServerPageState extends State<FileServerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.theme;
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
         if (_loadError != null) {
-          return Scaffold(
-            body: Center(
-              child: Text(
-                'Cannot read server config:\n$_loadError',
-                textAlign: TextAlign.center,
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: FAlert(
+                variant: FAlertVariant.destructive,
+                title: const Text('Cannot read server config'),
+                subtitle: Text(_loadError!),
+                icon: const Icon(FLucideIcons.circleAlert),
               ),
             ),
           );
         }
         if (!_controller.loaded) {
-          return const Scaffold(
-            body: Center(child: Text('Loading settings...')),
+          return Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: FCircularProgress(),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Loading settings...',
+                  style: theme.typography.body.sm.copyWith(
+                    color: theme.colors.mutedForeground,
+                  ),
+                ),
+              ],
+            ),
           );
         }
-        return Scaffold(
-          body: Column(
-            children: [
-              _buildHeader(context),
-              Expanded(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1100),
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _buildConnectionCard(context),
-                          if (_controller.errorMessage != null) ...[
-                            const SizedBox(height: 12),
-                            _buildError(context),
-                          ],
-                          const SizedBox(height: 16),
-                          _buildMountsCard(context),
+        return Column(
+          children: [
+            _buildHeader(context),
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1080),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildConnectionCard(context),
+                        if (_controller.errorMessage != null) ...[
+                          const SizedBox(height: 12),
+                          _buildError(context),
                         ],
-                      ),
+                        const SizedBox(height: 14),
+                        _buildMountsCard(context),
+                      ],
                     ),
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
   }
 
   Widget _buildHeader(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.theme;
     final running = _controller.status == FileServerStatus.running;
     final color = _controller.status == FileServerStatus.error
-        ? theme.colorScheme.error
+        ? theme.colors.destructive
         : running
         ? const Color(0xFF2EA121)
-        : theme.colorScheme.onSurfaceVariant;
+        : theme.colors.mutedForeground;
+
     return Container(
-      height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(bottom: BorderSide(color: theme.dividerColor)),
+        color: theme.colors.background,
+        border: Border(bottom: BorderSide(color: theme.colors.border)),
       ),
       child: Row(
         children: [
@@ -137,44 +156,65 @@ class _FileServerPageState extends State<FileServerPage> {
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: 0.10),
+              color: theme.colors.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              Icons.dns_outlined,
-              size: 18,
-              color: theme.colorScheme.primary,
+              FLucideIcons.server,
+              size: 16,
+              color: theme.colors.primary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'File server',
+                  style: theme.typography.body.xl.copyWith(
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                Text(
+                  'Share folders with other devices over HTTP on the LAN.',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.typography.body.sm.copyWith(
+                    color: theme.colors.mutedForeground,
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'File server',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                'Share folders with other devices on this machine',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-          const Spacer(),
           Container(
-            width: 8,
-            height: 8,
+            width: 7,
+            height: 7,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 7),
           Text(
             _controller.statusLabel,
-            style: theme.textTheme.bodySmall?.copyWith(color: color),
+            style: theme.typography.body.sm.copyWith(
+              color: color,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(width: 12),
+          FButton(
+            key: const ValueKey<String>('server.run'),
+            onPress: _controller.isRunning
+                ? _controller.stop
+                : _controller.start,
+            prefix: Icon(
+              _controller.isRunning ? FLucideIcons.square : FLucideIcons.play,
+              size: 15,
+            ),
+            child: Text(
+              _controller.isRunning ? 'Stop server' : 'Run file server',
+            ),
           ),
         ],
       ),
@@ -182,142 +222,134 @@ class _FileServerPageState extends State<FileServerPage> {
   }
 
   Widget _buildConnectionCard(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
+    final theme = context.theme;
+    return FCard(
       child: Padding(
         padding: const EdgeInsets.all(18),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            TextField(
-              key: const ValueKey<String>('server.token'),
-              controller: _tokenController,
-              obscureText: _obscureToken,
-              enabled: !_controller.isRunning,
-              onChanged: _controller.updateToken,
-              decoration: InputDecoration(
-                labelText: 'Input token',
-                helperText:
-                    'Clients must use the same token. It is required before '
-                    'the server starts.',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  tooltip: _obscureToken ? 'Show token' : 'Hide token',
-                  onPressed: () =>
-                      setState(() => _obscureToken = !_obscureToken),
-                  icon: Icon(
-                    _obscureToken ? Icons.visibility_off : Icons.visibility,
-                    size: 18,
+            Row(
+              children: [
+                Icon(
+                  FLucideIcons.settings,
+                  size: 15,
+                  color: theme.colors.mutedForeground,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  'Connection',
+                  style: theme.typography.body.md.copyWith(
+                    fontWeight: FontWeight.w600,
                   ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Bind address and the token every client must send.',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.typography.body.xs.copyWith(
+                      color: theme.colors.mutedForeground,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            FTextField(
+              key: const ValueKey<String>('server.token'),
+              control: FTextFieldControl.managed(
+                controller: _tokenController,
+                onChange: (value) => _controller.updateToken(value.text),
+              ),
+              enabled: !_controller.isRunning,
+              obscureText: _obscureToken,
+              label: const Text('Input token'),
+              description: const Text(
+                'Clients must use the same token. It is required before the '
+                'server starts.',
+              ),
+              suffixBuilder: (context, style, variants) => FButton.icon(
+                variant: FButtonVariant.ghost,
+                onPress: () => setState(() => _obscureToken = !_obscureToken),
+                semanticsTooltip: _obscureToken ? 'Show token' : 'Hide token',
+                child: Icon(
+                  _obscureToken ? FLucideIcons.eye : FLucideIcons.eyeOff,
+                  size: 15,
                 ),
               ),
             ),
             const SizedBox(height: 16),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(
                   flex: 3,
-                  child: TextField(
+                  child: FSelect<String>(
                     key: const ValueKey<String>('server.ip'),
-                    controller: _ipController,
-                    readOnly: true,
-                    decoration: InputDecoration(
-                      labelText: 'Local IPv4',
-                      helperText: 'Shown for reference; binding uses 0.0.0.0.',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: PopupMenuButton<String>(
-                        key: const ValueKey<String>('server.ipMenu'),
-                        tooltip: 'Choose a local IPv4 address',
-                        icon: const Icon(Icons.arrow_drop_down),
-                        onSelected: (value) {
-                          _controller.selectAddress(value);
-                          _ipController.text = value;
-                        },
-                        itemBuilder: (context) {
-                          final addresses = _controller.addresses;
-                          if (addresses.isEmpty) {
-                            return const [
-                              PopupMenuItem<String>(
-                                enabled: false,
-                                child: Text('No IPv4 address found'),
-                              ),
-                            ];
-                          }
-                          return [
-                            for (final address in addresses)
-                              PopupMenuItem<String>(
-                                value: address,
-                                child: Text(address),
-                              ),
-                          ];
-                        },
-                      ),
+                    control: FSelectControl<String>.lifted(
+                      value: _controller.selectedIp,
+                      onChange: (value) {
+                        if (value == null) return;
+                        _controller.selectAddress(value);
+                        _ipController.text = value;
+                      },
                     ),
+                    items: {
+                      for (final address in _controller.addresses)
+                        address: address,
+                    },
+                    enabled: !_controller.isRunning,
+                    label: const Text('Local IPv4'),
+                    description: const Text(
+                      'Shown for reference; binding uses 0.0.0.0.',
+                    ),
+                    hint: 'No IPv4 address found',
                   ),
                 ),
                 const SizedBox(width: 12),
                 SizedBox(
-                  width: 150,
-                  child: TextField(
+                  width: 116,
+                  child: FTextField(
                     key: const ValueKey<String>('server.port'),
-                    controller: _portController,
+                    control: FTextFieldControl.managed(
+                      controller: _portController,
+                      onChange: (value) {
+                        final port = int.tryParse(value.text);
+                        if (port != null && port > 0 && port < 65536) {
+                          _controller.updatePort(port);
+                        }
+                      },
+                    ),
                     enabled: !_controller.isRunning,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    onChanged: (value) {
-                      final port = int.tryParse(value);
-                      if (port != null && port > 0 && port < 65536) {
-                        _controller.updatePort(port);
-                      }
-                    },
-                    decoration: const InputDecoration(
-                      labelText: 'Port',
-                      border: OutlineInputBorder(),
-                    ),
+                    label: const Text('Port'),
                   ),
                 ),
                 const SizedBox(width: 12),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: OutlinedButton.icon(
-                    key: const ValueKey<String>('server.refreshIp'),
-                    onPressed: _controller.isRunning
-                        ? null
-                        : () async {
-                            await _controller.refreshAddresses();
-                            _ipController.text = _controller.selectedIp ?? '';
-                          },
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('Refresh IP'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: FilledButton.icon(
-                    key: const ValueKey<String>('server.run'),
-                    onPressed: _controller.isRunning
-                        ? _controller.stop
-                        : _controller.start,
-                    icon: Icon(
-                      _controller.isRunning ? Icons.stop : Icons.play_arrow,
-                      size: 18,
-                    ),
-                    label: Text(
-                      _controller.isRunning ? 'Stop server' : 'Run file server',
-                    ),
-                  ),
+                FButton(
+                  key: const ValueKey<String>('server.refreshIp'),
+                  variant: FButtonVariant.outline,
+                  onPress: _controller.isRunning
+                      ? null
+                      : () async {
+                          await _controller.refreshAddresses();
+                          _ipController.text = _controller.selectedIp ?? '';
+                        },
+                  prefix: const Icon(FLucideIcons.refreshCw, size: 15),
+                  child: const Text('Refresh IP'),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             Text(
               'The server listens on 0.0.0.0:${_controller.config.port}. '
-              'Expose this port with your own frp/tunnel. '
-              'Do not expose it without a token.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+              'Expose this port with your own frp/tunnel. Do not expose it '
+              'without a token.',
+              style: theme.typography.body.xs.copyWith(
+                color: theme.colors.mutedForeground,
               ),
             ),
           ],
@@ -327,50 +359,41 @@ class _FileServerPageState extends State<FileServerPage> {
   }
 
   Widget _buildError(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.error_outline,
-            size: 18,
-            color: theme.colorScheme.onErrorContainer,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: FAlert(
+            variant: FAlertVariant.destructive,
+            title: const Text('File server error'),
+            subtitle: Text(_controller.errorMessage!),
+            icon: const Icon(FLucideIcons.circleAlert),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _controller.errorMessage!,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onErrorContainer,
-              ),
-            ),
-          ),
-          IconButton(
-            key: const ValueKey<String>('server.error.dismiss'),
-            onPressed: _controller.clearError,
-            icon: const Icon(Icons.close, size: 16),
-            color: theme.colorScheme.onErrorContainer,
-            visualDensity: VisualDensity.compact,
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 8),
+        FButton.icon(
+          key: const ValueKey<String>('server.error.dismiss'),
+          variant: FButtonVariant.ghost,
+          onPress: _controller.clearError,
+          semanticsTooltip: 'Dismiss',
+          child: const Icon(FLucideIcons.x, size: 15),
+        ),
+      ],
     );
   }
 
   Widget _buildMountsCard(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
+    final theme = context.theme;
+    return FCard(
+      style: FCardStyleDelta.delta(
+        padding: EdgeInsetsGeometryDelta.value(EdgeInsets.zero),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 12, 12),
+            padding: const EdgeInsets.fromLTRB(18, 14, 14, 14),
             child: Row(
               children: [
                 Expanded(
@@ -379,187 +402,155 @@ class _FileServerPageState extends State<FileServerPage> {
                     children: [
                       Text(
                         'Shared folders',
-                        style: theme.textTheme.titleSmall?.copyWith(
+                        style: theme.typography.body.md.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         'Each folder is exposed as a named mount.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+                        style: theme.typography.body.xs.copyWith(
+                          color: theme.colors.mutedForeground,
                         ),
                       ),
                     ],
                   ),
                 ),
-                OutlinedButton.icon(
+                FButton(
                   key: const ValueKey<String>('server.addMount'),
-                  onPressed: _controller.isRunning ? null : _addMount,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add folder'),
+                  variant: FButtonVariant.outline,
+                  onPress: _controller.isRunning ? null : _addMount,
+                  prefix: const Icon(FLucideIcons.plus, size: 15),
+                  child: const Text('Add folder'),
                 ),
               ],
             ),
           ),
-          Divider(height: 1, color: theme.dividerColor),
+          Container(height: 1, color: theme.colors.border),
           if (_controller.config.mounts.isEmpty)
             Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(28),
               child: Center(
                 child: Text(
                   'No folders yet. Click "Add folder" to share one.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                  style: theme.typography.body.sm.copyWith(
+                    color: theme.colors.mutedForeground,
                   ),
                 ),
               ),
             )
-          else ...[
-            _tableHeader(context),
-            for (
-              var index = 0;
-              index < _controller.config.mounts.length;
-              index++
-            )
-              _mountRow(context, index),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _tableHeader(BuildContext context) {
-    final theme = Theme.of(context);
-    final style = theme.textTheme.labelSmall?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant,
-      fontWeight: FontWeight.w600,
-    );
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      child: Row(
-        children: [
-          SizedBox(width: 220, child: Text('NAME', style: style)),
-          const SizedBox(width: 12),
-          Expanded(child: Text('PATH', style: style)),
-          const SizedBox(width: 90),
-        ],
-      ),
-    );
-  }
-
-  Widget _mountRow(BuildContext context, int index) {
-    final theme = Theme.of(context);
-    final mount = _controller.config.mounts[index];
-    final editing = _editingIndex == index;
-
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: theme.dividerColor)),
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 8, 12, 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 220,
-            child: editing
-                ? Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          key: ValueKey<String>(
-                            'server.mount.nameField.$index',
-                          ),
-                          controller: _nameController,
-                          autofocus: true,
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          onSubmitted: (_) => _commitName(index),
-                        ),
-                      ),
-                      IconButton(
-                        key: ValueKey<String>('server.mount.nameOk.$index'),
-                        tooltip: 'Save name',
-                        onPressed: () => _commitName(index),
-                        icon: const Icon(Icons.check, size: 18),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      IconButton(
-                        key: ValueKey<String>('server.mount.nameCancel.$index'),
-                        tooltip: 'Cancel',
-                        onPressed: () => setState(() => _editingIndex = null),
-                        icon: const Icon(Icons.close, size: 16),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          mount.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium,
-                        ),
-                      ),
-                      IconButton(
-                        key: ValueKey<String>('server.mount.edit.$index'),
-                        tooltip: 'Rename',
-                        onPressed: _controller.isRunning
-                            ? null
-                            : () {
-                                _nameController.text = mount.name;
-                                setState(() => _editingIndex = index);
-                              },
-                        icon: const Icon(Icons.edit_outlined, size: 17),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ],
-                  ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Row(
+          else
+            FItemGroup(
+              divider: FItemDivider.full,
               children: [
-                Expanded(
-                  child: Text(
-                    mount.path.isEmpty ? 'Choose a folder...' : mount.path,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                      color: mount.path.isEmpty
-                          ? theme.colorScheme.onSurfaceVariant
-                          : null,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  key: ValueKey<String>('server.mount.browse.$index'),
-                  tooltip: 'Browse',
-                  onPressed: _controller.isRunning
-                      ? null
-                      : () => _browse(index),
-                  icon: const Icon(Icons.folder_open, size: 18),
-                  visualDensity: VisualDensity.compact,
-                ),
+                for (
+                  var index = 0;
+                  index < _controller.config.mounts.length;
+                  index++
+                )
+                  _mountItem(context, index),
               ],
             ),
+        ],
+      ),
+    );
+  }
+
+  FItem _mountItem(BuildContext context, int index) {
+    final theme = context.theme;
+    final mount = _controller.config.mounts[index];
+    final editing = _editingIndex == index;
+    final nameEditable = !_controller.isRunning;
+
+    return FItem(
+      key: ValueKey<String>('server.mount.$index'),
+      prefix: Icon(
+        FLucideIcons.folder,
+        size: 15,
+        color: theme.colors.mutedForeground,
+      ),
+      title: editing
+          ? Row(
+              children: [
+                SizedBox(
+                  width: 200,
+                  child: FTextField(
+                    key: ValueKey<String>('server.mount.nameField.$index'),
+                    control: FTextFieldControl.managed(
+                      controller: _nameController,
+                    ),
+                    autofocus: true,
+                    onSubmit: (_) => _commitName(index),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                FButton.icon(
+                  key: ValueKey<String>('server.mount.nameOk.$index'),
+                  variant: FButtonVariant.ghost,
+                  onPress: () => _commitName(index),
+                  semanticsTooltip: 'Save name',
+                  child: const Icon(FLucideIcons.check, size: 15),
+                ),
+                FButton.icon(
+                  key: ValueKey<String>('server.mount.nameCancel.$index'),
+                  variant: FButtonVariant.ghost,
+                  onPress: () => setState(() => _editingIndex = null),
+                  semanticsTooltip: 'Cancel',
+                  child: const Icon(FLucideIcons.x, size: 15),
+                ),
+              ],
+            )
+          : Text(
+              mount.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.typography.body.sm.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+      subtitle: Text(
+        mount.path.isEmpty ? 'Choose a folder...' : mount.path,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.typography.body.xs.copyWith(
+          fontFamily: 'monospace',
+          color: theme.colors.mutedForeground,
+        ),
+      ),
+      suffix: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FButton.icon(
+            key: ValueKey<String>('server.mount.edit.$index'),
+            variant: FButtonVariant.ghost,
+            onPress: nameEditable
+                ? () {
+                    _nameController.text = mount.name;
+                    setState(() => _editingIndex = index);
+                  }
+                : null,
+            semanticsTooltip: 'Rename',
+            child: const Icon(FLucideIcons.pencil, size: 14),
           ),
-          const SizedBox(width: 8),
-          IconButton(
+          FButton.icon(
+            key: ValueKey<String>('server.mount.browse.$index'),
+            variant: FButtonVariant.ghost,
+            onPress: _controller.isRunning ? null : () => _browse(index),
+            semanticsTooltip: 'Browse',
+            child: const Icon(FLucideIcons.folderOpen, size: 14),
+          ),
+          FButton.icon(
             key: ValueKey<String>('server.mount.delete.$index'),
-            tooltip: 'Remove',
-            onPressed: _controller.isRunning
+            variant: FButtonVariant.ghost,
+            onPress: _controller.isRunning
                 ? null
                 : () => _controller.removeMount(index),
-            icon: const Icon(Icons.delete_outline, size: 18),
-            color: theme.colorScheme.error,
-            visualDensity: VisualDensity.compact,
+            semanticsTooltip: 'Remove',
+            child: Icon(
+              FLucideIcons.trash2,
+              size: 14,
+              color: theme.colors.destructive,
+            ),
           ),
         ],
       ),
