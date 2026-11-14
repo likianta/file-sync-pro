@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_sync_pro/features/sync/data/file_hash_cache.dart';
 import 'package:file_sync_pro/features/sync/data/local_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_test/flutter_test.dart';
@@ -77,6 +78,45 @@ void main() {
     final binB = manifest.entries['binary-b.bin']!;
     expect(binA.textHash, isNull);
     expect(binA.sameContent(binB), isFalse);
+  });
+
+  test('reuses cached hashes keyed by size and mtime', () async {
+    final file = File(p.join(temp.path, 'a.txt'));
+    await file.writeAsString('hello');
+    final stat = await file.stat();
+    final cachePath = p.join(temp.path, 'cache.json');
+
+    final seed = FileHashCache(cachePath);
+    seed.store(
+      file.path,
+      stat.size,
+      stat.modified.millisecondsSinceEpoch,
+      'cached-hash',
+      'cached-text',
+    );
+    await seed.flush();
+
+    final manifest = await LocalScanner(hashCache: FileHashCache(cachePath))
+        .scan(temp.path);
+
+    expect(manifest.entries['a.txt']!.hash, 'cached-hash');
+    expect(manifest.entries['a.txt']!.textHash, 'cached-text');
+  });
+
+  test('reports progress and finishes with the entry count', () async {
+    for (var i = 0; i < 5; i++) {
+      await File(p.join(temp.path, 'f$i.txt')).writeAsString('$i');
+    }
+
+    final reports = <int>[];
+    final manifest = await LocalScanner().scan(
+      temp.path,
+      onProgress: reports.add,
+    );
+
+    expect(reports, isNotEmpty);
+    expect(reports.last, manifest.entries.length);
+    expect(reports.last, 5);
   });
 
   test('throws when the root does not exist', () async {

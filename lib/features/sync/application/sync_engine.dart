@@ -61,6 +61,8 @@ final class SyncDivergenceException implements Exception {
 
 enum ConflictSide { left, right }
 
+enum ScanPhase { local, remote }
+
 final class ConflictResolutionReport {
   const ConflictResolutionReport({
     required this.resolved,
@@ -113,10 +115,16 @@ final class SyncEngine {
   }
 
   /// Scans both sides and builds a plan without touching the disk.
-  Future<SyncPreview> preview() async {
+  Future<SyncPreview> preview({
+    void Function(ScanPhase phase, int scanned)? onProgress,
+  }) async {
     final state = await _loadState();
-    final aManifest = await a.scan();
-    final bManifest = await b.scan();
+    final aManifest = await a.scan(
+      onProgress: (scanned) => onProgress?.call(ScanPhase.local, scanned),
+    );
+    final bManifest = await b.scan(
+      onProgress: (scanned) => onProgress?.call(ScanPhase.remote, scanned),
+    );
     final plan = SyncPlanner.plan(base: state.base, a: aManifest, b: bManifest);
     return SyncPreview(
       base: state.base,

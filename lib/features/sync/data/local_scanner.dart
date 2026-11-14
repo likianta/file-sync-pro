@@ -19,6 +19,12 @@ abstract interface class HashCache {
   CachedHashes? lookup(String path, int size, int mtimeMs);
 
   void store(String path, int size, int mtimeMs, String hash, String? textHash);
+
+  void remove(String path);
+
+  void removeWhere(bool Function(String path) test);
+
+  Future<void> flush();
 }
 
 final class LocalScanner {
@@ -40,13 +46,23 @@ final class LocalScanner {
 
   final HashCache? hashCache;
 
-  Future<Manifest> scan(String root) async {
+  Future<Manifest> scan(
+    String root, {
+    void Function(int scanned)? onProgress,
+  }) async {
     final directory = Directory(root);
     if (!await directory.exists()) {
       throw StateError('Sync root does not exist: $root');
     }
 
     final entries = <String, ManifestEntry>{};
+    var lastReported = 0;
+    void reportProgress() {
+      if (entries.length - lastReported < 200) return;
+      lastReported = entries.length;
+      onProgress?.call(entries.length);
+    }
+
     await for (final entity in directory.list(
       recursive: true,
       followLinks: false,
@@ -74,6 +90,7 @@ final class LocalScanner {
 
       if (isDirectory) {
         entries[relPath] = ManifestEntry.directory(mtimeMs: mtimeMs);
+        reportProgress();
         continue;
       }
 
@@ -99,8 +116,11 @@ final class LocalScanner {
         hash: hash,
         textHash: textHash,
       );
+      reportProgress();
     }
 
+    onProgress?.call(entries.length);
+    await hashCache?.flush();
     return Manifest(
       root: p.normalize(p.absolute(root)),
       scannedAt: DateTime.now(),

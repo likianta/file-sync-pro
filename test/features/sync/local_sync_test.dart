@@ -173,6 +173,39 @@ void main() {
         },
       );
 
+      test('resolves every conflict with one side in one call', () async {
+        await engine().sync();
+
+        await _file(alice, 'docs/readme.md').writeAsString('alice edit\n');
+        await _file(bob, 'docs/readme.md').writeAsString('bob edit\n');
+        await _file(
+          alice,
+          'media/alice-note.md',
+        ).writeAsString('alice note edit\n');
+        await _file(
+          bob,
+          'media/alice-note.md',
+        ).writeAsString('bob note edit\n');
+
+        final report = await engine().sync();
+        expect(report.conflictCount, 2);
+
+        final resolving = engine();
+        final preview = await resolving.preview();
+        final result = await resolving.resolveConflicts(preview, {
+          for (final conflict in preview.plan.conflicts)
+            conflict.path: ConflictSide.left,
+        });
+
+        expect(result.resolved, 2);
+        expect(result.remaining, 0);
+        expect(await _read(bob, 'docs/readme.md'), 'alice edit\n');
+        expect(await _read(bob, 'media/alice-note.md'), 'alice note edit\n');
+
+        final after = await engine().preview();
+        expect(after.plan.conflicts, isEmpty);
+      });
+
       test('syncs empty directories and removes them again', () async {
         await engine().sync();
 

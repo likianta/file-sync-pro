@@ -13,6 +13,7 @@ import 'dart:math';
 
 import 'package:path/path.dart' as p;
 
+import '../../sync/data/file_hash_cache.dart';
 import '../../sync/data/local_scanner.dart';
 import '../../sync/domain/ignore_rules.dart';
 import '../protocol.dart';
@@ -36,7 +37,9 @@ final class FileServer {
     this.token = '',
     this.verbose = false,
     this.quiet = false,
-  }) : _mounts = {for (final mount in mounts) mount.name: mount};
+    HashCache? hashCache,
+  }) : _mounts = {for (final mount in mounts) mount.name: mount},
+       _hashCache = hashCache ?? MemoryHashCache();
 
   final String token;
   final bool verbose;
@@ -45,7 +48,7 @@ final class FileServer {
   final bool quiet;
 
   final Map<String, FileServerMount> _mounts;
-  final Map<String, _CachedHash> _hashCache = {};
+  final HashCache _hashCache;
   final Random _random = Random.secure();
 
   HttpServer? _server;
@@ -167,10 +170,7 @@ final class FileServer {
     String relPath,
   ) async {
     final absPath = await _resolve(mount, relPath, rejectLinks: true);
-    final scanner = LocalScanner(
-      ignores: mount.ignores,
-      hashCache: _ServerHashCache(_hashCache),
-    );
+    final scanner = LocalScanner(ignores: mount.ignores, hashCache: _hashCache);
     final manifest = await scanner.scan(absPath);
     final json = manifest.toJson();
     json['root'] = mount.name;
@@ -407,9 +407,7 @@ final class FileServer {
       return;
     }
     final prefix = '$absPath${Platform.pathSeparator}';
-    _hashCache.removeWhere(
-      (key, _) => key == absPath || key.startsWith(prefix),
-    );
+    _hashCache.removeWhere((key) => key == absPath || key.startsWith(prefix));
   }
 
   static void _requireMethod(HttpRequest request, String method) {
@@ -450,41 +448,6 @@ final class FileServer {
     } catch (_) {
       // The response may already be closed or the client may have gone away.
     }
-  }
-}
-
-final class _CachedHash {
-  const _CachedHash(this.size, this.mtimeMs, this.hash, this.textHash);
-
-  final int size;
-  final int mtimeMs;
-  final String hash;
-  final String? textHash;
-}
-
-final class _ServerHashCache implements HashCache {
-  _ServerHashCache(this._store);
-
-  final Map<String, _CachedHash> _store;
-
-  @override
-  CachedHashes? lookup(String path, int size, int mtimeMs) {
-    final cached = _store[path];
-    if (cached != null && cached.size == size && cached.mtimeMs == mtimeMs) {
-      return (hash: cached.hash, textHash: cached.textHash);
-    }
-    return null;
-  }
-
-  @override
-  void store(
-    String path,
-    int size,
-    int mtimeMs,
-    String hash,
-    String? textHash,
-  ) {
-    _store[path] = _CachedHash(size, mtimeMs, hash, textHash);
   }
 }
 

@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import '../../transport/http_transport.dart';
 import '../application/sync_engine.dart';
 import '../application/sync_pair_config.dart';
 import '../application/sync_source.dart';
+import '../data/file_hash_cache.dart';
 import '../domain/ignore_rules.dart';
 import '../domain/sync_plan.dart';
 
@@ -24,6 +26,9 @@ final class SyncDashboardController extends ChangeNotifier {
   int _applied = 0;
   int _total = 0;
   String? _currentPath;
+  ScanPhase? _scanPhase;
+  int _scanned = 0;
+  FileHashCache? _hashCache;
   final List<String> _log = [];
   bool _disposed = false;
 
@@ -53,10 +58,21 @@ final class SyncDashboardController extends ChangeNotifier {
   String get statusLabel {
     return switch (_status) {
       SyncDashboardStatus.idle => 'Ready',
-      SyncDashboardStatus.scanning => 'Scanning both sides...',
+      SyncDashboardStatus.scanning => _scanLabel,
       SyncDashboardStatus.applying => 'Applying $_applied / $_total...',
       SyncDashboardStatus.resolving => 'Resolving conflicts...',
       SyncDashboardStatus.error => 'Error',
+    };
+  }
+
+  String get _scanLabel {
+    return switch (_scanPhase) {
+      ScanPhase.local => 'Scanning local files... $_scanned scanned',
+      ScanPhase.remote =>
+        _scanned == 0
+            ? 'Downloading remote manifest...'
+            : 'Scanning remote files... $_scanned scanned',
+      null => 'Starting scan...',
     };
   }
 
@@ -70,6 +86,8 @@ final class SyncDashboardController extends ChangeNotifier {
     _applied = 0;
     _total = 0;
     _currentPath = null;
+    _scanPhase = null;
+    _scanned = 0;
     _log.clear();
     _appendLog('Scanning both sides...');
     _notify();
@@ -77,7 +95,7 @@ final class SyncDashboardController extends ChangeNotifier {
     final engine = _createEngine();
     try {
       await Directory(config.localRoot).create(recursive: true);
-      final preview = await engine.preview();
+      final preview = await engine.preview(onProgress: _onScanProgress);
       _preview = preview;
       _status = SyncDashboardStatus.idle;
       _appendLog(
@@ -103,6 +121,8 @@ final class SyncDashboardController extends ChangeNotifier {
     _applied = 0;
     _total = 0;
     _currentPath = null;
+    _scanPhase = null;
+    _scanned = 0;
     _log.clear();
     _appendLog('Scanning both sides...');
     _notify();
@@ -110,7 +130,7 @@ final class SyncDashboardController extends ChangeNotifier {
     final engine = _createEngine();
     try {
       await Directory(config.localRoot).create(recursive: true);
-      final preview = await engine.preview();
+      final preview = await engine.preview(onProgress: _onScanProgress);
       _preview = preview;
       _total = preview.plan.actions.length;
       _notify();
@@ -165,26 +185,42 @@ final class SyncDashboardController extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> resolveConflict(String path, ConflictSide side) async {
-    if (busy) return;
+  Future<void> resolveConflict(String path, ConflictSide side) {
+    return _resolve({path: side});
+  }
+
+  Future<void> resolveAllConflicts(ConflictSide side) {
+    final conflicts = _preview?.plan.conflicts ?? const <SyncConflict>[];
+    return _resolve({for (final conflict in conflicts) conflict.path: side});
+  }
+
+  Future<void> _resolve(Map<String, ConflictSide> choices) async {
+    if (busy || choices.isEmpty) return;
     final preview = _preview;
     if (preview == null) return;
 
+    final side = choices.values.first;
+    final sideName = side == ConflictSide.left ? 'local' : 'remote';
     _status = SyncDashboardStatus.resolving;
     _errorMessage = null;
     _applied = 0;
     _total = 0;
+    _scanPhase = null;
+    _scanned = 0;
     _appendLog(
-      'Resolving $path by keeping ${side == ConflictSide.left ? 'local' : 'remote'}...',
+      'Resolving ${choices.length} conflict(s) by keeping $sideName...',
     );
     _notify();
 
     final engine = _createEngine();
     try {
-      final result = await engine.resolveConflicts(preview, {path: side});
+      final result = await engine.resolveConflicts(preview, choices);
       _preview = await engine.preview();
       _status = SyncDashboardStatus.idle;
-      _appendLog('Resolved $path. ${result.remaining} conflict(s) left.');
+      _appendLog(
+        'Resolved ${result.resolved} conflict(s). '
+        '${result.remaining} left.',
+      );
     } catch (error) {
       _fail(error);
     } finally {
@@ -193,10 +229,35 @@ final class SyncDashboardController extends ChangeNotifier {
     }
   }
 
+  void _onScanProgress(ScanPhase phase, int scanned) {
+    final phaseChanged = _scanPhase != phase;
+    if (!phaseChanged && scanned == _scanned) return;
+    if (phaseChanged) {
+      _appendLog(
+        phase == ScanPhase.local
+            ? 'Scanning local files...'
+            : 'Local scan finished. Scanning remote files...',
+      );
+    }
+    _scanPhase = phase;
+    _scanned = scanned;
+    _notify();
+  }
+
+  FileHashCache _cache() {
+    return _hashCache ??= FileHashCache(
+      p.normalize(p.absolute(p.join(config.stateDir, 'hash_cache.json'))),
+    );
+  }
+
   SyncEngine _createEngine() {
     final ignores = IgnoreRules.defaults(extra: config.extraIgnores);
     return SyncEngine(
-      a: LocalSyncSource(config.localRoot, ignores: ignores),
+      a: LocalSyncSource(
+        config.localRoot,
+        ignores: ignores,
+        hashCache: _cache(),
+      ),
       b: RemoteSyncSource(
         baseUrl: config.remoteUrl,
         token: config.token,
@@ -277,6 +338,7 @@ final class SyncDashboardController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _hashCache?.flush();
     super.dispose();
   }
 }

@@ -17,7 +17,7 @@ abstract interface class SyncSource {
 
   FileStore get store;
 
-  Future<Manifest> scan();
+  Future<Manifest> scan({void Function(int scanned)? onProgress});
 
   Future<void> close();
 }
@@ -46,7 +46,8 @@ final class LocalSyncSource implements SyncSource {
   FileStore get store => _store;
 
   @override
-  Future<Manifest> scan() => _scanner.scan(id);
+  Future<Manifest> scan({void Function(int scanned)? onProgress}) =>
+      _scanner.scan(id, onProgress: onProgress);
 
   @override
   Future<void> close() async {}
@@ -82,7 +83,12 @@ final class RemoteSyncSource implements SyncSource {
   HttpTransport get transport => _transport;
 
   @override
-  Future<Manifest> scan() => _scanner.scan();
+  Future<Manifest> scan({void Function(int scanned)? onProgress}) async {
+    onProgress?.call(0);
+    final manifest = await _scanner.scan();
+    onProgress?.call(manifest.entries.length);
+    return manifest;
+  }
 
   @override
   Future<void> close() async {

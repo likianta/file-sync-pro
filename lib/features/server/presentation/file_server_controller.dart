@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../sync/data/file_hash_cache.dart';
 import '../../sync/domain/ignore_rules.dart';
 import '../../transport/server/file_server.dart';
 import '../../transport/server/file_server_config.dart';
@@ -17,6 +18,7 @@ final class FileServerController extends ChangeNotifier {
 
   late FileServerConfig config;
   FileServer? _server;
+  FileHashCache? _hashCache;
   FileServerStatus _status = FileServerStatus.stopped;
   String? _errorMessage;
   List<String> _addresses = const [];
@@ -165,6 +167,9 @@ final class FileServerController extends ChangeNotifier {
     }
 
     final ignores = IgnoreRules.defaults(extra: config.extraIgnores);
+    final hashCache = _hashCache ??= FileHashCache(
+      p.join(p.dirname(configPath), 'file_server.hash_cache.json'),
+    );
     final server = FileServer(
       mounts: [
         for (final mount in validMounts)
@@ -176,6 +181,7 @@ final class FileServerController extends ChangeNotifier {
       ],
       token: config.token.trim(),
       quiet: true,
+      hashCache: hashCache,
     );
 
     try {

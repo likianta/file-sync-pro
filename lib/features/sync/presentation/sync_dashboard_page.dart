@@ -301,6 +301,10 @@ class _Toolbar extends StatelessWidget {
               ),
           ],
         ),
+        if (controller.status == SyncDashboardStatus.scanning) ...[
+          const SizedBox(height: 10),
+          const FProgress(),
+        ],
         if (controller.status == SyncDashboardStatus.applying ||
             controller.status == SyncDashboardStatus.resolving) ...[
           const SizedBox(height: 10),
@@ -533,6 +537,53 @@ class _ConflictSection extends StatelessWidget {
   final List<SyncConflict> conflicts;
   final SyncDashboardController controller;
 
+  Future<void> _keepAll(BuildContext context, ConflictSide side) async {
+    final sideName = side == ConflictSide.left ? 'local' : 'remote';
+    final confirmed = await showFDialog<bool>(
+      context: context,
+      builder: (context, style, animation) => FDialog(
+        animation: animation,
+        constraints: const BoxConstraints(minWidth: 380, maxWidth: 460),
+        builder: (context, style) => Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Keep all $sideName?', style: style.titleTextStyle),
+              const SizedBox(height: 8),
+              Text(
+                'All ${conflicts.length} conflicting file(s) will use the '
+                '$sideName version. The other versions stay in the conflict '
+                'backup folder.',
+                style: style.bodyTextStyle,
+              ),
+              const SizedBox(height: 22),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  FButton(
+                    variant: FButtonVariant.outline,
+                    onPress: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FButton(
+                    key: ValueKey<String>('sync.conflict.keepAll.${side.name}'),
+                    onPress: () => Navigator.of(context).pop(true),
+                    child: Text('Keep all $sideName'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+    await controller.resolveAllConflicts(side);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
@@ -570,6 +621,26 @@ class _ConflictSection extends StatelessWidget {
                       color: theme.colors.mutedForeground,
                     ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                FButton(
+                  key: const ValueKey<String>('sync.conflict.keepAllLeft'),
+                  variant: FButtonVariant.outline,
+                  size: FButtonSizeVariant.sm,
+                  onPress: canResolve
+                      ? () => _keepAll(context, ConflictSide.left)
+                      : null,
+                  child: const Text('Keep all local'),
+                ),
+                const SizedBox(width: 6),
+                FButton(
+                  key: const ValueKey<String>('sync.conflict.keepAllRight'),
+                  variant: FButtonVariant.outline,
+                  size: FButtonSizeVariant.sm,
+                  onPress: canResolve
+                      ? () => _keepAll(context, ConflictSide.right)
+                      : null,
+                  child: const Text('Keep all remote'),
                 ),
               ],
             ),
