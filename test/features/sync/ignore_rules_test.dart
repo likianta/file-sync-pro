@@ -55,5 +55,42 @@ void main() {
       expect(rules.ignores('~note', isDirectory: false), isTrue);
       expect(rules.ignores('sub/note~', isDirectory: false), isTrue);
     });
+
+    test('supports anchored directories and glob suffixes', () {
+      final gitbook = IgnoreRules.fromPatterns([
+        '/.git/',
+        '/blog/',
+        '/plugins/',
+        '/scripts/',
+        '/setup/',
+        '/source-docs/临时/',
+        '/.gitignore',
+        '/poetry.lock',
+        '/pyproject.toml',
+        '**.b64.html',
+        '.DS_Store',
+      ]);
+
+      expect(gitbook.ignores('.git/config', isDirectory: false), isTrue);
+      expect(gitbook.ignores('blog/index.html', isDirectory: false), isTrue);
+      expect(gitbook.ignores('plugins/a/b.js', isDirectory: false), isTrue);
+      expect(gitbook.ignores('scripts/build.py', isDirectory: false), isTrue);
+      expect(
+        gitbook.ignores('source-docs/临时/note.md', isDirectory: false),
+        isTrue,
+      );
+      expect(gitbook.ignores('.gitignore', isDirectory: false), isTrue);
+      expect(gitbook.ignores('poetry.lock', isDirectory: false), isTrue);
+      expect(gitbook.ignores('page.b64.html', isDirectory: false), isTrue);
+      expect(gitbook.ignores('a/b/page.b64.html', isDirectory: false), isTrue);
+      expect(gitbook.ignores('docs/.DS_Store', isDirectory: false), isTrue);
+
+      expect(
+        gitbook.ignores('source-docs/note.md', isDirectory: false),
+        isFalse,
+      );
+      expect(gitbook.ignores('docs/poetry.lock', isDirectory: false), isFalse);
+      expect(gitbook.ignores('page.b64.html.bak', isDirectory: false), isFalse);
+    });
   });
 }

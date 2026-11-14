@@ -27,6 +27,7 @@ final class SyncPairEntry {
     required this.localRoot,
     required this.remoteUrl,
     required this.stateDir,
+    this.ignores = const [],
   });
 
   final String name;
@@ -34,17 +35,25 @@ final class SyncPairEntry {
   final String remoteUrl;
   final String stateDir;
 
+  /// Pair-specific ignore patterns.
+  ///
+  /// When non-empty, these replace the config-level [SyncClientConfig.extraIgnores]
+  /// for this pair.
+  final List<String> ignores;
+
   SyncPairEntry copyWith({
     String? name,
     String? localRoot,
     String? remoteUrl,
     String? stateDir,
+    List<String>? ignores,
   }) {
     return SyncPairEntry(
       name: name ?? this.name,
       localRoot: localRoot ?? this.localRoot,
       remoteUrl: remoteUrl ?? this.remoteUrl,
       stateDir: stateDir ?? this.stateDir,
+      ignores: ignores ?? this.ignores,
     );
   }
 
@@ -54,6 +63,7 @@ final class SyncPairEntry {
       'localRoot': localRoot,
       'remoteUrl': remoteUrl,
       'stateDir': stateDir,
+      'ignores': ignores,
     };
   }
 
@@ -69,7 +79,7 @@ final class SyncPairEntry {
       token: token,
       stateDir: stateDir,
       timeoutSeconds: timeoutSeconds,
-      extraIgnores: extraIgnores,
+      extraIgnores: ignores.isNotEmpty ? ignores : extraIgnores,
     );
   }
 }
@@ -254,6 +264,7 @@ final class SyncClientConfig {
     final name = (json['name'] as String?)?.trim().isNotEmpty == true
         ? (json['name'] as String).trim()
         : _defaultPairName(remoteUrl);
+    final rawIgnores = json['ignores'];
     return SyncPairEntry(
       name: name,
       localRoot: _resolve(
@@ -271,6 +282,9 @@ final class SyncClientConfig {
               p.join(projectRoot, 'data', 'sync_pairs', name),
         ),
       ),
+      ignores: rawIgnores is List
+          ? rawIgnores.whereType<String>().toList(growable: false)
+          : const [],
     );
   }
 

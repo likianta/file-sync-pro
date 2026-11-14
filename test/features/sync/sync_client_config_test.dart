@@ -35,6 +35,7 @@ void main() {
           'localRoot': '../photos',
           'remoteUrl': 'http://host:2160/photos',
           'stateDir': 'data/sync_pairs/photos',
+          'ignores': ['/blog/', '**.b64.html'],
         },
         {
           'name': 'notes',
@@ -65,6 +66,10 @@ void main() {
     expect(runtime.pairName, 'photos');
     expect(runtime.token, 'secret');
     expect(runtime.timeoutSeconds, 42);
+    expect(runtime.extraIgnores, ['/blog/', '**.b64.html']);
+
+    final fallback = config.runtimeFor('notes')!;
+    expect(fallback.extraIgnores, ['.venv/']);
   });
 
   test('migrates a legacy single-pair config', () {
@@ -104,6 +109,7 @@ void main() {
           localRoot: '/tmp/demo',
           remoteUrl: 'http://host:2160/demo',
           stateDir: '/tmp/state-demo',
+          ignores: ['/blog/', '*.b64.html'],
         ),
       ],
     );
@@ -115,5 +121,6 @@ void main() {
     expect(restored.pairs.single.name, 'demo');
     expect(restored.pairs.single.localRoot, '/tmp/demo');
     expect(restored.pairs.single.remoteUrl, 'http://host:2160/demo');
+    expect(restored.pairs.single.ignores, ['/blog/', '*.b64.html']);
   });
 }

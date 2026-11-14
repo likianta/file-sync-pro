@@ -86,4 +86,40 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('pair editor exposes per-pair ignores', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 860));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final local = Directory(p.join(temp.path, 'local'))..createSync();
+    final configPath = p.join(toolDir, 'sync.config.json');
+    File(configPath).writeAsStringSync(
+      jsonEncode({
+        'version': 2,
+        'token': 'test-token',
+        'ignores': ['.venv/'],
+        'pairs': [
+          {
+            'name': 'demo',
+            'localRoot': local.path,
+            'remoteUrl': 'http://127.0.0.1:1/demo',
+            'stateDir': 'data/sync_pairs/demo',
+            'ignores': ['/blog/', '**.b64.html'],
+          },
+        ],
+      }),
+    );
+
+    await tester.pumpWidget(wrap(configPath));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey<String>('sync.pair.edit')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('sync.pair.ignores')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('/blog/'), findsWidgets);
+  });
 }

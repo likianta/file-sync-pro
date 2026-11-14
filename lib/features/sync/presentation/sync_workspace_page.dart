@@ -307,7 +307,8 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
               : SyncDashboardPage(
                   key: ValueKey<String>(
                     'sync.dashboard.${_runtime!.pairName}'
-                    '.${_runtime!.localRoot}.${_runtime!.remoteUrl}',
+                    '.${_runtime!.localRoot}.${_runtime!.remoteUrl}'
+                    '.${_runtime!.extraIgnores.join('|')}',
                   ),
                   config: _runtime!,
                 ),
@@ -400,6 +401,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
   final TextEditingController _token = TextEditingController();
   final TextEditingController _mount = TextEditingController();
   final TextEditingController _subpath = TextEditingController();
+  final TextEditingController _ignores = TextEditingController();
 
   List<String> _mounts = const [];
   bool _loadingMounts = false;
@@ -412,6 +414,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     if (entry != null) {
       _name.text = entry.name;
       _localRoot.text = entry.localRoot;
+      _ignores.text = entry.ignores.join('\n');
       final uri = Uri.tryParse(entry.remoteUrl);
       if (uri != null && uri.hasScheme) {
         _server.text = '${uri.scheme}://${uri.authority}';
@@ -444,6 +447,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     _token.dispose();
     _mount.dispose();
     _subpath.dispose();
+    _ignores.dispose();
     super.dispose();
   }
 
@@ -516,6 +520,11 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
           : p.normalize(
               p.join(widget.projectRoot, 'data', 'sync_pairs', _sanitizedName),
             ),
+      ignores: [
+        for (final line in _ignores.text.split('\n'))
+          if (line.trim().isNotEmpty && !line.trim().startsWith('#'))
+            line.trim(),
+      ],
     );
     Navigator.of(context)
         .pop(_PairEditorResult(entry: entry, token: _token.text.trim()));
@@ -686,6 +695,45 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                 key: const ValueKey<String>('sync.pair.subpath'),
                 control: FTextFieldControl.managed(controller: _subpath),
               ),
+            ),
+            const SizedBox(height: 20),
+            Container(height: 1, color: theme.colors.border),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Icon(
+                  FLucideIcons.settings,
+                  size: 15,
+                  color: theme.colors.mutedForeground,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  'Ignores',
+                  style: theme.typography.body.sm.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'One pattern per line. This pair uses its own list instead of '
+              'the global ignores.',
+              style: theme.typography.body.xs.copyWith(
+                color: theme.colors.mutedForeground,
+              ),
+            ),
+            const SizedBox(height: 10),
+            FTextField(
+              key: const ValueKey<String>('sync.pair.ignores'),
+              control: FTextFieldControl.managed(controller: _ignores),
+              hint: '/.git/\n/blog/\n*.b64.html',
+              description: const Text(
+                'Gitignore-like syntax: /path anchors at the sync root, '
+                'dir/ matches a directory, * and ** match names.',
+              ),
+              minLines: 5,
+              maxLines: 9,
             ),
             const SizedBox(height: 8),
             Text(

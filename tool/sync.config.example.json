@@ -14,7 +14,11 @@
       "name": "photolens",
       "localRoot": "~/Desktop/work/likianta-projects/photolens",
       "remoteUrl": "http://47.102.108.149:2160/photolens",
-      "stateDir": "data/sync_pairs/photolens"
+      "stateDir": "data/sync_pairs/photolens",
+      "ignores": [
+        "/blog/",
+        "**.b64.html"
+      ]
     }
   ]
 }

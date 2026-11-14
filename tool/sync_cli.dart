@@ -298,7 +298,9 @@ final class _SyncOptions {
           ? entry.stateDir
           : _resolvePath(projectRoot, _expandUser(stateArg)),
       timeoutSeconds: timeoutArg ?? client.timeoutSeconds,
-      extraIgnores: client.extraIgnores,
+      extraIgnores: entry.ignores.isNotEmpty
+          ? entry.ignores
+          : client.extraIgnores,
     );
 
     if (config.remoteUrl.trim().isEmpty) {
