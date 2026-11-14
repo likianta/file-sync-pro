@@ -1,8 +1,6 @@
 {
-  "localRoot": "~/Desktop/work/likianta-projects/photolens",
-  "remoteUrl": "http://47.102.108.149:2160/photolens",
+  "version": 2,
   "token": "PASTE_THE_TOKEN_FROM_tool/sync.config.json",
-  "stateDir": "data/sync_pairs/photolens",
   "timeoutSeconds": 300,
   "ignores": [
     "/.git/",
@@ -10,5 +8,13 @@
     "/.venv/",
     ".DS_Store",
     "__pycache__/"
+  ],
+  "pairs": [
+    {
+      "name": "photolens",
+      "localRoot": "~/Desktop/work/likianta-projects/photolens",
+      "remoteUrl": "http://47.102.108.149:2160/photolens",
+      "stateDir": "data/sync_pairs/photolens"
+    }
   ]
 }

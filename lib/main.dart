@@ -12,24 +12,12 @@ void main() {
         executablePath: Platform.resolvedExecutable,
       ) ??
       Directory.current.path;
-  final configPath = p.join(projectRoot, 'tool', 'sync.config.json');
-
-  SyncPairConfig? config;
-  String? configError;
-  try {
-    config = SyncPairConfig.load(
-      configPath: configPath,
-      projectRoot: projectRoot,
-    );
-  } catch (error) {
-    configError = 'Cannot read $configPath\n$error';
-  }
 
   runApp(
     FileSyncProApp(
-      config: config,
-      configError: configError,
-      configPath: configPath,
+      projectRoot: projectRoot,
+      clientConfigPath: p.join(projectRoot, 'tool', 'sync.config.json'),
+      serverConfigPath: p.join(projectRoot, 'tool', 'file_server.config.json'),
     ),
   );
 }

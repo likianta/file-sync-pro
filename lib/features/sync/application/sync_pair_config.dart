@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 
 final class SyncPairConfig {
   const SyncPairConfig({
+    this.name = '',
     required this.localRoot,
     required this.remoteUrl,
     required this.token,
@@ -19,6 +20,7 @@ final class SyncPairConfig {
     this.extraIgnores = const [],
   });
 
+  final String name;
   final String localRoot;
   final String remoteUrl;
   final String token;
@@ -27,6 +29,7 @@ final class SyncPairConfig {
   final List<String> extraIgnores;
 
   String get pairName {
+    if (name.trim().isNotEmpty) return name.trim();
     final uri = Uri.tryParse(remoteUrl);
     final segments =
         uri?.pathSegments.where((segment) => segment.isNotEmpty).toList() ??
@@ -93,6 +96,7 @@ final class SyncPairConfig {
 
     final ignores = json['ignores'];
     return SyncPairConfig(
+      name: json['name'] as String? ?? '',
       localRoot: _resolve(projectRoot, _expandUser(rawLocal)),
       remoteUrl: resolvedRemote.trim(),
       token:

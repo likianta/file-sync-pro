@@ -175,7 +175,7 @@ final class SyncDashboardController extends ChangeNotifier {
     _applied = 0;
     _total = 0;
     _appendLog(
-      'Resolving $path by keeping ${side == ConflictSide.left ? 'Mac' : 'Windows'}...',
+      'Resolving $path by keeping ${side == ConflictSide.left ? 'local' : 'remote'}...',
     );
     _notify();
 

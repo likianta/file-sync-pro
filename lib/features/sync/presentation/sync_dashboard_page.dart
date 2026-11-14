@@ -149,7 +149,7 @@ class _Header extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Mac to remote Windows over HTTP',
+                    'Local folder to remote file server',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -163,9 +163,9 @@ class _Header extends StatelessWidget {
               ),
               if (showPlatformChips) ...[
                 const SizedBox(width: 8),
-                _Chip(icon: Icons.computer_outlined, label: 'macOS'),
+                _Chip(icon: Icons.computer_outlined, label: 'local'),
                 const SizedBox(width: 8),
-                _Chip(icon: Icons.cloud_outlined, label: 'Windows / frp'),
+                _Chip(icon: Icons.cloud_outlined, label: 'remote'),
               ],
               const SizedBox(width: 12),
               Container(
@@ -245,7 +245,7 @@ class _PairCard extends StatelessWidget {
               icon: Icons.computer_outlined,
               label: 'Local folder',
               value: config.localRoot,
-              badge: 'this Mac',
+              badge: 'this device',
             ),
             const SizedBox(height: 12),
             Divider(height: 1, color: theme.dividerColor),
@@ -254,7 +254,7 @@ class _PairCard extends StatelessWidget {
               icon: Icons.cloud_outlined,
               label: 'Remote mount',
               value: config.remoteUrl,
-              badge: 'Windows',
+              badge: 'remote',
             ),
             const SizedBox(height: 10),
             Align(
@@ -699,7 +699,7 @@ class _ConflictSection extends StatelessWidget {
                               ConflictSide.left,
                             )
                           : null,
-                      child: const Text('Keep Mac'),
+                      child: const Text('Keep local'),
                     ),
                     const SizedBox(width: 4),
                     TextButton(
@@ -712,7 +712,7 @@ class _ConflictSection extends StatelessWidget {
                               ConflictSide.right,
                             )
                           : null,
-                      child: const Text('Keep Windows'),
+                      child: const Text('Keep remote'),
                     ),
                   ],
                 ),

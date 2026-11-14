@@ -2,6 +2,7 @@
 
 import 'dart:io';
 
+import 'package:file_sync_pro/features/sync/application/sync_client_config.dart';
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
 import 'package:file_sync_pro/features/sync/application/sync_pair_config.dart';
 import 'package:file_sync_pro/features/sync/application/sync_source.dart';
@@ -220,6 +221,7 @@ final class _SyncOptions {
     String? remoteArg;
     String? tokenArg;
     String? stateArg;
+    String? pairArg;
     int? timeoutArg;
     var dryRun = false;
     var showHelp = false;
@@ -238,6 +240,8 @@ final class _SyncOptions {
         case '-h':
         case '--help':
           showHelp = true;
+        case '--pair':
+          pairArg = next(arg);
         case '--local':
           localArg = next(arg);
         case '--remote':
@@ -261,20 +265,44 @@ final class _SyncOptions {
       return _SyncOptions(config: null, dryRun: dryRun, showHelp: true);
     }
 
-    final config = SyncPairConfig.load(
-      configPath: configPath ?? p.join(projectRoot, 'tool', 'sync.config.json'),
+    final client = SyncClientConfig.load(
+      path: configPath ?? p.join(projectRoot, 'tool', 'sync.config.json'),
       projectRoot: projectRoot,
-      localRoot: localArg,
-      remoteUrl: remoteArg,
-      token: tokenArg,
-      stateDir: stateArg,
-      timeoutSeconds: timeoutArg,
     );
-    if (config == null) {
+    if (client.pairs.isEmpty) {
       throw ArgumentError(
-        'No remote URL configured. Set remoteUrl in tool/sync.config.json '
-        'or pass --remote.',
+        'No sync pairs configured. Add one via the desktop UI, or run the '
+        'legacy --remote option.',
       );
+    }
+
+    SyncPairEntry? entry;
+    for (final candidate in client.pairs) {
+      if (pairArg == null || candidate.name == pairArg) {
+        entry = candidate;
+        break;
+      }
+    }
+    if (entry == null) {
+      throw ArgumentError('Unknown pair: $pairArg');
+    }
+
+    final config = SyncPairConfig(
+      name: entry.name,
+      localRoot: localArg == null
+          ? entry.localRoot
+          : _resolvePath(projectRoot, _expandUser(localArg)),
+      remoteUrl: remoteArg ?? entry.remoteUrl,
+      token: tokenArg ?? client.token,
+      stateDir: stateArg == null
+          ? entry.stateDir
+          : _resolvePath(projectRoot, _expandUser(stateArg)),
+      timeoutSeconds: timeoutArg ?? client.timeoutSeconds,
+      extraIgnores: client.extraIgnores,
+    );
+
+    if (config.remoteUrl.trim().isEmpty) {
+      throw ArgumentError('The selected pair has no remote URL.');
     }
 
     return _SyncOptions(config: config, dryRun: dryRun, showHelp: false);
@@ -288,4 +316,17 @@ final class _SyncOptions {
 String _projectRoot() {
   final script = Platform.script.toFilePath();
   return p.normalize(p.dirname(p.dirname(script)));
+}
+
+String _resolvePath(String projectRoot, String path) {
+  return p.normalize(p.isAbsolute(path) ? path : p.join(projectRoot, path));
+}
+
+String _expandUser(String path) {
+  if (path == '~') return Platform.environment['HOME'] ?? path;
+  if (path.startsWith('~/')) {
+    final home = Platform.environment['HOME'] ?? '';
+    return p.join(home, path.substring(2));
+  }
+  return path;
 }

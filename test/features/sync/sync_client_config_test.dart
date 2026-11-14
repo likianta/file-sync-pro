@@ -1,0 +1,119 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_sync_pro/features/sync/application/sync_client_config.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
+
+void main() {
+  late Directory temp;
+
+  setUp(() async {
+    temp = await Directory.systemTemp.createTemp('filesync-client-config-');
+  });
+
+  tearDown(() async {
+    await temp.delete(recursive: true);
+  });
+
+  String write(Map<String, Object?> json) {
+    final path = p.join(temp.path, 'tool', 'sync.config.json');
+    Directory(p.dirname(path)).createSync(recursive: true);
+    File(path).writeAsStringSync(jsonEncode(json));
+    return path;
+  }
+
+  test('loads multiple pairs and resolves relative paths', () {
+    final path = write({
+      'version': 2,
+      'token': 'secret',
+      'timeoutSeconds': 42,
+      'ignores': ['.venv/'],
+      'pairs': [
+        {
+          'name': 'photos',
+          'localRoot': '../photos',
+          'remoteUrl': 'http://host:2160/photos',
+          'stateDir': 'data/sync_pairs/photos',
+        },
+        {
+          'name': 'notes',
+          'localRoot': '/tmp/notes',
+          'remoteUrl': 'http://host:2160/notes',
+          'stateDir': '/tmp/state-notes',
+        },
+      ],
+    });
+
+    final config = SyncClientConfig.load(path: path, projectRoot: temp.path);
+
+    expect(config.pairs, hasLength(2));
+    expect(config.token, 'secret');
+    expect(config.timeoutSeconds, 42);
+    expect(config.extraIgnores, ['.venv/']);
+    expect(
+      config.pairs[0].localRoot,
+      p.normalize(p.join(temp.path, '..', 'photos')),
+    );
+    expect(
+      config.pairs[0].stateDir,
+      p.join(temp.path, 'data', 'sync_pairs', 'photos'),
+    );
+    expect(config.pairs[1].localRoot, '/tmp/notes');
+
+    final runtime = config.runtimeFor('photos')!;
+    expect(runtime.pairName, 'photos');
+    expect(runtime.token, 'secret');
+    expect(runtime.timeoutSeconds, 42);
+  });
+
+  test('migrates a legacy single-pair config', () {
+    final path = write({
+      'localRoot': '../photolens',
+      'remoteUrl': 'http://host:2160/photolens',
+      'token': 'legacy',
+      'stateDir': 'data/sync_pairs/photolens',
+    });
+
+    final config = SyncClientConfig.load(path: path, projectRoot: temp.path);
+
+    expect(config.pairs, hasLength(1));
+    expect(config.pairs.single.name, 'photolens');
+    expect(config.token, 'legacy');
+    expect(config.firstRuntime!.pairName, 'photolens');
+  });
+
+  test('returns an empty config when the file is absent', () {
+    final config = SyncClientConfig.load(
+      path: p.join(temp.path, 'missing.json'),
+      projectRoot: temp.path,
+    );
+    expect(config.pairs, isEmpty);
+    expect(config.firstRuntime, isNull);
+  });
+
+  test('save writes version 2 and round-trips', () async {
+    final path = p.join(temp.path, 'tool', 'sync.config.json');
+    final config = SyncClientConfig(
+      token: 't',
+      timeoutSeconds: 10,
+      extraIgnores: const ['*.tmp'],
+      pairs: const [
+        SyncPairEntry(
+          name: 'demo',
+          localRoot: '/tmp/demo',
+          remoteUrl: 'http://host:2160/demo',
+          stateDir: '/tmp/state-demo',
+        ),
+      ],
+    );
+
+    await config.save(path: path);
+    final restored = SyncClientConfig.load(path: path, projectRoot: temp.path);
+
+    expect(restored.token, 't');
+    expect(restored.pairs.single.name, 'demo');
+    expect(restored.pairs.single.localRoot, '/tmp/demo');
+    expect(restored.pairs.single.remoteUrl, 'http://host:2160/demo');
+  });
+}

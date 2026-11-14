@@ -90,7 +90,8 @@
 目标: macOS 通过 HTTP 访问 Windows 上的挂载目录, 不要求 Windows 端同时是 Flutter 应用.
 
 - [x] 协议: HTTP JSON + 二进制流; 路由 `/<mount>/{manifest,file,dir,stat}`; 可选 token.
-- [x] Windows 服务端: `FileServer` + `tool/run_file_server.dart`; 默认挂载 `../photolens`; 支持 `tool/file_server.config.json`.
+- [x] Windows 服务端: `FileServer` + 桌面 Server 页面 (token, IP, port, Run/Stop, 挂载表格); CLI `tool/run_file_server.dart` 仍可用.
+- [x] 服务端配置: `tool/file_server.config.json`, 支持 token / port / mount 列表; 无 token 默认拒绝启动.
 - [x] macOS 客户端: `HttpTransport` / `HttpFileStore` / `RemoteScanner`; 接入 `SyncSource` 抽象.
 - [x] 服务端 manifest 带 sha256, 并用内存缓存避免重复哈希; 上传/删除时失效缓存.
 - [x] 安全: 默认绑定 `127.0.0.1` 供 frp 转发; token 校验; 拒绝路径穿越与软链接.
@@ -109,10 +110,12 @@
 当前真实目录: 本机 `~/Desktop/work/likianta-projects/photolens` ↔ `http://47.102.108.149:2160/photolens`.
 
 - [x] 同步对默认配置: `localRoot` / `remoteUrl` / `token` / `stateDir` / ignores.
+- [x] 多同步对: `tool/sync.config.json` v2, 支持新增/编辑/删除同步对; 每个同步对独立 `stateDir`.
+- [x] 同步对编辑器: 本地目录选择 (folder picker), 远端 server URL + mount 下拉 + 子目录, 共享 token.
 - [x] 流程: 扫描双方 → 拉取远端清单 → 生成计划 → dry run → 执行 → 提交新基线.
-- [x] CLI: `tool/sync_cli.dart`, 支持 `--dry-run` / `--token` / `--timeout` / 配置文件.
+- [x] CLI: `tool/sync_cli.dart`, 支持 `--pair` / `--dry-run` / `--token` / `--timeout` / 配置文件.
 - [x] 桌面 UI 第一版: 同步对信息, Check/Sync, 变更分组列表, 执行进度, Activity 日志, 错误提示.
-- [x] 冲突解决: 冲突项可逐条选择 "Keep Mac" / "Keep Windows", 另一份保留在冲突备份目录.
+- [x] 冲突解决: 冲突项可逐条选择 "Keep local" / "Keep remote", 另一份保留在冲突备份目录.
 - [x] 首次真实同步: 2026-11-14 通过 frp 从 Windows 拉取 45 个文件到本机, 二次同步 no-op.
 - [x] macOS: 关闭开发期 App Sandbox, 修复配置读取; 设置窗口标题与最小尺寸.
 - [ ] 中断恢复: 基于 journal 的恢复流程与部分完成提示.
@@ -207,8 +210,9 @@ lib/
 
 **Windows**
 
-- 当前作为远端服务端: `dart run tool/run_file_server.dart` (纯 Dart, 不需要 Flutter).
-- 默认监听 `127.0.0.1:2160`, 由用户自己的 frp 隧道暴露到公网; 仅暴露必要端口.
+- 当前作为远端服务端: 桌面应用默认打开 Server 页面, 可在 UI 中输入 token, 查看本机 IPv4, 设置端口与挂载目录, 点击 Run 启动 `0.0.0.0:2160`.
+- 也可继续使用 CLI: `dart run tool/run_file_server.dart` (纯 Dart).
+- 由用户自己的 frp 隧道暴露到公网; 仅暴露必要端口, 必须设置 token.
 - 配置由 `tool/file_server.config.json` 提供, 需与 macOS 端使用同一个 token.
 - 后续再做 Windows Flutter 客户端时, 只需复用现有同步内核.
 
@@ -248,10 +252,10 @@ lib/
 
 ## 10. 下一步
 
-1. 客户端 Range 断点续传; 大文件与弱网测试.
-2. 中断恢复: 基于 journal 的恢复流程与部分完成提示.
-3. 远端目录浏览与传输进度 UI.
-4. macOS 打包配置; Android 阶段视情况恢复.
+1. 用户测试: 在 Server 页面新增若干目录, 在 Sync 页面新建对应同步对并同步到本机.
+2. 客户端 Range 断点续传; 大文件与弱网测试.
+3. 中断恢复: 基于 journal 的恢复流程与部分完成提示.
+4. Windows 应用打包; Android 阶段视情况恢复.
 
 ---
 

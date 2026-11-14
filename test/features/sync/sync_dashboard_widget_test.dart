@@ -1,55 +1,83 @@
+import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_sync_pro/app/app.dart';
-import 'package:file_sync_pro/features/sync/application/sync_pair_config.dart';
+import 'package:file_sync_pro/features/sync/presentation/sync_workspace_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
   late Directory temp;
+  late String toolDir;
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('filesync-ui-');
+    toolDir = p.join(temp.path, 'tool');
+    Directory(toolDir).createSync(recursive: true);
   });
 
   tearDown(() async {
     await temp.delete(recursive: true);
   });
 
-  testWidgets('renders the dashboard without touching the network', (
-    tester,
-  ) async {
-    final config = SyncPairConfig(
-      localRoot: p.join(temp.path, 'local'),
-      remoteUrl: 'http://127.0.0.1:1/photolens',
-      token: 'test',
-      stateDir: p.join(temp.path, 'state'),
-    );
-
-    await tester.pumpWidget(
-      FileSyncProApp(
-        config: config,
-        configPath: p.join(temp.path, 'tool', 'sync.config.json'),
+  Widget wrap(String configPath) {
+    return MaterialApp(
+      home: Scaffold(
+        body: SyncWorkspacePage(
+          configPath: configPath,
+          projectRoot: temp.path,
+        ),
       ),
     );
+  }
+
+  testWidgets('renders the sync workspace with a configured pair', (
+    tester,
+  ) async {
+    final local = Directory(p.join(temp.path, 'local'))..createSync();
+    final configPath = p.join(toolDir, 'sync.config.json');
+    File(configPath).writeAsStringSync(
+      jsonEncode({
+        'version': 2,
+        'token': 'test-token',
+        'pairs': [
+          {
+            'name': 'demo',
+            'localRoot': local.path,
+            'remoteUrl': 'http://127.0.0.1:1/demo',
+            'stateDir': 'data/sync_pairs/demo',
+          },
+        ],
+      }),
+    );
+
+    await tester.pumpWidget(wrap(configPath));
     await tester.pumpAndSettle();
 
-    expect(find.text('File Sync Pro'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('sync.check')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('sync.pair.select')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey<String>('sync.run')), findsOneWidget);
-    expect(find.textContaining('Local folder'), findsOneWidget);
-    expect(find.textContaining('Remote mount'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('sync.plan.list')), findsNothing);
+    expect(find.text('demo'), findsWidgets);
+    expect(find.text('File Sync Pro'), findsOneWidget);
   });
 
-  testWidgets('shows the setup page when config is missing', (tester) async {
-    await tester.pumpWidget(
-      FileSyncProApp(configPath: p.join(temp.path, 'tool', 'sync.config.json')),
-    );
+  testWidgets('shows the empty state when no pairs are configured', (
+    tester,
+  ) async {
+    final configPath = p.join(toolDir, 'sync.config.json');
+    File(
+      configPath,
+    ).writeAsStringSync(jsonEncode({'version': 2, 'token': '', 'pairs': []}));
+
+    await tester.pumpWidget(wrap(configPath));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey<String>('setup.card')), findsOneWidget);
-    expect(find.text('Configuration required'), findsOneWidget);
+    expect(find.text('No sync pairs yet.'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('sync.pair.emptyAdd')),
+      findsOneWidget,
+    );
   });
 }

@@ -1,21 +1,19 @@
 import 'package:flutter/material.dart';
 
-import '../features/setup/presentation/setup_page.dart';
-import '../features/sync/application/sync_pair_config.dart';
-import '../features/sync/presentation/sync_dashboard_page.dart';
+import 'home_shell.dart';
 import 'theme.dart';
 
 class FileSyncProApp extends StatelessWidget {
   const FileSyncProApp({
     super.key,
-    this.config,
-    this.configError,
-    required this.configPath,
+    required this.projectRoot,
+    required this.clientConfigPath,
+    required this.serverConfigPath,
   });
 
-  final SyncPairConfig? config;
-  final String? configError;
-  final String configPath;
+  final String projectRoot;
+  final String clientConfigPath;
+  final String serverConfigPath;
 
   @override
   Widget build(BuildContext context) {
@@ -24,9 +22,11 @@ class FileSyncProApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
-      home: config == null
-          ? SetupPage(configPath: configPath, error: configError)
-          : SyncDashboardPage(config: config!),
+      home: HomeShell(
+        projectRoot: projectRoot,
+        clientConfigPath: clientConfigPath,
+        serverConfigPath: serverConfigPath,
+      ),
     );
   }
 }
