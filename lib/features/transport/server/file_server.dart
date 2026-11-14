@@ -454,11 +454,12 @@ final class FileServer {
 }
 
 final class _CachedHash {
-  const _CachedHash(this.size, this.mtimeMs, this.hash);
+  const _CachedHash(this.size, this.mtimeMs, this.hash, this.textHash);
 
   final int size;
   final int mtimeMs;
   final String hash;
+  final String? textHash;
 }
 
 final class _ServerHashCache implements HashCache {
@@ -467,17 +468,23 @@ final class _ServerHashCache implements HashCache {
   final Map<String, _CachedHash> _store;
 
   @override
-  String? lookup(String path, int size, int mtimeMs) {
+  CachedHashes? lookup(String path, int size, int mtimeMs) {
     final cached = _store[path];
     if (cached != null && cached.size == size && cached.mtimeMs == mtimeMs) {
-      return cached.hash;
+      return (hash: cached.hash, textHash: cached.textHash);
     }
     return null;
   }
 
   @override
-  void store(String path, int size, int mtimeMs, String hash) {
-    _store[path] = _CachedHash(size, mtimeMs, hash);
+  void store(
+    String path,
+    int size,
+    int mtimeMs,
+    String hash,
+    String? textHash,
+  ) {
+    _store[path] = _CachedHash(size, mtimeMs, hash, textHash);
   }
 }
 

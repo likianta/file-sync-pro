@@ -9,7 +9,12 @@ void main() {
         scannedAt: DateTime.utc(2026, 11, 14, 12, 0, 0),
         entries: {
           'docs': ManifestEntry.directory(mtimeMs: 1000),
-          'docs/a.txt': ManifestEntry.file(size: 5, mtimeMs: 2000, hash: 'abc'),
+          'docs/a.txt': ManifestEntry.file(
+            size: 5,
+            mtimeMs: 2000,
+            hash: 'abc',
+            textHash: 'abc-text',
+          ),
           'empty.txt': ManifestEntry.file(size: 0, mtimeMs: 3000),
         },
       );
@@ -21,6 +26,7 @@ void main() {
       expect(restored.entries.keys, manifest.entries.keys);
       expect(restored.entries['docs']!.isDirectory, isTrue);
       expect(restored.entries['docs/a.txt']!.hash, 'abc');
+      expect(restored.entries['docs/a.txt']!.textHash, 'abc-text');
       expect(restored.entries['empty.txt']!.hash, isNull);
       expect(restored.fileCount, 2);
       expect(restored.directoryCount, 1);
@@ -46,6 +52,30 @@ void main() {
       final a = ManifestEntry.file(size: 5, mtimeMs: 100, hash: 'a');
       final b = ManifestEntry.file(size: 5, mtimeMs: 100, hash: 'b');
       expect(a.sameContent(b), isFalse);
+    });
+
+    test('treats equal text hashes as the same content', () {
+      final lf = ManifestEntry.file(
+        size: 5,
+        mtimeMs: 100,
+        hash: 'raw-lf',
+        textHash: 'normalized',
+      );
+      final crlf = ManifestEntry.file(
+        size: 7,
+        mtimeMs: 900,
+        hash: 'raw-crlf',
+        textHash: 'normalized',
+      );
+      expect(lf.sameContent(crlf), isTrue);
+
+      final edited = ManifestEntry.file(
+        size: 7,
+        mtimeMs: 900,
+        hash: 'raw-other',
+        textHash: 'normalized-other',
+      );
+      expect(lf.sameContent(edited), isFalse);
     });
 
     test('falls back to size and mtime without hashes', () {

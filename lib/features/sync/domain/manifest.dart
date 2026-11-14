@@ -12,6 +12,7 @@ final class ManifestEntry {
     required this.size,
     required this.mtimeMs,
     this.hash,
+    this.textHash,
   });
 
   factory ManifestEntry.directory({required int mtimeMs}) {
@@ -22,12 +23,14 @@ final class ManifestEntry {
     required int size,
     required int mtimeMs,
     String? hash,
+    String? textHash,
   }) {
     return ManifestEntry(
       kind: EntryKind.file,
       size: size,
       mtimeMs: mtimeMs,
       hash: hash,
+      textHash: textHash,
     );
   }
 
@@ -38,22 +41,32 @@ final class ManifestEntry {
   /// SHA-256 of the file content. Directories have no hash.
   final String? hash;
 
+  /// SHA-256 of the file content after normalizing line endings to LF.
+  ///
+  /// Only text files have this; binary files leave it null.
+  final String? textHash;
+
   bool get isDirectory => kind == EntryKind.directory;
 
   bool get isFile => kind == EntryKind.file;
 
   /// Content equality.
   ///
-  /// Hash is authoritative when both sides have one; otherwise fall back to
-  /// size + mtime. Note that a pure mtime change with the same content is
-  /// considered "same" when hashes are available, which is the key difference
-  /// from the old Python implementation.
+  /// Hash is authoritative when both sides have one. Two files whose raw bytes
+  /// differ only in line endings are considered equal when their normalized
+  /// text hashes match, which keeps cross-platform text in sync.
   bool sameContent(ManifestEntry? other) {
     if (other == null) return false;
     if (kind != other.kind) return false;
     if (kind == EntryKind.directory) return true;
+    if (hash != null && other.hash != null) {
+      if (hash == other.hash) return true;
+      if (textHash != null && other.textHash != null) {
+        return textHash == other.textHash;
+      }
+      return false;
+    }
     if (size != other.size) return false;
-    if (hash != null && other.hash != null) return hash == other.hash;
     return mtimeMs == other.mtimeMs;
   }
 
@@ -63,6 +76,7 @@ final class ManifestEntry {
       'size': size,
       'mtime': mtimeMs,
       if (hash != null) 'hash': hash,
+      if (textHash != null) 'textHash': textHash,
     };
   }
 
@@ -73,13 +87,15 @@ final class ManifestEntry {
       size: (json['size'] as num?)?.toInt() ?? 0,
       mtimeMs: (json['mtime'] as num?)?.toInt() ?? 0,
       hash: json['hash'] as String?,
+      textHash: json['textHash'] as String?,
     );
   }
 
   @override
   String toString() {
     return 'ManifestEntry(${isDirectory ? 'dir' : 'file'}, '
-        'size: $size, mtime: $mtimeMs, hash: $hash)';
+        'size: $size, mtime: $mtimeMs, hash: $hash, '
+        'textHash: $textHash)';
   }
 }
 

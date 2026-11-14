@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/data/local_scanner.dart';
@@ -51,6 +52,31 @@ void main() {
 
     expect(manifest.entries['small.txt']!.hash, isNotNull);
     expect(manifest.entries['big.txt']!.hash, isNull);
+  });
+
+  test('normalizes line endings for text files', () async {
+    await File(p.join(temp.path, 'lf.txt'))
+        .writeAsBytes(utf8.encode('alpha\nbeta\ngamma\n'));
+    await File(p.join(temp.path, 'crlf.txt'))
+        .writeAsBytes(utf8.encode('alpha\r\nbeta\r\ngamma\r\n'));
+    await File(p.join(temp.path, 'binary-a.bin'))
+        .writeAsBytes(const [0, 13, 10, 1]);
+    await File(p.join(temp.path, 'binary-b.bin'))
+        .writeAsBytes(const [0, 10, 1]);
+
+    final manifest = await LocalScanner().scan(temp.path);
+
+    final lf = manifest.entries['lf.txt']!;
+    final crlf = manifest.entries['crlf.txt']!;
+    expect(lf.hash, isNot(crlf.hash));
+    expect(lf.textHash, isNotNull);
+    expect(lf.textHash, crlf.textHash);
+    expect(lf.sameContent(crlf), isTrue);
+
+    final binA = manifest.entries['binary-a.bin']!;
+    final binB = manifest.entries['binary-b.bin']!;
+    expect(binA.textHash, isNull);
+    expect(binA.sameContent(binB), isFalse);
   });
 
   test('throws when the root does not exist', () async {

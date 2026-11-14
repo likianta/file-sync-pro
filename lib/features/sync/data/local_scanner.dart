@@ -2,6 +2,7 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
@@ -9,12 +10,15 @@ import 'package:path/path.dart' as p;
 import '../domain/ignore_rules.dart';
 import '../domain/manifest.dart';
 
+/// Cached content hashes for one file.
+typedef CachedHashes = ({String hash, String? textHash});
+
 /// Optional cache for content hashes. The server uses it to avoid re-hashing
 /// unchanged files on every manifest request.
 abstract interface class HashCache {
-  String? lookup(String path, int size, int mtimeMs);
+  CachedHashes? lookup(String path, int size, int mtimeMs);
 
-  void store(String path, int size, int mtimeMs, String hash);
+  void store(String path, int size, int mtimeMs, String hash, String? textHash);
 }
 
 final class LocalScanner {
@@ -76,17 +80,24 @@ final class LocalScanner {
       final shouldHash =
           computeHashes && (maxHashSize == null || stat.size <= maxHashSize!);
       String? hash;
+      String? textHash;
       if (shouldHash) {
-        hash = hashCache?.lookup(entity.path, stat.size, mtimeMs);
-        if (hash == null) {
-          hash = await _hashFile(entity.path);
-          hashCache?.store(entity.path, stat.size, mtimeMs, hash);
+        final cached = hashCache?.lookup(entity.path, stat.size, mtimeMs);
+        if (cached != null) {
+          hash = cached.hash;
+          textHash = cached.textHash;
+        } else {
+          final result = await _hashFile(entity.path);
+          hash = result.hash;
+          textHash = result.textHash;
+          hashCache?.store(entity.path, stat.size, mtimeMs, hash, textHash);
         }
       }
       entries[relPath] = ManifestEntry.file(
         size: stat.size,
         mtimeMs: mtimeMs,
         hash: hash,
+        textHash: textHash,
       );
     }
 
@@ -103,8 +114,91 @@ final class LocalScanner {
     return p.posix.joinAll(p.split(relative));
   }
 
-  static Future<String> _hashFile(String path) async {
-    final digest = await sha256.bind(File(path).openRead()).first;
-    return digest.toString();
+  /// Hashes the raw bytes and, for text files, the LF-normalized bytes.
+  ///
+  /// A file is treated as text when its first 8 KiB contain no NUL byte. This
+  /// is the same heuristic Git uses. The normalized hash lets CRLF and LF
+  /// copies of the same document compare equal without transferring them.
+  static Future<({String hash, String? textHash})> _hashFile(
+    String path,
+  ) async {
+    final file = await File(path).open();
+    try {
+      final probe = await file.read(8192);
+      final isText = !probe.contains(0);
+      await file.setPosition(0);
+
+      final rawSink = _DigestSink();
+      final rawInput = sha256.startChunkedConversion(rawSink);
+      final textSink = isText ? _DigestSink() : null;
+      final textInput = textSink == null
+          ? null
+          : sha256.startChunkedConversion(textSink);
+
+      var pendingCr = false;
+      while (true) {
+        final chunk = await file.read(64 * 1024);
+        if (chunk.isEmpty) break;
+        rawInput.add(chunk);
+        if (textInput != null) {
+          final normalized = _normalizeLineEndings(chunk, pendingCr);
+          pendingCr = normalized.pendingCr;
+          if (normalized.bytes.isNotEmpty) textInput.add(normalized.bytes);
+        }
+      }
+
+      rawInput.close();
+      if (textInput != null) {
+        if (pendingCr) textInput.add(const [0x0A]);
+        textInput.close();
+      }
+      return (
+        hash: rawSink.value!.toString(),
+        textHash: textSink?.value?.toString(),
+      );
+    } finally {
+      await file.close();
+    }
   }
+
+  static ({List<int> bytes, bool pendingCr}) _normalizeLineEndings(
+    List<int> chunk,
+    bool pendingCr,
+  ) {
+    final out = BytesBuilder(copy: false);
+    var index = 0;
+    if (pendingCr) {
+      if (chunk.isNotEmpty && chunk.first == 0x0A) {
+        out.addByte(0x0A);
+        index = 1;
+      } else {
+        out.addByte(0x0A);
+      }
+      pendingCr = false;
+    }
+    for (; index < chunk.length; index++) {
+      final byte = chunk[index];
+      if (byte != 0x0D) {
+        out.addByte(byte);
+        continue;
+      }
+      if (index + 1 < chunk.length) {
+        if (chunk[index + 1] == 0x0A) index++;
+        out.addByte(0x0A);
+      } else {
+        pendingCr = true;
+      }
+    }
+    return (bytes: out.takeBytes(), pendingCr: pendingCr);
+  }
+}
+
+final class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
 }
