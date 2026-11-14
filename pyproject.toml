@@ -67,13 +67,14 @@ max-line-length = 83
 prerelease = "allow"
 
 [[tool.uv.index]]
-name = "tsinghua"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
 
 [[tool.uv.index]]
 name = "likianta"
-url = "http://localhost:2131/"
+# url = "http://localhost:2131/"
+url = "http://47.102.108.149:2131/"
 explicit = true
 
 [tool.uv.sources]
