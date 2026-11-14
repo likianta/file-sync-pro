@@ -1,14 +1,25 @@
 /.idea/
 /.venv/
+/build/**
 /data/conflicts/*
 /data/downloads/*
 /data/remote_snapshot.json
 /data/snapshots/*
 /readme.b64.html
 /refs/
+/test/local_sync_test/
 
+**/doc/api/
+*.iml
+.DS_Store
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
 __pycache__/
+app.*.map.json
+app.*.symbols
 dist/
 
 !**/.gitkeep
+!/build/image_config.json
 !/data/snapshots/readme.md
