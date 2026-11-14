@@ -7,7 +7,11 @@ import 'app/app.dart';
 import 'features/sync/application/sync_pair_config.dart';
 
 void main() {
-  final projectRoot = Directory.current.path;
+  final projectRoot =
+      SyncPairConfig.findProjectRoot(
+        executablePath: Platform.resolvedExecutable,
+      ) ??
+      Directory.current.path;
   final configPath = p.join(projectRoot, 'tool', 'sync.config.json');
 
   SyncPairConfig? config;

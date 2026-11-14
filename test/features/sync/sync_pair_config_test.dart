@@ -108,4 +108,29 @@ void main() {
     )!;
     expect(config.pairName, 'sync');
   });
+
+  test('finds the project root from a nested executable path', () {
+    final root = Directory(p.join(temp.path, 'project'))
+      ..createSync(recursive: true);
+    File(p.join(root.path, 'pubspec.yaml')).writeAsStringSync('name: demo');
+    Directory(p.join(root.path, 'tool')).createSync();
+
+    final executable = p.join(
+      root.path,
+      'build',
+      'macos',
+      'Build',
+      'Products',
+      'Debug',
+      'demo.app',
+      'Contents',
+      'MacOS',
+      'demo',
+    );
+
+    expect(
+      SyncPairConfig.findProjectRoot(executablePath: executable),
+      root.path,
+    );
+  });
 }

@@ -34,6 +34,37 @@ final class SyncPairConfig {
     return segments.isEmpty ? 'sync' : segments.last;
   }
 
+  /// Finds the Flutter project root for development builds.
+  ///
+  /// A sandboxed macOS app's working directory is its container, and a
+  /// launched app's working directory may be `/`, so neither can be trusted.
+  /// We walk up from the executable (which lives under `build/` during
+  /// development) and from the current directory.
+  static String? findProjectRoot({String? executablePath}) {
+    final starts = <String>{
+      if (executablePath != null && executablePath.isNotEmpty)
+        p.dirname(executablePath),
+      Directory.current.path,
+      Platform.environment['FILE_SYNC_PROJECT_ROOT'] ?? '',
+    }..removeWhere((path) => path.isEmpty);
+
+    for (final start in starts) {
+      var directory = p.normalize(p.absolute(start));
+      for (var depth = 0; depth < 16; depth++) {
+        if (_looksLikeProjectRoot(directory)) return directory;
+        final parent = p.dirname(directory);
+        if (parent == directory) break;
+        directory = parent;
+      }
+    }
+    return null;
+  }
+
+  static bool _looksLikeProjectRoot(String directory) {
+    return File(p.join(directory, 'pubspec.yaml')).existsSync() &&
+        Directory(p.join(directory, 'tool')).existsSync();
+  }
+
   /// Loads a config file with optional overrides (CLI flags or UI settings).
   ///
   /// Returns null when no remote URL is configured, so the caller can show a

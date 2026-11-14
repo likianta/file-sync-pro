@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../application/sync_engine.dart';
 import '../application/sync_pair_config.dart';
 import '../domain/sync_plan.dart';
 import 'sync_dashboard_controller.dart';
@@ -106,7 +107,8 @@ class _Header extends StatelessWidget {
     final statusColor = switch (controller.status) {
       SyncDashboardStatus.idle => const Color(0xFF2EA121),
       SyncDashboardStatus.scanning ||
-      SyncDashboardStatus.applying => theme.colorScheme.primary,
+      SyncDashboardStatus.applying ||
+      SyncDashboardStatus.resolving => theme.colorScheme.primary,
       SyncDashboardStatus.error => theme.colorScheme.error,
     };
 
@@ -384,11 +386,17 @@ class _Toolbar extends StatelessWidget {
               ),
           ],
         ),
-        if (controller.status == SyncDashboardStatus.applying) ...[
+        if (controller.status == SyncDashboardStatus.applying ||
+            controller.status == SyncDashboardStatus.resolving) ...[
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(minHeight: 4, value: progress),
+            child: LinearProgressIndicator(
+              minHeight: 4,
+              value: controller.status == SyncDashboardStatus.applying
+                  ? progress
+                  : null,
+            ),
           ),
           if (controller.currentPath != null) ...[
             const SizedBox(height: 6),
@@ -483,15 +491,16 @@ class _PlanPanel extends StatelessWidget {
               icon: Icons.check_circle_outline,
               text: 'Already in sync.',
             )
-          : _PlanList(plan: plan),
+          : _PlanList(plan: plan, controller: controller),
     );
   }
 }
 
 class _PlanList extends StatelessWidget {
-  const _PlanList({required this.plan});
+  const _PlanList({required this.plan, required this.controller});
 
   final SyncPlan plan;
+  final SyncDashboardController controller;
 
   static const _displayLimit = 300;
 
@@ -539,7 +548,7 @@ class _PlanList extends StatelessWidget {
           actions: deletes,
         ),
       if (plan.conflicts.isNotEmpty)
-        _ConflictSection(conflicts: plan.conflicts),
+        _ConflictSection(conflicts: plan.conflicts, controller: controller),
       if (plan.actions.length > _displayLimit)
         Padding(
           padding: const EdgeInsets.all(12),
@@ -615,13 +624,16 @@ class _ActionSection extends StatelessWidget {
 }
 
 class _ConflictSection extends StatelessWidget {
-  const _ConflictSection({required this.conflicts});
+  const _ConflictSection({required this.conflicts, required this.controller});
 
   final List<SyncConflict> conflicts;
+  final SyncDashboardController controller;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final canResolve = controller.report != null && !controller.busy;
+
     return ExpansionTile(
       key: const ValueKey<String>('sync.section.conflicts'),
       initiallyExpanded: true,
@@ -641,28 +653,68 @@ class _ConflictSection extends StatelessWidget {
           ),
         ],
       ),
+      subtitle: Text(
+        'Keep one version. The other copy stays in the conflict backup folder.',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
       children: [
         for (final conflict in conflicts)
           Padding(
             key: ValueKey<String>('sync.conflict.${conflict.path}'),
-            padding: const EdgeInsets.fromLTRB(40, 2, 16, 2),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(40, 4, 16, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Text(
-                    conflict.path,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        conflict.path,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                        ),
+                      ),
                     ),
-                  ),
+                    Text(
+                      conflict.reason.name,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFD4A106),
+                      ),
+                    ),
+                  ],
                 ),
-                Text(
-                  conflict.reason.name,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFFD4A106),
-                  ),
+                Row(
+                  children: [
+                    TextButton(
+                      key: ValueKey<String>(
+                        'sync.conflict.keepLeft.${conflict.path}',
+                      ),
+                      onPressed: canResolve
+                          ? () => controller.resolveConflict(
+                              conflict.path,
+                              ConflictSide.left,
+                            )
+                          : null,
+                      child: const Text('Keep Mac'),
+                    ),
+                    const SizedBox(width: 4),
+                    TextButton(
+                      key: ValueKey<String>(
+                        'sync.conflict.keepRight.${conflict.path}',
+                      ),
+                      onPressed: canResolve
+                          ? () => controller.resolveConflict(
+                              conflict.path,
+                              ConflictSide.right,
+                            )
+                          : null,
+                      child: const Text('Keep Windows'),
+                    ),
+                  ],
                 ),
               ],
             ),

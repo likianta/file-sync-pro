@@ -9,7 +9,7 @@ import '../application/sync_source.dart';
 import '../domain/ignore_rules.dart';
 import '../domain/sync_plan.dart';
 
-enum SyncDashboardStatus { idle, scanning, applying, error }
+enum SyncDashboardStatus { idle, scanning, applying, resolving, error }
 
 /// Drives one sync pair for the dashboard.
 final class SyncDashboardController extends ChangeNotifier {
@@ -45,7 +45,8 @@ final class SyncDashboardController extends ChangeNotifier {
 
   bool get busy =>
       _status == SyncDashboardStatus.scanning ||
-      _status == SyncDashboardStatus.applying;
+      _status == SyncDashboardStatus.applying ||
+      _status == SyncDashboardStatus.resolving;
 
   bool get canRun => !busy;
 
@@ -54,6 +55,7 @@ final class SyncDashboardController extends ChangeNotifier {
       SyncDashboardStatus.idle => 'Ready',
       SyncDashboardStatus.scanning => 'Scanning both sides...',
       SyncDashboardStatus.applying => 'Applying $_applied / $_total...',
+      SyncDashboardStatus.resolving => 'Resolving conflicts...',
       SyncDashboardStatus.error => 'Error',
     };
   }
@@ -161,6 +163,34 @@ final class SyncDashboardController extends ChangeNotifier {
     if (_errorMessage == null) return;
     _errorMessage = null;
     _notify();
+  }
+
+  Future<void> resolveConflict(String path, ConflictSide side) async {
+    if (busy) return;
+    final preview = _preview;
+    if (preview == null) return;
+
+    _status = SyncDashboardStatus.resolving;
+    _errorMessage = null;
+    _applied = 0;
+    _total = 0;
+    _appendLog(
+      'Resolving $path by keeping ${side == ConflictSide.left ? 'Mac' : 'Windows'}...',
+    );
+    _notify();
+
+    final engine = _createEngine();
+    try {
+      final result = await engine.resolveConflicts(preview, {path: side});
+      _preview = await engine.preview();
+      _status = SyncDashboardStatus.idle;
+      _appendLog('Resolved $path. ${result.remaining} conflict(s) left.');
+    } catch (error) {
+      _fail(error);
+    } finally {
+      await engine.dispose();
+      _notify();
+    }
   }
 
   SyncEngine _createEngine() {

@@ -1,10 +1,12 @@
 /// Applies a [SyncPlan] to two [FileStore]s.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../transport/http_transport.dart';
 import '../data/file_store.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
@@ -77,7 +79,12 @@ final class PlanApplier {
           ..sort((x, y) => x.path.compareTo(y.path));
     for (final action in fileWrites) {
       final sources = action.targetsRight ? (from: a, to: b) : (from: b, to: a);
-      await _copy(sources.from, sources.to, action.path, action.entry!);
+      await _copyWithRetry(
+        sources.from,
+        sources.to,
+        action.path,
+        action.entry!,
+      );
       if (action.kind == SyncActionKind.createLeft ||
           action.kind == SyncActionKind.createRight) {
         created++;
@@ -131,6 +138,38 @@ final class PlanApplier {
       removedDirectories: removedDirectories,
       backedUpConflicts: backedUp,
     );
+  }
+
+  Future<void> _copyWithRetry(
+    FileStore from,
+    FileStore to,
+    String relPath,
+    ManifestEntry entry,
+  ) async {
+    const maxAttempts = 3;
+    for (var attempt = 1; ; attempt++) {
+      try {
+        await _copy(from, to, relPath, entry);
+        return;
+      } catch (error) {
+        if (attempt >= maxAttempts || !_isRetryable(error)) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
+      }
+    }
+  }
+
+  static bool _isRetryable(Object error) {
+    if (error is SocketException ||
+        error is TimeoutException ||
+        error is HttpException) {
+      return true;
+    }
+    if (error is RemoteException) {
+      return error.statusCode >= 500 ||
+          error.statusCode == 408 ||
+          error.statusCode == 429;
+    }
+    return false;
   }
 
   Future<void> _copy(

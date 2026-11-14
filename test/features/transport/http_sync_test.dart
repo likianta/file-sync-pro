@@ -133,6 +133,57 @@ void main() {
     expect(Directory(p.join(remoteDir.path, 'empty')).existsSync(), isFalse);
   });
 
+  test('resolves a conflict by keeping the local side', () async {
+    await File(p.join(localDir.path, 'doc.txt')).writeAsString('base');
+    await withEngine((engine) => engine.sync());
+
+    await File(p.join(localDir.path, 'doc.txt')).writeAsString('mac edit');
+    await File(p.join(remoteDir.path, 'doc.txt')).writeAsString('win edit');
+
+    await withEngine((engine) async {
+      final report = await engine.sync();
+      expect(report.conflictCount, 1);
+      final resolution = await engine.resolveConflicts(report.preview, {
+        'doc.txt': ConflictSide.left,
+      });
+      expect(resolution.resolved, 1);
+      expect(resolution.remaining, 0);
+    });
+
+    expect(
+      await File(p.join(localDir.path, 'doc.txt')).readAsString(),
+      'mac edit',
+    );
+    expect(
+      await File(p.join(remoteDir.path, 'doc.txt')).readAsString(),
+      'mac edit',
+    );
+  });
+
+  test('resolves a conflict by keeping the remote side', () async {
+    await File(p.join(localDir.path, 'doc.txt')).writeAsString('base');
+    await withEngine((engine) => engine.sync());
+
+    await File(p.join(localDir.path, 'doc.txt')).writeAsString('mac edit');
+    await File(p.join(remoteDir.path, 'doc.txt')).writeAsString('win edit');
+
+    await withEngine((engine) async {
+      final report = await engine.sync();
+      await engine.resolveConflicts(report.preview, {
+        'doc.txt': ConflictSide.right,
+      });
+    });
+
+    expect(
+      await File(p.join(localDir.path, 'doc.txt')).readAsString(),
+      'win edit',
+    );
+    expect(
+      await File(p.join(remoteDir.path, 'doc.txt')).readAsString(),
+      'win edit',
+    );
+  });
+
   test('applies default ignores on the remote manifest', () async {
     await Directory(p.join(remoteDir.path, '.git')).create();
     await File(p.join(remoteDir.path, '.git', 'config')).writeAsString('x');

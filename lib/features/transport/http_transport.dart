@@ -45,36 +45,42 @@ final class HttpTransport {
   Future<Map<String, Object?>> getJson(
     String operation, {
     Map<String, String>? query,
-  }) async {
-    final request = await _open('GET', operation, query: query);
-    final response = await request.close().timeout(timeout);
-    final text = await _readText(response);
-    if (response.statusCode >= 400) {
-      throw RemoteException(response.statusCode, _errorMessage(text));
-    }
-    return _asJsonMap(text);
+  }) {
+    return _retry(() async {
+      final request = await _open('GET', operation, query: query);
+      final response = await request.close().timeout(timeout);
+      final text = await _readText(response);
+      if (response.statusCode >= 400) {
+        throw RemoteException(response.statusCode, _errorMessage(text));
+      }
+      return _asJsonMap(text);
+    });
   }
 
-  Future<void> post(String operation, {Map<String, String>? query}) async {
-    final request = await _open('POST', operation, query: query);
-    request.contentLength = 0;
-    final response = await request.close().timeout(timeout);
-    final text = await _readText(response);
-    if (response.statusCode >= 400) {
-      throw RemoteException(response.statusCode, _errorMessage(text));
-    }
+  Future<void> post(String operation, {Map<String, String>? query}) {
+    return _retry(() async {
+      final request = await _open('POST', operation, query: query);
+      request.contentLength = 0;
+      final response = await request.close().timeout(timeout);
+      final text = await _readText(response);
+      if (response.statusCode >= 400) {
+        throw RemoteException(response.statusCode, _errorMessage(text));
+      }
+    });
   }
 
   /// Returns the status code for non-server errors so callers can treat
   /// "not found" or "directory not empty" as ordinary outcomes.
-  Future<int> delete(String operation, {Map<String, String>? query}) async {
-    final request = await _open('DELETE', operation, query: query);
-    final response = await request.close().timeout(timeout);
-    final text = await _readText(response);
-    if (response.statusCode >= 500) {
-      throw RemoteException(response.statusCode, _errorMessage(text));
-    }
-    return response.statusCode;
+  Future<int> delete(String operation, {Map<String, String>? query}) {
+    return _retry(() async {
+      final request = await _open('DELETE', operation, query: query);
+      final response = await request.close().timeout(timeout);
+      final text = await _readText(response);
+      if (response.statusCode >= 500) {
+        throw RemoteException(response.statusCode, _errorMessage(text));
+      }
+      return response.statusCode;
+    });
   }
 
   Future<Map<String, Object?>> putStream(
@@ -108,6 +114,32 @@ final class HttpTransport {
 
   Future<void> close() async {
     _client.close(force: true);
+  }
+
+  Future<T> _retry<T>(Future<T> Function() action) async {
+    const maxAttempts = 3;
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await action();
+      } catch (error) {
+        if (attempt >= maxAttempts || !_isRetryable(error)) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 300 * attempt));
+      }
+    }
+  }
+
+  static bool _isRetryable(Object error) {
+    if (error is SocketException ||
+        error is TimeoutException ||
+        error is HttpException) {
+      return true;
+    }
+    if (error is RemoteException) {
+      return error.statusCode >= 500 ||
+          error.statusCode == 408 ||
+          error.statusCode == 429;
+    }
+    return false;
   }
 
   Future<HttpClientRequest> _open(

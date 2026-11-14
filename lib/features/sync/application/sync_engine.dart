@@ -59,6 +59,18 @@ final class SyncDivergenceException implements Exception {
   }
 }
 
+enum ConflictSide { left, right }
+
+final class ConflictResolutionReport {
+  const ConflictResolutionReport({
+    required this.resolved,
+    required this.remaining,
+  });
+
+  final int resolved;
+  final int remaining;
+}
+
 final class SyncEngine {
   SyncEngine({
     required this.a,
@@ -211,6 +223,114 @@ final class SyncEngine {
         // Ignore journal close failures.
       }
     }
+  }
+
+  /// Resolves selected conflicts by copying one side over the other.
+  ///
+  /// The unselected side's content is already preserved in the conflict
+  /// backup folder created by the previous sync.
+  Future<ConflictResolutionReport> resolveConflicts(
+    SyncPreview preview,
+    Map<String, ConflictSide> choices,
+  ) async {
+    final conflicts = {
+      for (final conflict in preview.plan.conflicts) conflict.path: conflict,
+    };
+    final resolvedPaths = <String>{};
+    final actions = <SyncAction>[];
+
+    for (final choice in choices.entries) {
+      final path = choice.key;
+      if (!conflicts.containsKey(path)) continue;
+
+      final aEntry = preview.a.entries[path];
+      final bEntry = preview.b.entries[path];
+
+      switch (choice.value) {
+        case ConflictSide.left:
+          if (aEntry == null) {
+            if (bEntry != null) {
+              actions.add(
+                SyncAction(
+                  kind: SyncActionKind.deleteRight,
+                  path: path,
+                  reason: ActionReason.deleted,
+                  entry: bEntry,
+                ),
+              );
+            }
+          } else {
+            actions.add(
+              SyncAction(
+                kind: SyncActionKind.updateRight,
+                path: path,
+                reason: ActionReason.updated,
+                entry: aEntry,
+              ),
+            );
+          }
+        case ConflictSide.right:
+          if (bEntry == null) {
+            if (aEntry != null) {
+              actions.add(
+                SyncAction(
+                  kind: SyncActionKind.deleteLeft,
+                  path: path,
+                  reason: ActionReason.deleted,
+                  entry: aEntry,
+                ),
+              );
+            }
+          } else {
+            actions.add(
+              SyncAction(
+                kind: SyncActionKind.updateLeft,
+                path: path,
+                reason: ActionReason.updated,
+                entry: bEntry,
+              ),
+            );
+          }
+      }
+      resolvedPaths.add(path);
+    }
+
+    if (actions.isNotEmpty) {
+      final applier = PlanApplier(
+        a: a.store,
+        b: b.store,
+        conflictRoot: p.join(_stateDir, 'conflicts', _timestamp()),
+      );
+      await applier.apply(SyncPlan(actions: actions, conflicts: const []));
+    }
+
+    final aAfter = await a.scan();
+    final bAfter = await b.scan();
+    final remaining = conflicts.keys
+        .where((path) => !resolvedPaths.contains(path))
+        .toSet();
+    _verifyConvergence(aAfter, bAfter, remaining);
+
+    final nextBase = _nextBase(
+      after: aAfter,
+      previous: preview.base,
+      conflicts: preview.plan.conflicts
+          .where((conflict) => remaining.contains(conflict.path))
+          .toList(),
+    );
+    await _state.save(
+      SyncState(
+        rootA: a.id,
+        rootB: b.id,
+        base: nextBase,
+        committedAt: DateTime.now(),
+      ),
+    );
+
+    return ConflictResolutionReport(
+      resolved: resolvedPaths.length,
+      remaining: remaining.length,
+    );
   }
 
   Future<SyncState> _loadState() async {
