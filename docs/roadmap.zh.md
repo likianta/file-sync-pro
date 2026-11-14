@@ -109,10 +109,11 @@
 - [x] 同步对默认配置: `localRoot` / `remoteUrl` / `token` / `stateDir` / ignores.
 - [x] 流程: 扫描双方 → 拉取远端清单 → 生成计划 → dry run → 执行 → 提交新基线.
 - [x] CLI: `tool/sync_cli.dart`, 支持 `--dry-run` / `--token` / `--timeout` / 配置文件.
-- [ ] 桌面 UI: 同步对选择, 预演列表, 执行进度, 错误提示.
+- [x] 桌面 UI 第一版: 同步对信息, Check/Sync, 变更分组列表, 执行进度, Activity 日志, 错误提示.
+- [x] 首次真实同步: 2026-11-14 通过 frp 从 Windows 拉取 45 个文件到本机, 二次同步 no-op.
 - [ ] 冲突 UI: 列出冲突项, 提供 "保留本机 / 保留远端 / 两者都留" 选择.
 - [ ] 中断恢复: 基于 journal 的恢复流程与部分完成提示.
-- [ ] 真实公网链路验证: 大文件, 慢速网络, 断线重连.
+- [ ] 真实公网链路强化验证: 大文件, 慢速网络, 断线重连.
 
 **验收**: photolens 在 macOS 与 Windows 之间完成新建/修改/删除/冲突/断网恢复; 默认忽略规则生效.
 
@@ -243,10 +244,10 @@ lib/
 
 ## 10. 下一步
 
-1. 在 Windows 上创建 `tool/file_server.config.json`, 填入与 macOS 相同的 token 并启动服务.
-2. 通过 frp 验证 `tool/sync_cli.dart --dry-run` 与真实同步 (photolens).
-3. 实现桌面 UI 第一版: 同步对配置, 预演列表, 执行进度, 错误提示.
-4. 接入 Range 断点续传与失败重试.
+1. 在 Windows 上创建 `tool/file_server.config.json`, 填入与 macOS 相同的 token, 重启服务 (当前公网实例未启用 token).
+2. 冲突解决 UI: 逐项选择保留本机/远端/两者.
+3. Range 断点续传与失败重试; 补大文件与弱网测试.
+4. macOS 窗口标题/最小尺寸与打包配置.
 
 ---
 

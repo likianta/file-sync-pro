@@ -35,6 +35,16 @@ Future<void> main(List<String> args) async {
     return;
   }
 
+  if (options.token.isEmpty && !options.allowAnonymous) {
+    stderr.writeln(
+      'Refusing to start without a token.\n'
+      'Set it in tool/file_server.config.json, pass --token, or use '
+      '--allow-anonymous for a trusted local network.',
+    );
+    exitCode = 1;
+    return;
+  }
+
   final mounts = options.mounts.isEmpty
       ? _defaultMounts(projectRoot)
       : options.mounts;
@@ -103,6 +113,7 @@ Options:
   --token <token>        Shared token for clients (or FILE_SYNC_TOKEN)
   --mount <name=path>    Mount a folder; repeatable
   --config <path>        Config file (default: tool/file_server.config.json)
+  --allow-anonymous      Start without a token (trusted LAN only)
   --verbose              Log every request
   -h, --help             Show this help
 
@@ -118,6 +129,7 @@ final class _ServerOptions {
     required this.token,
     required this.mounts,
     required this.verbose,
+    required this.allowAnonymous,
     required this.showHelp,
   });
 
@@ -126,6 +138,7 @@ final class _ServerOptions {
     int? portArg;
     String? tokenArg;
     bool? verboseArg;
+    var allowAnonymous = false;
     var showHelp = false;
     final mounts = <String, FileServerMount>{};
     String? configPath;
@@ -160,6 +173,8 @@ final class _ServerOptions {
           mounts[name] = FileServerMount(name: name, root: root);
         case '--config':
           configPath = next(arg);
+        case '--allow-anonymous':
+          allowAnonymous = true;
         case '--verbose':
           verboseArg = true;
         default:
@@ -180,6 +195,8 @@ final class _ServerOptions {
         config?['token'] as String? ??
         '';
     final verbose = verboseArg ?? config?['verbose'] as bool? ?? false;
+    allowAnonymous =
+        allowAnonymous || (config?['allowAnonymous'] as bool? ?? false);
 
     if (mounts.isEmpty && config != null) {
       final configuredMounts = config['mounts'];
@@ -212,6 +229,7 @@ final class _ServerOptions {
       token: token,
       mounts: mounts,
       verbose: verbose,
+      allowAnonymous: allowAnonymous,
       showHelp: showHelp,
     );
   }
@@ -221,6 +239,7 @@ final class _ServerOptions {
   final String token;
   final Map<String, FileServerMount> mounts;
   final bool verbose;
+  final bool allowAnonymous;
   final bool showHelp;
 }
 

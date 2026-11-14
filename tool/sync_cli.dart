@@ -1,9 +1,9 @@
 // ignore_for_file: avoid_print
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
+import 'package:file_sync_pro/features/sync/application/sync_pair_config.dart';
 import 'package:file_sync_pro/features/sync/application/sync_source.dart';
 import 'package:file_sync_pro/features/sync/domain/ignore_rules.dart';
 import 'package:file_sync_pro/features/sync/domain/manifest.dart';
@@ -36,26 +36,27 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  final localDir = Directory(options.localRoot);
+  final config = options.config!;
+  final localDir = Directory(config.localRoot);
   if (!await localDir.exists()) {
     print('Creating local folder: ${localDir.path}');
     await localDir.create(recursive: true);
   }
 
-  final ignores = IgnoreRules.defaults(extra: options.extraIgnores);
-  final local = LocalSyncSource(options.localRoot, ignores: ignores);
+  final ignores = IgnoreRules.defaults(extra: config.extraIgnores);
+  final local = LocalSyncSource(config.localRoot, ignores: ignores);
   final remote = RemoteSyncSource(
-    baseUrl: options.remoteUrl,
-    token: options.token,
+    baseUrl: config.remoteUrl,
+    token: config.token,
     ignores: ignores,
-    timeout: Duration(seconds: options.timeoutSeconds),
+    timeout: Duration(seconds: config.timeoutSeconds),
   );
-  final engine = SyncEngine(a: local, b: remote, stateDir: options.stateDir);
+  final engine = SyncEngine(a: local, b: remote, stateDir: config.stateDir);
 
   try {
     print('Local : ${local.id}');
     print('Remote: ${remote.id}');
-    print('State : ${options.stateDir}');
+    print('State : ${config.stateDir}');
     print('');
 
     stdout.write('Scanning both sides...');
@@ -105,7 +106,7 @@ Future<void> main(List<String> args) async {
     exitCode = 1;
   } on SocketException catch (error) {
     stderr.writeln(
-      'Cannot reach ${options.remoteUrl}: ${error.message}\n'
+      'Cannot reach ${config.remoteUrl}: ${error.message}\n'
       'Check that the Windows server is running, and that the tunnel '
       'forwards the public port to it.',
     );
@@ -208,13 +209,8 @@ Options:
 }
 
 final class _SyncOptions {
-  _SyncOptions({
-    required this.localRoot,
-    required this.remoteUrl,
-    required this.token,
-    required this.stateDir,
-    required this.timeoutSeconds,
-    required this.extraIgnores,
+  const _SyncOptions({
+    required this.config,
     required this.dryRun,
     required this.showHelp,
   });
@@ -261,96 +257,35 @@ final class _SyncOptions {
       }
     }
 
-    final config = _loadConfig(
-      configPath ?? p.join(projectRoot, 'tool', 'sync.config.json'),
-    );
+    if (showHelp) {
+      return _SyncOptions(config: null, dryRun: dryRun, showHelp: true);
+    }
 
-    final localRoot = _resolvePath(
-      projectRoot,
-      _expandUser(
-        localArg ??
-            config?['localRoot'] as String? ??
-            p.join(projectRoot, '..', 'photolens'),
-      ),
+    final config = SyncPairConfig.load(
+      configPath: configPath ?? p.join(projectRoot, 'tool', 'sync.config.json'),
+      projectRoot: projectRoot,
+      localRoot: localArg,
+      remoteUrl: remoteArg,
+      token: tokenArg,
+      stateDir: stateArg,
+      timeoutSeconds: timeoutArg,
     );
-
-    final remoteUrl = remoteArg ?? config?['remoteUrl'] as String? ?? '';
-    if (remoteUrl.isEmpty && !showHelp) {
+    if (config == null) {
       throw ArgumentError(
         'No remote URL configured. Set remoteUrl in tool/sync.config.json '
         'or pass --remote.',
       );
     }
 
-    final stateDir = _resolvePath(
-      projectRoot,
-      _expandUser(
-        stateArg ??
-            config?['stateDir'] as String? ??
-            p.join(projectRoot, 'data', 'sync_pairs', 'photolens'),
-      ),
-    );
-
-    final token =
-        tokenArg ??
-        Platform.environment['FILE_SYNC_TOKEN'] ??
-        config?['token'] as String? ??
-        '';
-
-    final timeoutSeconds =
-        timeoutArg ?? (config?['timeoutSeconds'] as num?)?.toInt() ?? 300;
-
-    final extraIgnores = <String>[
-      if (config?['ignores'] is List)
-        ...(config!['ignores'] as List).whereType<String>(),
-    ];
-
-    return _SyncOptions(
-      localRoot: localRoot,
-      remoteUrl: remoteUrl,
-      token: token,
-      stateDir: stateDir,
-      timeoutSeconds: timeoutSeconds,
-      extraIgnores: extraIgnores,
-      dryRun: dryRun,
-      showHelp: showHelp,
-    );
+    return _SyncOptions(config: config, dryRun: dryRun, showHelp: false);
   }
 
-  final String localRoot;
-  final String remoteUrl;
-  final String token;
-  final String stateDir;
-  final int timeoutSeconds;
-  final List<String> extraIgnores;
+  final SyncPairConfig? config;
   final bool dryRun;
   final bool showHelp;
-}
-
-Map<String, Object?>? _loadConfig(String path) {
-  final file = File(path);
-  if (!file.existsSync()) return null;
-  final decoded = jsonDecode(file.readAsStringSync());
-  if (decoded is! Map) {
-    throw FormatException('Config must be a JSON object: $path');
-  }
-  return decoded.cast<String, Object?>();
 }
 
 String _projectRoot() {
   final script = Platform.script.toFilePath();
   return p.normalize(p.dirname(p.dirname(script)));
-}
-
-String _resolvePath(String projectRoot, String path) {
-  return p.normalize(p.isAbsolute(path) ? path : p.join(projectRoot, path));
-}
-
-String _expandUser(String path) {
-  if (path == '~') return Platform.environment['HOME'] ?? path;
-  if (path.startsWith('~/')) {
-    final home = Platform.environment['HOME'] ?? '';
-    return p.join(home, path.substring(2));
-  }
-  return path;
 }
