@@ -2,12 +2,12 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../domain/ignore_rules.dart';
+import '../domain/line_endings.dart';
 import '../domain/manifest.dart';
 
 /// Cached content hashes for one file.
@@ -130,26 +130,26 @@ final class LocalScanner {
 
       final rawSink = _DigestSink();
       final rawInput = sha256.startChunkedConversion(rawSink);
+      final normalizer = isText ? LineEndingNormalizer() : null;
       final textSink = isText ? _DigestSink() : null;
       final textInput = textSink == null
           ? null
           : sha256.startChunkedConversion(textSink);
 
-      var pendingCr = false;
       while (true) {
         final chunk = await file.read(64 * 1024);
         if (chunk.isEmpty) break;
         rawInput.add(chunk);
         if (textInput != null) {
-          final normalized = _normalizeLineEndings(chunk, pendingCr);
-          pendingCr = normalized.pendingCr;
-          if (normalized.bytes.isNotEmpty) textInput.add(normalized.bytes);
+          final normalized = normalizer!.add(chunk);
+          if (normalized.isNotEmpty) textInput.add(normalized);
         }
       }
 
       rawInput.close();
       if (textInput != null) {
-        if (pendingCr) textInput.add(const [0x0A]);
+        final tail = normalizer!.finish();
+        if (tail.isNotEmpty) textInput.add(tail);
         textInput.close();
       }
       return (
@@ -159,37 +159,6 @@ final class LocalScanner {
     } finally {
       await file.close();
     }
-  }
-
-  static ({List<int> bytes, bool pendingCr}) _normalizeLineEndings(
-    List<int> chunk,
-    bool pendingCr,
-  ) {
-    final out = BytesBuilder(copy: false);
-    var index = 0;
-    if (pendingCr) {
-      if (chunk.isNotEmpty && chunk.first == 0x0A) {
-        out.addByte(0x0A);
-        index = 1;
-      } else {
-        out.addByte(0x0A);
-      }
-      pendingCr = false;
-    }
-    for (; index < chunk.length; index++) {
-      final byte = chunk[index];
-      if (byte != 0x0D) {
-        out.addByte(byte);
-        continue;
-      }
-      if (index + 1 < chunk.length) {
-        if (chunk[index + 1] == 0x0A) index++;
-        out.addByte(0x0A);
-      } else {
-        pendingCr = true;
-      }
-    }
-    return (bytes: out.takeBytes(), pendingCr: pendingCr);
   }
 }
 

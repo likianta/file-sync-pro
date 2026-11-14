@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../../transport/http_transport.dart';
 import '../data/file_store.dart';
+import '../domain/line_endings.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
 
@@ -183,18 +184,59 @@ final class PlanApplier {
       await to.ensureDirectory(parent);
     }
 
+    final modified = DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs);
+    final isText = entry.textHash != null;
+
+    if (!isText) {
+      await to.writeAtomically(
+        relPath,
+        from.openRead(relPath),
+        modified: modified,
+      );
+      final info = await to.stat(relPath);
+      if (info.size != entry.size) {
+        throw StateError(
+          'Size mismatch after copying $relPath: '
+          'expected ${entry.size}, got ${info.size}',
+        );
+      }
+      return;
+    }
+
+    // Text files are normalized to LF on the destination so CRLF copies are
+    // gradually replaced every time they are overwritten.
+    var written = 0;
     await to.writeAtomically(
       relPath,
-      from.openRead(relPath),
-      modified: DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs),
+      _normalizeText(from.openRead(relPath), (bytes) => written += bytes),
+      modified: modified,
     );
 
     final info = await to.stat(relPath);
-    if (info.size != entry.size) {
+    if (info.size != written) {
       throw StateError(
-        'Size mismatch after copying $relPath: '
-        'expected ${entry.size}, got ${info.size}',
+        'Size mismatch after normalizing $relPath: '
+        'expected $written, got ${info.size}',
       );
+    }
+  }
+
+  static Stream<List<int>> _normalizeText(
+    Stream<List<int>> input,
+    void Function(int) onBytes,
+  ) async* {
+    final normalizer = LineEndingNormalizer();
+    await for (final chunk in input) {
+      final bytes = normalizer.add(chunk);
+      if (bytes.isNotEmpty) {
+        onBytes(bytes.length);
+        yield bytes;
+      }
+    }
+    final tail = normalizer.finish();
+    if (tail.isNotEmpty) {
+      onBytes(tail.length);
+      yield tail;
     }
   }
 
