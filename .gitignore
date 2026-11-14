@@ -23,3 +23,7 @@ dist/
 !**/.gitkeep
 !/build/image_config.json
 !/data/snapshots/readme.md
+
+# local runtime config (may contain tokens)
+/tool/*.config.json
+/data/sync_pairs/*/

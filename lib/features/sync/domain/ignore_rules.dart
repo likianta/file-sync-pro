@@ -31,6 +31,7 @@ final class IgnoreRules {
     '.git/',
     '.idea/',
     '.vscode/',
+    '.venv/',
     '__pycache__/',
     '.filesync/',
     '.DS_Store',

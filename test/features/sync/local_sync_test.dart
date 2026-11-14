@@ -6,218 +6,237 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
-  late Directory temp;
-  late Directory alice;
-  late Directory bob;
-  late String stateDir;
+  final fixturesAvailable =
+      Directory(p.join('test', 'local_sync_test', 'alice')).existsSync() &&
+      Directory(p.join('test', 'local_sync_test', 'bob')).existsSync();
 
-  setUp(() async {
-    temp = await Directory.systemTemp.createTemp('filesync-local-');
-    alice = Directory(p.join(temp.path, 'alice'));
-    bob = Directory(p.join(temp.path, 'bob'));
-    await _copyTree(_fixture('alice'), alice);
-    await _copyTree(_fixture('bob'), bob);
-    stateDir = p.join(temp.path, 'state');
-  });
+  group(
+    'local sync (auxiliary)',
+    () {
+      late Directory temp;
+      late Directory alice;
+      late Directory bob;
+      late String stateDir;
 
-  tearDown(() async {
-    await temp.delete(recursive: true);
-  });
+      setUp(() async {
+        temp = await Directory.systemTemp.createTemp('filesync-local-');
+        alice = Directory(p.join(temp.path, 'alice'));
+        bob = Directory(p.join(temp.path, 'bob'));
+        await _copyTree(_fixture('alice'), alice);
+        await _copyTree(_fixture('bob'), bob);
+        stateDir = p.join(temp.path, 'state');
+      });
 
-  SyncEngine engine() {
-    return SyncEngine(rootA: alice.path, rootB: bob.path, stateDir: stateDir);
-  }
+      tearDown(() async {
+        await temp.delete(recursive: true);
+      });
 
-  test('first sync merges both sides and commits a base', () async {
-    final report = await engine().sync();
+      SyncEngine engine() {
+        return SyncEngine.local(
+          rootA: alice.path,
+          rootB: bob.path,
+          stateDir: stateDir,
+        );
+      }
 
-    expect(report.hasConflicts, isFalse);
-    expect(await _exists(bob, 'alice-only.txt'), isTrue);
-    expect(await _exists(alice, 'bob-only.txt'), isTrue);
-    expect(await _exists(bob, 'media/alice-note.md'), isTrue);
-    expect(await _exists(alice, 'media/bob-note.md'), isTrue);
+      test('first sync merges both sides and commits a base', () async {
+        final report = await engine().sync();
 
-    final second = await engine().sync();
-    expect(second.preview.plan.isEmpty, isTrue);
-    expect(second.applyReport!.total, 0);
-  });
+        expect(report.hasConflicts, isFalse);
+        expect(await _exists(bob, 'alice-only.txt'), isTrue);
+        expect(await _exists(alice, 'bob-only.txt'), isTrue);
+        expect(await _exists(bob, 'media/alice-note.md'), isTrue);
+        expect(await _exists(alice, 'media/bob-note.md'), isTrue);
 
-  test('propagates edits', () async {
-    await engine().sync();
+        final second = await engine().sync();
+        expect(second.preview.plan.isEmpty, isTrue);
+        expect(second.applyReport!.total, 0);
+      });
 
-    await _file(alice, 'docs/readme.md').writeAsString('edited by alice\n');
-    await engine().sync();
+      test('propagates edits', () async {
+        await engine().sync();
 
-    expect(await _read(bob, 'docs/readme.md'), 'edited by alice\n');
-  });
+        await _file(alice, 'docs/readme.md').writeAsString('edited by alice\n');
+        await engine().sync();
 
-  test('propagates deletions', () async {
-    await engine().sync();
+        expect(await _read(bob, 'docs/readme.md'), 'edited by alice\n');
+      });
 
-    await _file(bob, 'shared/common.txt').delete();
-    await engine().sync();
+      test('propagates deletions', () async {
+        await engine().sync();
 
-    expect(await _exists(alice, 'shared/common.txt'), isFalse);
-  });
+        await _file(bob, 'shared/common.txt').delete();
+        await engine().sync();
 
-  test('treats a rename as delete plus create', () async {
-    await engine().sync();
+        expect(await _exists(alice, 'shared/common.txt'), isFalse);
+      });
 
-    await _file(
-      alice,
-      'docs/notes/todo.txt',
-    ).rename(_file(alice, 'docs/notes/done.txt').path);
-    await engine().sync();
+      test('treats a rename as delete plus create', () async {
+        await engine().sync();
 
-    expect(await _exists(bob, 'docs/notes/done.txt'), isTrue);
-    expect(await _exists(bob, 'docs/notes/todo.txt'), isFalse);
-    expect(
-      await _read(bob, 'docs/notes/done.txt'),
-      '- buy milk\n- ship the sync tool\n',
-    );
-  });
+        await _file(
+          alice,
+          'docs/notes/todo.txt',
+        ).rename(_file(alice, 'docs/notes/done.txt').path);
+        await engine().sync();
 
-  test('does not rewrite a file when only mtime changed', () async {
-    await engine().sync();
+        expect(await _exists(bob, 'docs/notes/done.txt'), isTrue);
+        expect(await _exists(bob, 'docs/notes/todo.txt'), isFalse);
+        expect(
+          await _read(bob, 'docs/notes/done.txt'),
+          '- buy milk\n- ship the sync tool\n',
+        );
+      });
 
-    final path = 'docs/readme.md';
-    final content = await _read(alice, path);
-    await _file(alice, path).writeAsString(content);
-    await _file(
-      alice,
-      path,
-    ).setLastModified(DateTime.now().add(const Duration(hours: 1)));
+      test('does not rewrite a file when only mtime changed', () async {
+        await engine().sync();
 
-    final bobMtime = await _file(bob, path).lastModified();
-    final report = await engine().sync();
+        final path = 'docs/readme.md';
+        final content = await _read(alice, path);
+        await _file(alice, path).writeAsString(content);
+        await _file(
+          alice,
+          path,
+        ).setLastModified(DateTime.now().add(const Duration(hours: 1)));
 
-    expect(report.preview.plan.actions, isEmpty);
-    expect(await _file(bob, path).lastModified(), bobMtime);
-  });
+        final bobMtime = await _file(bob, path).lastModified();
+        final report = await engine().sync();
 
-  test('reports a conflict when both sides modify a file', () async {
-    await engine().sync();
+        expect(report.preview.plan.actions, isEmpty);
+        expect(await _file(bob, path).lastModified(), bobMtime);
+      });
 
-    await _file(alice, 'docs/readme.md').writeAsString('alice edit\n');
-    await _file(bob, 'docs/readme.md').writeAsString('bob edit\n');
-    await _file(alice, 'extra.txt').writeAsString('extra\n');
+      test('reports a conflict when both sides modify a file', () async {
+        await engine().sync();
 
-    final report = await engine().sync();
+        await _file(alice, 'docs/readme.md').writeAsString('alice edit\n');
+        await _file(bob, 'docs/readme.md').writeAsString('bob edit\n');
+        await _file(alice, 'extra.txt').writeAsString('extra\n');
 
-    expect(report.hasConflicts, isTrue);
-    expect(report.conflictCount, 1);
-    expect(
-      report.preview.plan.conflicts.single.reason,
-      ConflictReason.bothModified,
-    );
+        final report = await engine().sync();
 
-    // Conflicting content is left untouched on both sides.
-    expect(await _read(alice, 'docs/readme.md'), 'alice edit\n');
-    expect(await _read(bob, 'docs/readme.md'), 'bob edit\n');
+        expect(report.hasConflicts, isTrue);
+        expect(report.conflictCount, 1);
+        expect(
+          report.preview.plan.conflicts.single.reason,
+          ConflictReason.bothModified,
+        );
 
-    // Non-conflicting work still happens.
-    expect(await _read(bob, 'extra.txt'), 'extra\n');
+        // Conflicting content is left untouched on both sides.
+        expect(await _read(alice, 'docs/readme.md'), 'alice edit\n');
+        expect(await _read(bob, 'docs/readme.md'), 'bob edit\n');
 
-    final backup = report.conflictBackupRoot!;
-    expect(
-      await File(p.join(backup, 'a', 'docs', 'readme.md')).readAsString(),
-      'alice edit\n',
-    );
-    expect(
-      await File(p.join(backup, 'b', 'docs', 'readme.md')).readAsString(),
-      'bob edit\n',
-    );
+        // Non-conflicting work still happens.
+        expect(await _read(bob, 'extra.txt'), 'extra\n');
 
-    // The same conflict is reported again on the next run.
-    final again = await engine().preview();
-    expect(again.plan.conflicts, hasLength(1));
-  });
+        final backup = report.conflictBackupRoot!;
+        expect(
+          await File(p.join(backup, 'a', 'docs', 'readme.md')).readAsString(),
+          'alice edit\n',
+        );
+        expect(
+          await File(p.join(backup, 'b', 'docs', 'readme.md')).readAsString(),
+          'bob edit\n',
+        );
 
-  test(
-    'reports a conflict when one side modifies and the other deletes',
-    () async {
-      await engine().sync();
+        // The same conflict is reported again on the next run.
+        final again = await engine().preview();
+        expect(again.plan.conflicts, hasLength(1));
+      });
 
-      await _file(bob, 'docs/readme.md').delete();
-      await _file(alice, 'docs/readme.md').writeAsString('alice keeps it\n');
+      test(
+        'reports a conflict when one side modifies and the other deletes',
+        () async {
+          await engine().sync();
 
-      final report = await engine().sync();
+          await _file(bob, 'docs/readme.md').delete();
+          await _file(
+            alice,
+            'docs/readme.md',
+          ).writeAsString('alice keeps it\n');
 
-      expect(report.conflictCount, 1);
-      expect(
-        report.preview.plan.conflicts.single.reason,
-        ConflictReason.modifiedVsDeleted,
+          final report = await engine().sync();
+
+          expect(report.conflictCount, 1);
+          expect(
+            report.preview.plan.conflicts.single.reason,
+            ConflictReason.modifiedVsDeleted,
+          );
+          expect(await _read(alice, 'docs/readme.md'), 'alice keeps it\n');
+          expect(await _exists(bob, 'docs/readme.md'), isFalse);
+
+          final backup = report.conflictBackupRoot!;
+          expect(
+            await File(p.join(backup, 'a', 'docs', 'readme.md')).exists(),
+            isTrue,
+          );
+        },
       );
-      expect(await _read(alice, 'docs/readme.md'), 'alice keeps it\n');
-      expect(await _exists(bob, 'docs/readme.md'), isFalse);
 
-      final backup = report.conflictBackupRoot!;
-      expect(
-        await File(p.join(backup, 'a', 'docs', 'readme.md')).exists(),
-        isTrue,
-      );
+      test('syncs empty directories and removes them again', () async {
+        await engine().sync();
+
+        final emptyDir = Directory(p.join(alice.path, 'empty', 'nested'));
+        await emptyDir.create(recursive: true);
+
+        await engine().sync();
+        expect(
+          await Directory(p.join(bob.path, 'empty', 'nested')).exists(),
+          isTrue,
+        );
+
+        await Directory(p.join(alice.path, 'empty')).delete(recursive: true);
+        await engine().sync();
+
+        expect(await Directory(p.join(bob.path, 'empty')).exists(), isFalse);
+      });
+
+      test('respects default ignore rules', () async {
+        await engine().sync();
+
+        await Directory(p.join(alice.path, '.git')).create();
+        await File(p.join(alice.path, '.git', 'config')).writeAsString('x');
+        await File(p.join(alice.path, 'backup~')).writeAsString('x');
+        await File(p.join(alice.path, '.DS_Store')).writeAsString('x');
+
+        await engine().sync();
+
+        expect(await _exists(bob, '.git/config'), isFalse);
+        expect(await _exists(bob, 'backup~'), isFalse);
+        expect(await _exists(bob, '.DS_Store'), isFalse);
+
+        final preview = await engine().preview();
+        expect(preview.a.entries.containsKey('.git'), isFalse);
+        expect(preview.a.entries.containsKey('backup~'), isFalse);
+      });
+
+      test('dry run reports changes without touching the disk', () async {
+        await engine().sync();
+
+        await _file(alice, 'docs/readme.md').writeAsString('not applied yet\n');
+
+        final preview = await engine().sync(dryRun: true);
+        expect(preview.preview.plan.actions, isNotEmpty);
+        expect(await _read(bob, 'docs/readme.md'), isNot('not applied yet\n'));
+
+        await engine().sync();
+        expect(await _read(bob, 'docs/readme.md'), 'not applied yet\n');
+      });
+
+      test('verifies convergence after applying a plan', () async {
+        await engine().sync();
+
+        final report = await engine().sync();
+        expect(report.preview.plan.isEmpty, isTrue);
+        expect(report.applyReport!.created, 0);
+        expect(report.applyReport!.updated, 0);
+        expect(report.applyReport!.deleted, 0);
+      });
     },
+    skip: fixturesAvailable
+        ? false
+        : 'test/local_sync_test fixtures are gitignored and not present.',
   );
-
-  test('syncs empty directories and removes them again', () async {
-    await engine().sync();
-
-    final emptyDir = Directory(p.join(alice.path, 'empty', 'nested'));
-    await emptyDir.create(recursive: true);
-
-    await engine().sync();
-    expect(
-      await Directory(p.join(bob.path, 'empty', 'nested')).exists(),
-      isTrue,
-    );
-
-    await Directory(p.join(alice.path, 'empty')).delete(recursive: true);
-    await engine().sync();
-
-    expect(await Directory(p.join(bob.path, 'empty')).exists(), isFalse);
-  });
-
-  test('respects default ignore rules', () async {
-    await engine().sync();
-
-    await Directory(p.join(alice.path, '.git')).create();
-    await File(p.join(alice.path, '.git', 'config')).writeAsString('x');
-    await File(p.join(alice.path, 'backup~')).writeAsString('x');
-    await File(p.join(alice.path, '.DS_Store')).writeAsString('x');
-
-    await engine().sync();
-
-    expect(await _exists(bob, '.git/config'), isFalse);
-    expect(await _exists(bob, 'backup~'), isFalse);
-    expect(await _exists(bob, '.DS_Store'), isFalse);
-
-    final preview = await engine().preview();
-    expect(preview.a.entries.containsKey('.git'), isFalse);
-    expect(preview.a.entries.containsKey('backup~'), isFalse);
-  });
-
-  test('dry run reports changes without touching the disk', () async {
-    await engine().sync();
-
-    await _file(alice, 'docs/readme.md').writeAsString('not applied yet\n');
-
-    final preview = await engine().sync(dryRun: true);
-    expect(preview.preview.plan.actions, isNotEmpty);
-    expect(await _read(bob, 'docs/readme.md'), isNot('not applied yet\n'));
-
-    await engine().sync();
-    expect(await _read(bob, 'docs/readme.md'), 'not applied yet\n');
-  });
-
-  test('verifies convergence after applying a plan', () async {
-    await engine().sync();
-
-    final report = await engine().sync();
-    expect(report.preview.plan.isEmpty, isTrue);
-    expect(report.applyReport!.created, 0);
-    expect(report.applyReport!.updated, 0);
-    expect(report.applyReport!.deleted, 0);
-  });
 }
 
 Directory _fixture(String name) {

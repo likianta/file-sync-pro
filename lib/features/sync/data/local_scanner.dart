@@ -9,11 +9,20 @@ import 'package:path/path.dart' as p;
 import '../domain/ignore_rules.dart';
 import '../domain/manifest.dart';
 
+/// Optional cache for content hashes. The server uses it to avoid re-hashing
+/// unchanged files on every manifest request.
+abstract interface class HashCache {
+  String? lookup(String path, int size, int mtimeMs);
+
+  void store(String path, int size, int mtimeMs, String hash);
+}
+
 final class LocalScanner {
   LocalScanner({
     IgnoreRules? ignores,
     this.computeHashes = true,
     this.maxHashSize,
+    this.hashCache,
   }) : ignores = ignores ?? IgnoreRules.defaults();
 
   final IgnoreRules ignores;
@@ -24,6 +33,8 @@ final class LocalScanner {
   /// Files larger than this size are recorded without a hash. Null means no
   /// limit.
   final int? maxHashSize;
+
+  final HashCache? hashCache;
 
   Future<Manifest> scan(String root) async {
     final directory = Directory(root);
@@ -64,10 +75,18 @@ final class LocalScanner {
 
       final shouldHash =
           computeHashes && (maxHashSize == null || stat.size <= maxHashSize!);
+      String? hash;
+      if (shouldHash) {
+        hash = hashCache?.lookup(entity.path, stat.size, mtimeMs);
+        if (hash == null) {
+          hash = await _hashFile(entity.path);
+          hashCache?.store(entity.path, stat.size, mtimeMs, hash);
+        }
+      }
       entries[relPath] = ManifestEntry.file(
         size: stat.size,
         mtimeMs: mtimeMs,
-        hash: shouldHash ? await _hashFile(entity.path) : null,
+        hash: hash,
       );
     }
 

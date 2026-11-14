@@ -1,0 +1,15 @@
+{
+  "host": "127.0.0.1",
+  "port": 2160,
+  "token": "PASTE_THE_TOKEN_FROM_tool/sync.config.json",
+  "mounts": {
+    "photolens": "C:/Likianta/workspace/dev.master.likianta/photolens"
+  },
+  "ignores": [
+    "/.git/",
+    "/.idea/",
+    "/.venv/",
+    ".DS_Store",
+    "__pycache__/"
+  ]
+}
