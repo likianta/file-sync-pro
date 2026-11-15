@@ -81,7 +81,6 @@ class _DevicesPageState extends State<DevicesPage> {
                   ? _EmptyDevices(onAdd: _openAddDeviceDialog)
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        // Dynamic columns, each at least 240 wide.
                         const minColumn = 240.0;
                         const spacing = 14.0;
                         final width = constraints.maxWidth;
@@ -92,23 +91,22 @@ class _DevicesPageState extends State<DevicesPage> {
                         final cardWidth =
                             (width - spacing * (crossAxisCount - 1)) /
                             crossAxisCount;
+
                         return SingleChildScrollView(
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                            child: Wrap(
+                            child: _MasonryFlow(
+                              crossAxisCount: crossAxisCount,
                               spacing: spacing,
-                              runSpacing: spacing,
+                              cardWidth: cardWidth,
                               children: [
                                 for (final device in devices)
-                                  SizedBox(
-                                    width: cardWidth,
-                                    child: _DeviceCard(
-                                      key: ValueKey<String>(
-                                        'devices.card.${device.id}',
-                                      ),
-                                      store: widget.store,
-                                      device: device,
+                                  _DeviceCard(
+                                    key: ValueKey<String>(
+                                      'devices.card.${device.id}',
                                     ),
+                                    store: widget.store,
+                                    device: device,
                                   ),
                               ],
                             ),
@@ -478,32 +476,52 @@ class _DeviceCardState extends State<_DeviceCard> {
             ),
             const SizedBox(height: 6),
 
-            // Pairs list (compact)
-            if (pairs.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  'No pairs yet.',
-                  style: theme.typography.body.xs.copyWith(
-                    color: theme.colors.mutedForeground,
-                  ),
-                ),
-              )
-            else ...[
-              for (final pair in pairs)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: _PairRow(
-                    key: ValueKey<String>(
-                      'devices.pair.${device.id}.${pair.name}',
+            // Pairs list — natural height up to 5 rows, scrolls beyond.
+            Builder(
+              builder: (context) {
+                const maxRows = 5;
+                const rowHeight = 30.0;
+                final maxHeight = rowHeight * maxRows;
+
+                if (pairs.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(
+                      'No pairs yet.',
+                      style: theme.typography.body.xs.copyWith(
+                        color: theme.colors.mutedForeground,
+                      ),
                     ),
-                    deviceId: device.id,
-                    pair: pair,
-                    onEdit: () => _editPair(pair),
-                    onDelete: () => _deletePair(pair),
-                  ),
-                ),
-            ],
+                  );
+                }
+
+                final column = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final pair in pairs)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: _PairRow(
+                          key: ValueKey<String>(
+                            'devices.pair.${device.id}.${pair.name}',
+                          ),
+                          deviceId: device.id,
+                          pair: pair,
+                          onEdit: () => _editPair(pair),
+                          onDelete: () => _deletePair(pair),
+                        ),
+                      ),
+                  ],
+                );
+
+                if (pairs.length <= maxRows) return column;
+
+                return SizedBox(
+                  height: maxHeight,
+                  child: SingleChildScrollView(child: column),
+                );
+              },
+            ),
 
             const SizedBox(height: 10),
             Container(height: 1, color: theme.colors.border),
@@ -511,13 +529,13 @@ class _DeviceCardState extends State<_DeviceCard> {
 
             // Footer bar: model switcher + delete
             Row(
+              spacing: 6,
               children: [
                 Icon(
                   FLucideIcons.monitor,
                   size: 13,
                   color: theme.colors.mutedForeground,
                 ),
-                const SizedBox(width: 5),
                 Expanded(
                   child: _ModelDropdown(
                     model: device.resolvedModel,
@@ -723,5 +741,117 @@ class _EmptyDevices extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Zero-dependency masonry (Pinterest-style) layout.
+/// Each child is placed at the bottom of the shortest column.
+class _MasonryFlow extends StatefulWidget {
+  const _MasonryFlow({
+    required this.crossAxisCount,
+    required this.spacing,
+    required this.cardWidth,
+    required this.children,
+  });
+
+  final int crossAxisCount;
+  final double spacing;
+  final double cardWidth;
+  final List<Widget> children;
+
+  @override
+  State<_MasonryFlow> createState() => _MasonryFlowState();
+}
+
+class _MasonryFlowState extends State<_MasonryFlow> {
+  double _totalHeight = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.children.isEmpty) return const SizedBox.shrink();
+    return Flow(
+      delegate: _MasonryFlowDelegate(
+        crossAxisCount: widget.crossAxisCount,
+        spacing: widget.spacing,
+        cardWidth: widget.cardWidth,
+        cachedHeight: _totalHeight,
+        onHeightChanged: (h) {
+          if ((h - _totalHeight).abs() > 0.5) {
+            setState(() => _totalHeight = h);
+          }
+        },
+      ),
+      children: widget.children,
+    );
+  }
+}
+
+class _MasonryFlowDelegate extends FlowDelegate {
+  _MasonryFlowDelegate({
+    required this.crossAxisCount,
+    required this.spacing,
+    required this.cardWidth,
+    required this.cachedHeight,
+    required this.onHeightChanged,
+  });
+
+  final int crossAxisCount;
+  final double spacing;
+  final double cardWidth;
+  final double cachedHeight;
+  final ValueChanged<double> onHeightChanged;
+
+  @override
+  BoxConstraints getConstraintsForChild(int i, BoxConstraints constraints) {
+    return BoxConstraints(
+      minWidth: cardWidth,
+      maxWidth: cardWidth,
+      minHeight: 0,
+      maxHeight: double.infinity,
+    );
+  }
+
+  @override
+  Size getSize(BoxConstraints constraints) {
+    final totalWidth =
+        crossAxisCount * cardWidth + (crossAxisCount - 1) * spacing;
+    return Size(totalWidth, cachedHeight);
+  }
+
+  @override
+  void paintChildren(FlowPaintingContext context) {
+    final colTops = List<double>.filled(crossAxisCount, 0.0);
+
+    for (var i = 0; i < context.childCount; i++) {
+      final childSize = context.getChildSize(i) ?? Size.zero;
+
+      var shortestCol = 0;
+      for (var c = 1; c < crossAxisCount; c++) {
+        if (colTops[c] < colTops[shortestCol]) shortestCol = c;
+      }
+
+      final x = shortestCol * (cardWidth + spacing);
+      final y = colTops[shortestCol];
+      context.paintChild(
+        i,
+        transform: Matrix4.translationValues(x, y, 0),
+      );
+      colTops[shortestCol] += childSize.height + spacing;
+    }
+
+    var maxHeight = 0.0;
+    for (final top in colTops) {
+      if (top > maxHeight) maxHeight = top;
+    }
+    if (maxHeight > spacing) maxHeight -= spacing;
+    onHeightChanged(maxHeight);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MasonryFlowDelegate oldDelegate) {
+    return crossAxisCount != oldDelegate.crossAxisCount ||
+        spacing != oldDelegate.spacing ||
+        cardWidth != oldDelegate.cardWidth ||
+        cachedHeight != oldDelegate.cachedHeight;
   }
 }

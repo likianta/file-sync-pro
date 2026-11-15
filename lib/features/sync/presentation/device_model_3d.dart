@@ -8,6 +8,7 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../application/sync_client_config.dart';
 
@@ -63,6 +64,7 @@ class _ModelPalette {
     required this.wallpaperBottom,
     required this.wallpaperAccent1,
     required this.wallpaperAccent2,
+    required this.emblemIcon,
   });
 
   final Color bodyLight;
@@ -74,8 +76,8 @@ class _ModelPalette {
   final Color wallpaperBottom;
   final Color wallpaperAccent1;
   final Color wallpaperAccent2;
+  final FaIconData emblemIcon;
 
-  // MacBook Pro — space gray
   static const mac = _ModelPalette(
     bodyLight: Color(0xFFC8CCD1),
     bodyDark: Color(0xFF5B5F67),
@@ -86,6 +88,7 @@ class _ModelPalette {
     wallpaperBottom: Color(0xFF2A4F6F),
     wallpaperAccent1: Color(0xFFE87C4A),
     wallpaperAccent2: Color(0xFF3D9EAF),
+    emblemIcon: FontAwesomeIcons.apple,
   );
 
   static const windows = _ModelPalette(
@@ -98,6 +101,7 @@ class _ModelPalette {
     wallpaperBottom: Color(0xFFA21C7A),
     wallpaperAccent1: Color(0xFF60A5FA),
     wallpaperAccent2: Color(0xFFF472B6),
+    emblemIcon: FontAwesomeIcons.windows,
   );
 
   static const linux = _ModelPalette(
@@ -105,11 +109,12 @@ class _ModelPalette {
     bodyDark: Color(0xFF3D2E54),
     bezel: Color(0xFF120C1E),
     shadow: Color(0xFF000000),
-    emblem: Color(0xFFFBBF24),
-    wallpaperTop: Color(0xFF7C3AED),
-    wallpaperBottom: Color(0xFFF97316),
-    wallpaperAccent1: Color(0xFFA78BFA),
-    wallpaperAccent2: Color(0xFFFDBA74),
+    emblem: Color(0xFFF3F4F6),
+    wallpaperTop: Color(0xFF312E81),
+    wallpaperBottom: Color(0xFF1E1B4B),
+    wallpaperAccent1: Color(0xFF6366F1),
+    wallpaperAccent2: Color(0xFF3730A3),
+    emblemIcon: FontAwesomeIcons.linux,
   );
 
   static const ios = _ModelPalette(
@@ -122,6 +127,7 @@ class _ModelPalette {
     wallpaperBottom: Color(0xFF6366F1),
     wallpaperAccent1: Color(0xFF22D3EE),
     wallpaperAccent2: Color(0xFFA855F7),
+    emblemIcon: FontAwesomeIcons.apple,
   );
 
   static const android = _ModelPalette(
@@ -134,39 +140,101 @@ class _ModelPalette {
     wallpaperBottom: Color(0xFF065F46),
     wallpaperAccent1: Color(0xFFA3E635),
     wallpaperAccent2: Color(0xFF10B981),
+    emblemIcon: FontAwesomeIcons.android,
   );
 }
 
+class _ModelGeometry {
+  const _ModelGeometry({
+    required this.topY,
+    required this.visualBottom,
+    required this.baseW,
+    required this.sidePadding,
+  });
+
+  final double topY;
+  final double visualBottom;
+  final double baseW;
+  final double sidePadding;
+}
+
 class _DeviceRender {
+  // Uniform padding so every model's top lands at topPadding and the
+  // shadow trail sits consistently near bottomPadding.
+  static const topPadding = 12.0;
+  static const bottomPadding = 18.0;
+
+  // Distance from device visual bottom to shadow top (after scale).
+  static const shadowFloorGap = 6.0;
+
+  // Per-model visual geometry (in the body-center relative coordinate
+  // system at scale=1). topY = most negative Y from center, visualBottom
+  // = most positive Y of the solid body. baseW = painter logical width.
+  static const _geometry = <SyncDeviceModel, _ModelGeometry>{
+    SyncDeviceModel.macbook: _ModelGeometry(
+      topY: -128,
+      visualBottom: 6,
+      baseW: 220,
+      sidePadding: 16,
+    ),
+    SyncDeviceModel.windowsLaptop: _ModelGeometry(
+      topY: -128,
+      visualBottom: 6,
+      baseW: 220,
+      sidePadding: 16,
+    ),
+    SyncDeviceModel.linuxDesktop: _ModelGeometry(
+      topY: -128,
+      visualBottom: 6,
+      baseW: 220,
+      sidePadding: 16,
+    ),
+    SyncDeviceModel.iphone: _ModelGeometry(
+      topY: -68,
+      visualBottom: 68,
+      baseW: 220,
+      sidePadding: 16,
+    ),
+    SyncDeviceModel.androidPhone: _ModelGeometry(
+      topY: -68,
+      visualBottom: 68,
+      baseW: 220,
+      sidePadding: 16,
+    ),
+  };
+
   static void render({
     required Canvas canvas,
     required Size size,
     required SyncDeviceModel model,
     required _ModelPalette palette,
   }) {
-    const topPadding = 28.0;
-    const bottomPadding = 22.0;
-    const sidePadding = 16.0;
-
-    final baseSize = const Size(220, 160);
+    if (size.isEmpty) return;
+    final g = _geometry[model]!;
+    const baseH = 160.0;
     final availableH = size.height - topPadding - bottomPadding;
-    final availableW = size.width - sidePadding * 2;
-    final scaleX = availableW / baseSize.width;
-    final scaleY = availableH / baseSize.height;
+    final availableW = size.width - g.sidePadding * 2;
+    final scaleX = availableW / g.baseW;
+    final scaleY = availableH / baseH;
     final scale = math.min(scaleX, scaleY);
 
-    final bodyH = baseSize.height * scale;
-    final bottomY = size.height - bottomPadding - bodyH / 2;
-    final center = Offset(size.width / 2, bottomY);
+    // Pin the model's topmost visual point to topPadding, regardless of
+    // how tall the model is. This gives every card the same top gap.
+    final centerY = topPadding + (-g.topY) * scale;
+    final center = Offset(size.width / 2, centerY);
+
     final matrix = Matrix4.identity()
       ..translateByDouble(center.dx, center.dy, 0, 1)
       ..scaleByDouble(scale, scale, 1, 1);
 
-    // Shadow (painted first so device sits on top).
+    // Shadow sits visualBottom + shadowFloorGap below center.
     canvas.save();
-    canvas.translate(center.dx, center.dy + bodyH / 2 + 3);
+    canvas.translate(
+      center.dx,
+      center.dy + g.visualBottom * scale + shadowFloorGap,
+    );
     canvas.scale(scale);
-    _paintShadowPile(canvas, palette, baseSize);
+    _paintShadowPile(canvas, palette, Size(g.baseW, baseH));
     canvas.restore();
 
     // Device.
@@ -192,6 +260,7 @@ class _DeviceRender {
     _ModelPalette palette,
     Size base,
   ) {
+    // Wide ambient.
     canvas.drawOval(
       Rect.fromCenter(
         center: const Offset(0, 3),
@@ -202,6 +271,7 @@ class _DeviceRender {
         ..color = palette.shadow.withValues(alpha: 0.20)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 56),
     );
+    // Contact.
     canvas.drawOval(
       Rect.fromCenter(
         center: const Offset(0, 1),
@@ -212,6 +282,7 @@ class _DeviceRender {
         ..color = palette.shadow.withValues(alpha: 0.36)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 22),
     );
+    // Trailing bleed.
     canvas.drawOval(
       Rect.fromCenter(
         center: Offset(0, base.height * 0.16),
@@ -224,10 +295,42 @@ class _DeviceRender {
     );
   }
 
+  // --- ICON DRAWING ------------------------------------------------------
+
+  /// Draw a FontAwesome glyph on the canvas at [center] with [fontSize].
+  /// Uses a text painter so brand logos render crisply at any size.
+  static void _paintEmblem(
+    Canvas canvas,
+    _ModelPalette palette,
+    Offset center,
+    double fontSize, {
+    double? opacity,
+  }) {
+    final icon = palette.emblemIcon.data;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontFamily: icon.fontFamily,
+          fontFamilyFallback: icon.fontFamilyFallback,
+          package: icon.fontPackage,
+          fontSize: fontSize,
+          color: palette.emblem.withValues(alpha: opacity ?? 0.92),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final w = painter.width;
+    final h = painter.height;
+    painter.paint(canvas, Offset(center.dx - w / 2, center.dy - h / 2));
+  }
+
   // --- LAPTOPS ------------------------------------------------------------
 
-  /// Paint a modern slim laptop base, screen at [lidCenter], OS icon centered
-  /// on the screen.
+  /// Paint a modern slim laptop.
+  ///
+  /// The notch sits ON the screen surface (not in the bezel), flush with the
+  /// screen's top edge so it looks like the real MacBook Dynamic Island.
   static void _paintLaptop({
     required Canvas canvas,
     required _ModelPalette palette,
@@ -235,13 +338,13 @@ class _DeviceRender {
     required double lidW,
     required double lidH,
     required bool showNotch,
-    required void Function(Canvas, Offset) paintScreenEmblem,
+    required double emblemSize,
   }) {
     const deckW = 210.0;
     const deckH = 12.0;
     final lidTop = lidCenter.dy - lidH / 2;
 
-    // Keyboard deck.
+    // Keyboard deck (bottom half — behind the lid).
     final deck = RRect.fromRectAndRadius(
       Rect.fromCenter(center: const Offset(0, 0), width: deckW, height: deckH),
       const Radius.circular(3),
@@ -260,61 +363,33 @@ class _DeviceRender {
         ).createShader(deck.outerRect),
     );
 
-    // Lid.
-    final lid = RRect.fromRectAndRadius(
+    // Lid body.
+    final lidBody = RRect.fromRectAndRadius(
       Rect.fromCenter(center: lidCenter, width: lidW, height: lidH),
       const Radius.circular(6),
     );
     canvas.drawRRect(
-      lid.shift(const Offset(0, 4)),
+      lidBody.shift(const Offset(0, 4)),
       Paint()..color = palette.bodyDark.withValues(alpha: 0.55),
     );
     canvas.drawRRect(
-      lid,
+      lidBody,
       Paint()
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [palette.bodyLight, palette.bodyDark],
-        ).createShader(lid.outerRect),
+        ).createShader(lidBody.outerRect),
     );
     canvas.drawRRect(
-      lid,
+      lidBody,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.8
         ..color = Colors.white.withValues(alpha: 0.15),
     );
 
-    // Notch (MacBook-style) — Dynamic Island shape at top center.
-    if (showNotch) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset(lidCenter.dx, lidTop + 3),
-            width: 32,
-            height: 6,
-          ),
-          const Radius.circular(3),
-        ),
-        Paint()..color = palette.bezel,
-      );
-      // Camera lens inside notch.
-      canvas.drawCircle(
-        Offset(lidCenter.dx + 8, lidTop + 3),
-        1.5,
-        Paint()..color = const Color(0xFF0F172A),
-      );
-    } else {
-      // Thin webcam pinhole.
-      canvas.drawCircle(
-        Offset(lidCenter.dx, lidTop + 4),
-        1.2,
-        Paint()..color = palette.bezel,
-      );
-    }
-
-    // Screen inset — narrow modern bezel.
+    // Screen inset with NARROW bezel (4px modern look).
     const screenInset = 4.0;
     final screenRect = Rect.fromCenter(
       center: lidCenter,
@@ -327,10 +402,34 @@ class _DeviceRender {
     );
     _paintWallpaper(canvas, palette, screen);
 
-    // OS emblem centered on screen.
-    paintScreenEmblem(canvas, screenRect.center);
+    // Notch — ON the screen surface, top center.
+    if (showNotch) {
+      final notchCenter = Offset(screenRect.center.dx, screenRect.top + 4);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(center: notchCenter, width: 30, height: 6),
+          const Radius.circular(3),
+        ),
+        Paint()..color = palette.bezel,
+      );
+      canvas.drawCircle(
+        Offset(notchCenter.dx + 7, notchCenter.dy),
+        1.4,
+        Paint()..color = const Color(0xFF0F172A),
+      );
+    } else {
+      // Thin webcam pinhole in bezel above screen.
+      canvas.drawCircle(
+        Offset(lidCenter.dx, lidTop + 2),
+        1.2,
+        Paint()..color = palette.bezel,
+      );
+    }
 
-    // Keyboard.
+    // OS emblem centered on screen.
+    _paintEmblem(canvas, palette, screenRect.center, emblemSize);
+
+    // Keyboard + trackpad.
     _paintKeyboard(canvas, palette, deckW);
     _paintTrackpad(canvas, palette, deckW);
   }
@@ -425,7 +524,7 @@ class _DeviceRender {
     canvas.restore();
   }
 
-  // --- MODELS -------------------------------------------------------------
+  // --- SPECIFIC MODELS ---------------------------------------------------
 
   static void _paintMacBook(Canvas canvas, _ModelPalette palette) {
     _paintLaptop(
@@ -435,7 +534,7 @@ class _DeviceRender {
       lidW: 210,
       lidH: 128,
       showNotch: true,
-      paintScreenEmblem: (c, center) => _paintAppleLogo(c, palette, center, 22),
+      emblemSize: 26,
     );
   }
 
@@ -447,8 +546,7 @@ class _DeviceRender {
       lidW: 200,
       lidH: 128,
       showNotch: false,
-      paintScreenEmblem: (c, center) =>
-          _paintWindowsLogo(c, palette, center, 22),
+      emblemSize: 24,
     );
   }
 
@@ -460,17 +558,24 @@ class _DeviceRender {
       lidW: 200,
       lidH: 128,
       showNotch: false,
-      paintScreenEmblem: (c, center) => _paintTuxLogo(c, palette, center, 22),
+      emblemSize: 24,
     );
   }
 
-  // --- APPLE DUAL (iPad + iPhone) ----------------------------------------
+  // --- APPLE DUAL (H-tablet + V-phone, same height) ----------------------
 
   static void _paintAppleDuo(Canvas canvas, _ModelPalette palette) {
-    // iPad (taller, wider) on the LEFT.
-    const ipadW = 110.0;
-    const ipadH = 140.0;
-    final ipadCenter = const Offset(-52, -20);
+    // iPad landscape + iPhone portrait, same height, horizontally centered.
+    const ipadW = 136.0;
+    const ipadH = 136.0;
+    const phoneW = 68.0;
+    const phoneH = 136.0;
+    const gap = 6.0;
+    const visualOffset = -2.0; // tiny left nudge, iPad's island adds weight
+    final totalW = ipadW + gap + phoneW;
+    final ipadCenter = Offset(-totalW / 2 + ipadW / 2 + visualOffset, 0);
+    final phoneCenter = Offset(ipadCenter.dx + ipadW / 2 + gap + phoneW / 2, 0);
+
     _paintTablet(
       canvas: canvas,
       palette: palette,
@@ -478,13 +583,8 @@ class _DeviceRender {
       bodyW: ipadW,
       bodyH: ipadH,
       showDynamicIsland: true,
-      emblemSize: 18,
+      emblemSize: 22,
     );
-
-    // iPhone on the RIGHT, slightly lower.
-    const phoneW = 58.0;
-    const phoneH = 136.0;
-    final phoneCenter = const Offset(52, -8);
     _paintPhone(
       canvas: canvas,
       palette: palette,
@@ -492,16 +592,21 @@ class _DeviceRender {
       bodyW: phoneW,
       bodyH: phoneH,
       showDynamicIsland: true,
-      emblemSize: 12,
+      emblemSize: 18,
     );
   }
 
-  // --- ANDROID DUAL (tablet + phone) -------------------------------------
-
   static void _paintAndroidDuo(Canvas canvas, _ModelPalette palette) {
-    const tabW = 110.0;
-    const tabH = 140.0;
-    final tabCenter = const Offset(-52, -20);
+    const tabW = 136.0;
+    const tabH = 136.0;
+    const phoneW = 68.0;
+    const phoneH = 136.0;
+    const gap = 6.0;
+    const visualOffset = -2.0;
+    final totalW = tabW + gap + phoneW;
+    final tabCenter = Offset(-totalW / 2 + tabW / 2 + visualOffset, 0);
+    final phoneCenter = Offset(tabCenter.dx + tabW / 2 + gap + phoneW / 2, 0);
+
     _paintTablet(
       canvas: canvas,
       palette: palette,
@@ -509,13 +614,9 @@ class _DeviceRender {
       bodyW: tabW,
       bodyH: tabH,
       showDynamicIsland: false,
-      emblemSize: 18,
+      emblemSize: 22,
       isAndroid: true,
     );
-
-    const phoneW = 58.0;
-    const phoneH = 136.0;
-    final phoneCenter = const Offset(52, -8);
     _paintPhone(
       canvas: canvas,
       palette: palette,
@@ -523,12 +624,12 @@ class _DeviceRender {
       bodyW: phoneW,
       bodyH: phoneH,
       showDynamicIsland: false,
-      emblemSize: 12,
+      emblemSize: 18,
       isAndroid: true,
     );
   }
 
-  // --- TABLET / PHONE SHARED ----------------------------------------------
+  // --- TABLET / PHONE ----------------------------------------------------
 
   static void _paintTablet({
     required Canvas canvas,
@@ -545,7 +646,7 @@ class _DeviceRender {
       width: bodyW,
       height: bodyH,
     );
-    final body = RRect.fromRectAndRadius(bodyRect, const Radius.circular(10));
+    final body = RRect.fromRectAndRadius(bodyRect, const Radius.circular(8));
 
     canvas.drawRRect(
       body.shift(const Offset(0, 3)),
@@ -568,7 +669,7 @@ class _DeviceRender {
         ..color = Colors.white.withValues(alpha: 0.25),
     );
 
-    const screenInset = 6.0;
+    const screenInset = 5.0;
     final screenRect = bodyRect.deflate(screenInset);
     final screen = RRect.fromRectAndRadius(
       screenRect,
@@ -576,45 +677,27 @@ class _DeviceRender {
     );
     _paintWallpaper(canvas, palette, screen);
 
-    // Screen emblem centered.
-    final paintEmblem = isAndroid ? _paintAndroidLogo : _paintAppleLogo;
-    paintEmblem(canvas, palette, screenRect.center, emblemSize);
+    _paintEmblem(canvas, palette, screenRect.center, emblemSize);
 
     if (showDynamicIsland) {
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromCenter(
-            center: Offset(screenRect.center.dx, screenRect.top + 6),
-            width: 24,
-            height: 6,
+            center: Offset(screenRect.center.dx, screenRect.top + 5),
+            width: 22,
+            height: 5,
           ),
-          const Radius.circular(3),
+          const Radius.circular(2.5),
         ),
         Paint()..color = palette.bezel,
       );
     } else {
-      // Punch hole.
       canvas.drawCircle(
-        Offset(screenRect.center.dx, screenRect.top + 6),
-        2.0,
+        Offset(screenRect.center.dx, screenRect.top + 5),
+        1.8,
         Paint()..color = palette.bezel,
       );
     }
-
-    // Camera module (top-left).
-    final camCenter = Offset(bodyRect.left + 6, bodyRect.top + 6);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(center: camCenter, width: 9, height: 9),
-        const Radius.circular(3),
-      ),
-      Paint()..color = palette.bodyDark.withValues(alpha: 0.45),
-    );
-    canvas.drawCircle(
-      Offset(camCenter.dx - 1.5, camCenter.dy - 1),
-      1.4,
-      Paint()..color = const Color(0xFF0F172A),
-    );
   }
 
   static void _paintPhone({
@@ -666,8 +749,7 @@ class _DeviceRender {
     );
     _paintWallpaper(canvas, palette, screen);
 
-    final paintEmblem = isAndroid ? _paintAndroidLogo : _paintAppleLogo;
-    paintEmblem(canvas, palette, screenRect.center, emblemSize);
+    _paintEmblem(canvas, palette, screenRect.center, emblemSize);
 
     if (showDynamicIsland) {
       canvas.drawRRect(
@@ -722,299 +804,6 @@ class _DeviceRender {
         const Radius.circular(0.9),
       ),
       buttonPaint,
-    );
-  }
-
-  // --- OS EMBLEMS ---------------------------------------------------------
-
-  /// Classic Apple logo (silhouette with leaf). [size] controls width.
-  static void _paintAppleLogo(
-    Canvas canvas,
-    _ModelPalette palette,
-    Offset center,
-    double size,
-  ) {
-    final paint = Paint()..color = palette.emblem.withValues(alpha: 0.92);
-    final halfW = size / 2;
-    final apple = Path()
-      ..moveTo(center.dx + halfW * 0.05, center.dy - halfW * 0.15)
-      ..cubicTo(
-        center.dx + halfW * 0.35,
-        center.dy - halfW * 0.30,
-        center.dx + halfW * 0.45,
-        center.dy + halfW * 0.35,
-        center.dx + halfW * 0.10,
-        center.dy + halfW * 0.55,
-      )
-      ..cubicTo(
-        center.dx - halfW * 0.15,
-        center.dy + halfW * 0.70,
-        center.dx - halfW * 0.45,
-        center.dy + halfW * 0.35,
-        center.dx - halfW * 0.40,
-        center.dy - halfW * 0.15,
-      )
-      ..cubicTo(
-        center.dx - halfW * 0.35,
-        center.dy - halfW * 0.45,
-        center.dx - halfW * 0.05,
-        center.dy - halfW * 0.55,
-        center.dx + halfW * 0.05,
-        center.dy - halfW * 0.15,
-      )
-      ..close();
-    canvas.drawPath(apple, paint);
-
-    // Leaf.
-    final leaf = Path()
-      ..moveTo(center.dx - halfW * 0.05, center.dy - halfW * 0.55)
-      ..cubicTo(
-        center.dx + halfW * 0.15,
-        center.dy - halfW * 0.85,
-        center.dx + halfW * 0.50,
-        center.dy - halfW * 0.75,
-        center.dx + halfW * 0.40,
-        center.dy - halfW * 0.55,
-      )
-      ..cubicTo(
-        center.dx + halfW * 0.25,
-        center.dy - halfW * 0.50,
-        center.dx + halfW * 0.05,
-        center.dy - halfW * 0.45,
-        center.dx - halfW * 0.05,
-        center.dy - halfW * 0.55,
-      )
-      ..close();
-    canvas.drawPath(leaf, paint);
-  }
-
-  /// Windows 11-style 2x2 window grid. [size] = total width.
-  static void _paintWindowsLogo(
-    Canvas canvas,
-    _ModelPalette palette,
-    Offset center,
-    double size,
-  ) {
-    final paint = Paint()..color = palette.emblem.withValues(alpha: 0.88);
-    final cellW = size * 0.42;
-    final cellH = size * 0.42;
-    const gap = 1.0;
-    for (var i = 0; i < 2; i++) {
-      for (var j = 0; j < 2; j++) {
-        final rect = Rect.fromCenter(
-          center: Offset(
-            center.dx - cellW / 2 + i * (cellW + gap),
-            center.dy - cellH / 2 + j * (cellH + gap),
-          ),
-          width: cellW,
-          height: cellH,
-        );
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(rect, const Radius.circular(2)),
-          paint,
-        );
-      }
-    }
-  }
-
-  /// Simplified Tux penguin silhouette for Linux. [size] controls body width.
-  static void _paintTuxLogo(
-    Canvas canvas,
-    _ModelPalette palette,
-    Offset center,
-    double size,
-  ) {
-    final bodyPaint = Paint()..color = palette.emblem.withValues(alpha: 0.88);
-    final bellyPaint = Paint()..color = Colors.white.withValues(alpha: 0.85);
-
-    final w = size;
-    final h = size * 1.15;
-
-    // Body — fat teardrop shape.
-    final body = Path()
-      ..moveTo(center.dx, center.dy - h * 0.5)
-      ..cubicTo(
-        center.dx + w * 0.55,
-        center.dy - h * 0.45,
-        center.dx + w * 0.60,
-        center.dy + h * 0.15,
-        center.dx + w * 0.40,
-        center.dy + h * 0.5,
-      )
-      ..cubicTo(
-        center.dx + w * 0.20,
-        center.dy + h * 0.62,
-        center.dx - w * 0.20,
-        center.dy + h * 0.62,
-        center.dx - w * 0.40,
-        center.dy + h * 0.5,
-      )
-      ..cubicTo(
-        center.dx - w * 0.60,
-        center.dy + h * 0.15,
-        center.dx - w * 0.55,
-        center.dy - h * 0.45,
-        center.dx,
-        center.dy - h * 0.5,
-      )
-      ..close();
-    canvas.drawPath(body, bodyPaint);
-
-    // Belly (white oval).
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(center.dx, center.dy + h * 0.10),
-        width: w * 0.55,
-        height: h * 0.55,
-      ),
-      bellyPaint,
-    );
-
-    // Head — distinct from body.
-    canvas.drawCircle(
-      Offset(center.dx, center.dy - h * 0.35),
-      w * 0.32,
-      bodyPaint,
-    );
-
-    // Eye whites.
-    canvas.drawCircle(
-      Offset(center.dx - w * 0.10, center.dy - h * 0.38),
-      w * 0.09,
-      bellyPaint,
-    );
-    canvas.drawCircle(
-      Offset(center.dx + w * 0.10, center.dy - h * 0.38),
-      w * 0.09,
-      bellyPaint,
-    );
-
-    // Pupils.
-    final pupilPaint = Paint()..color = palette.bezel;
-    canvas.drawCircle(
-      Offset(center.dx - w * 0.07, center.dy - h * 0.37),
-      w * 0.045,
-      pupilPaint,
-    );
-    canvas.drawCircle(
-      Offset(center.dx + w * 0.13, center.dy - h * 0.37),
-      w * 0.045,
-      pupilPaint,
-    );
-
-    // Beak — small triangle between eyes.
-    final beak = Path()
-      ..moveTo(center.dx - w * 0.05, center.dy - h * 0.30)
-      ..lineTo(center.dx + w * 0.05, center.dy - h * 0.30)
-      ..lineTo(center.dx, center.dy - h * 0.23)
-      ..close();
-    canvas.drawPath(beak, Paint()..color = const Color(0xFFF97316));
-
-    // Feet.
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(center.dx - w * 0.18, center.dy + h * 0.58),
-        width: w * 0.22,
-        height: h * 0.07,
-      ),
-      Paint()..color = const Color(0xFFF97316),
-    );
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(center.dx + w * 0.18, center.dy + h * 0.58),
-        width: w * 0.22,
-        height: h * 0.07,
-      ),
-      Paint()..color = const Color(0xFFF97316),
-    );
-  }
-
-  /// Android robot head. [size] controls head diameter.
-  static void _paintAndroidLogo(
-    Canvas canvas,
-    _ModelPalette palette,
-    Offset center,
-    double size,
-  ) {
-    final paint = Paint()..color = palette.emblem.withValues(alpha: 0.92);
-
-    const headScale = 0.75;
-    final headW = size * headScale;
-    final headH = size * headScale * 0.85;
-
-    // Head rounded rectangle.
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(center.dx, center.dy - size * 0.10),
-          width: headW,
-          height: headH,
-        ),
-        Radius.circular(headW * 0.30),
-      ),
-      paint,
-    );
-
-    // Antennas — two thin lines going up from head top.
-    final antennaPaint = Paint()
-      ..color = palette.emblem.withValues(alpha: 0.92)
-      ..strokeWidth = size * 0.06
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(center.dx - size * 0.18, center.dy - size * 0.52),
-      Offset(center.dx - size * 0.10, center.dy - size * 0.45),
-      antennaPaint,
-    );
-    canvas.drawLine(
-      Offset(center.dx + size * 0.18, center.dy - size * 0.52),
-      Offset(center.dx + size * 0.10, center.dy - size * 0.45),
-      antennaPaint,
-    );
-    canvas.drawCircle(
-      Offset(center.dx - size * 0.18, center.dy - size * 0.52),
-      size * 0.05,
-      paint,
-    );
-    canvas.drawCircle(
-      Offset(center.dx + size * 0.18, center.dy - size * 0.52),
-      size * 0.05,
-      paint,
-    );
-
-    // Eyes — white circles.
-    final eyePaint = Paint()..color = Colors.white;
-    canvas.drawCircle(
-      Offset(center.dx - size * 0.13, center.dy - size * 0.15),
-      size * 0.07,
-      eyePaint,
-    );
-    canvas.drawCircle(
-      Offset(center.dx + size * 0.13, center.dy - size * 0.15),
-      size * 0.07,
-      eyePaint,
-    );
-
-    // Body — trapezoid below head.
-    final bodyW = size * 0.80;
-    final bodyTop = center.dy + size * 0.28;
-    final body = Path()
-      ..moveTo(center.dx - bodyW * 0.35, bodyTop)
-      ..lineTo(center.dx + bodyW * 0.35, bodyTop)
-      ..lineTo(center.dx + bodyW * 0.55, bodyTop + size * 0.30)
-      ..lineTo(center.dx - bodyW * 0.55, bodyTop + size * 0.30)
-      ..close();
-    canvas.drawPath(body, paint);
-
-    // Arms — small circles on sides.
-    canvas.drawCircle(
-      Offset(center.dx - size * 0.48, center.dy + size * 0.22),
-      size * 0.12,
-      paint,
-    );
-    canvas.drawCircle(
-      Offset(center.dx + size * 0.48, center.dy + size * 0.22),
-      size * 0.12,
-      paint,
     );
   }
 }
