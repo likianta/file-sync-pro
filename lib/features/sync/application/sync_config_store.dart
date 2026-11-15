@@ -58,6 +58,7 @@ final class SyncConfigStore extends ChangeNotifier {
       SyncDeviceEntry(
         id: id,
         name: _uniqueDeviceName('New device', excludingId: id),
+        createdAt: DateTime.now(),
       ),
     );
     _scheduleSave();
@@ -71,14 +72,19 @@ final class SyncConfigStore extends ChangeNotifier {
     required String host,
     required int port,
     required SyncHostType hostType,
+    SyncDeviceType type = SyncDeviceType.windows,
+    SyncDeviceModel? model,
   }) {
     final id = 'dev-${DateTime.now().microsecondsSinceEpoch}';
     final entry = SyncDeviceEntry(
       id: id,
       name: _uniqueDeviceName(name, excludingId: id),
+      type: type,
+      model: model,
       hostType: hostType,
       host: host,
       port: port,
+      createdAt: DateTime.now(),
     );
     _config.devices.add(entry);
     _scheduleSave();

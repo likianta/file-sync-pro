@@ -1,10 +1,12 @@
-import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
 import '../application/sync_client_config.dart';
 import '../application/sync_config_store.dart';
 import 'device_editor_dialog.dart';
+import 'device_model_3d.dart';
 import 'pair_editor_dialog.dart';
 
 class DevicesPage extends StatefulWidget {
@@ -24,12 +26,23 @@ class _DevicesPageState extends State<DevicesPage> {
       existingNames: store.devices.map((d) => d.name).toSet(),
     );
     if (result == null) return;
+    final hostType = result.hostType;
+    final type = _inferTypeFromHost(hostType, result.host);
     store.addDeviceFromInput(
       name: result.name,
       host: result.host,
       port: result.port,
-      hostType: result.hostType,
+      hostType: hostType,
+      type: type,
     );
+  }
+
+  static SyncDeviceType _inferTypeFromHost(SyncHostType hostType, String host) {
+    // Best guess from address — localhost means this machine (assume macOS
+    // during development). Remote addresses stay as "windows" fallback until
+    // the model is edited.
+    if (hostType == SyncHostType.local) return SyncDeviceType.macos;
+    return SyncDeviceType.windows;
   }
 
   @override
@@ -62,31 +75,47 @@ class _DevicesPageState extends State<DevicesPage> {
         final devices = widget.store.devices;
         return Column(
           children: [
-            _PageHeader(store: widget.store, onAdd: _openAddDeviceDialog),
+            _PageHeader(onAdd: _openAddDeviceDialog),
             Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1080),
-                  child: devices.isEmpty
-                      ? _EmptyDevices(onAdd: _openAddDeviceDialog)
-                      : ListView(
+              child: devices.isEmpty
+                  ? _EmptyDevices(onAdd: _openAddDeviceDialog)
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        // Each column is ~400 wide, clamped to 300..500.
+                        const minColumn = 300.0;
+                        const maxColumn = 500.0;
+                        const spacing = 14.0;
+                        final width = constraints.maxWidth;
+                        final count = math.max(
+                          1,
+                          ((width + spacing) / (minColumn + spacing)).floor(),
+                        );
+                        final columnWidth =
+                            (width - spacing * (count - 1)) / count;
+                        final crossAxisCount = columnWidth > maxColumn
+                            ? ((width + spacing) / (maxColumn + spacing))
+                                  .floor()
+                                  .clamp(1, 5)
+                            : count;
+                        return GridView.count(
                           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                          crossAxisCount: crossAxisCount,
+                          mainAxisSpacing: spacing,
+                          crossAxisSpacing: spacing,
+                          childAspectRatio: 0.72,
                           children: [
                             for (final device in devices)
-                              Padding(
+                              _DeviceCard(
                                 key: ValueKey<String>(
                                   'devices.card.${device.id}',
                                 ),
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: _DeviceCard(
-                                  store: widget.store,
-                                  device: device,
-                                ),
+                                store: widget.store,
+                                device: device,
                               ),
                           ],
-                        ),
-                ),
-              ),
+                        );
+                      },
+                    ),
             ),
           ],
         );
@@ -96,9 +125,8 @@ class _DevicesPageState extends State<DevicesPage> {
 }
 
 class _PageHeader extends StatelessWidget {
-  const _PageHeader({required this.store, required this.onAdd});
+  const _PageHeader({required this.onAdd});
 
-  final SyncConfigStore store;
   final VoidCallback onAdd;
 
   @override
@@ -149,7 +177,7 @@ class _PageHeader extends StatelessWidget {
 }
 
 class _DeviceCard extends StatefulWidget {
-  const _DeviceCard({required this.store, required this.device});
+  const _DeviceCard({super.key, required this.store, required this.device});
 
   final SyncConfigStore store;
   final SyncDeviceEntry device;
@@ -159,33 +187,25 @@ class _DeviceCard extends StatefulWidget {
 }
 
 class _DeviceCardState extends State<_DeviceCard> {
-  late final TextEditingController _name;
-  late final TextEditingController _host;
-  late final TextEditingController _port;
+  late final TextEditingController _nameController;
 
   @override
   void initState() {
     super.initState();
-    _name = TextEditingController(text: widget.device.name);
-    _host = TextEditingController(text: widget.device.host);
-    _port = TextEditingController(text: widget.device.port.toString());
+    _nameController = TextEditingController(text: widget.device.name);
   }
 
   @override
   void didUpdateWidget(covariant _DeviceCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.device.id != widget.device.id) {
-      _name.text = widget.device.name;
-      _host.text = widget.device.host;
-      _port.text = widget.device.port.toString();
+      _nameController.text = widget.device.name;
     }
   }
 
   @override
   void dispose() {
-    _name.dispose();
-    _host.dispose();
-    _port.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
@@ -250,7 +270,11 @@ class _DeviceCardState extends State<_DeviceCard> {
     );
     if (result == null || !mounted) return;
     if (widget.store.pairs.any((pair) => pair.name == result.entry.name)) {
-      _toast('A pair named "${result.entry.name}" already exists.');
+      showFToast(
+        context: context,
+        title: Text('A pair named "${result.entry.name}" already exists.'),
+        icon: const Icon(FLucideIcons.circleAlert),
+      );
       return;
     }
     widget.store.updateToken(result.token);
@@ -268,7 +292,11 @@ class _DeviceCardState extends State<_DeviceCard> {
     if (result == null || !mounted) return;
     if (result.entry.name != pair.name &&
         widget.store.pairs.any((entry) => entry.name == result.entry.name)) {
-      _toast('A pair named "${result.entry.name}" already exists.');
+      showFToast(
+        context: context,
+        title: Text('A pair named "${result.entry.name}" already exists.'),
+        icon: const Icon(FLucideIcons.circleAlert),
+      );
       return;
     }
     widget.store.updateToken(result.token);
@@ -324,14 +352,6 @@ class _DeviceCardState extends State<_DeviceCard> {
     }
   }
 
-  void _toast(String message) {
-    showFToast(
-      context: context,
-      title: Text(message),
-      icon: const Icon(FLucideIcons.circleAlert),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
@@ -340,320 +360,335 @@ class _DeviceCardState extends State<_DeviceCard> {
 
     return FCard(
       child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: theme.colors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    _deviceIcon(device.type),
-                    size: 18,
-                    color: theme.colors.primary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      FTextField(
-                        key: ValueKey<String>('devices.name.${device.id}'),
-                        control: FTextFieldControl.managed(
-                          controller: _name,
-                          onChange: (value) =>
-                              _update(device.copyWith(name: value.text)),
-                        ),
-                        hint: 'Device name',
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        device.baseUrl,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.typography.body.xs.copyWith(
-                          fontFamily: 'monospace',
-                          color: theme.colors.mutedForeground,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FButton.icon(
-                  key: ValueKey<String>('devices.delete.${device.id}'),
-                  variant: FButtonVariant.ghost,
-                  onPress: _deleteDevice,
-                  semanticsTooltip: 'Remove device',
-                  child: Icon(
-                    FLucideIcons.trash2,
-                    size: 15,
-                    color: theme.colors.destructive,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _ChipRow<SyncDeviceType>(
-                    label: 'DEVICE TYPE',
-                    values: SyncDeviceType.values,
-                    selected: device.type,
-                    titleOf: _typeLabel,
-                    keyOf: (type) => 'devices.type.${device.id}.${type.id}',
-                    onSelect: (type) => _update(device.copyWith(type: type)),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _ChipRow<SyncHostType>(
-                    label: 'HOST TYPE',
-                    values: SyncHostType.values,
-                    selected: device.hostType,
-                    titleOf: _hostTypeLabel,
-                    keyOf: (type) => 'devices.host.${device.id}.${type.id}',
-                    onSelect: (type) => _update(
-                      device.copyWith(
-                        hostType: type,
-                        host: type == SyncHostType.local
-                            ? '127.0.0.1'
-                            : device.host,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (device.hostType == SyncHostType.remote)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 3D model illustration
+              SizedBox(
+                height: 130,
+                child: DeviceModel3D(model: device.resolvedModel),
+              ),
+              const SizedBox(height: 2),
+
+              // Tag row
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
                 children: [
-                  Expanded(
-                    flex: 3,
-                    child: FTextField(
-                      key: ValueKey<String>('devices.host.${device.id}'),
-                      control: FTextFieldControl.managed(
-                        controller: _host,
-                        onChange: (value) =>
-                            _update(device.copyWith(host: value.text.trim())),
-                      ),
-                      label: const Text('Host'),
-                      hint: '192.168.1.10',
-                    ),
+                  _CapsuleTag(
+                    label: device.type.label,
+                    color: _platformColor(device.type, theme),
                   ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 120,
-                    child: FTextField(
-                      key: ValueKey<String>('devices.port.${device.id}'),
-                      control: FTextFieldControl.managed(
-                        controller: _port,
-                        onChange: (value) {
-                          final port = int.tryParse(value.text);
-                          if (port != null && port > 0 && port < 65536) {
-                            _update(device.copyWith(port: port));
-                          }
-                        },
+                  _CapsuleTag(
+                    label: device.hostType == SyncHostType.local
+                        ? 'Local'
+                        : 'Remote',
+                    color: device.hostType == SyncHostType.local
+                        ? const Color(0xFF059669)
+                        : const Color(0xFF2563EB),
+                  ),
+                  _CapsuleTag(
+                    label: device.createdMonthLabel,
+                    color: theme.colors.mutedForeground,
+                    filled: false,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // Device name (editable)
+              FTextField(
+                key: ValueKey<String>('devices.name.${device.id}'),
+                control: FTextFieldControl.managed(
+                  controller: _nameController,
+                  onChange: (value) =>
+                      _update(device.copyWith(name: value.text)),
+                ),
+              ),
+              const SizedBox(height: 2),
+
+              // Device address
+              Row(
+                children: [
+                  Icon(
+                    FLucideIcons.globe,
+                    size: 13,
+                    color: theme.colors.mutedForeground,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      device.baseUrl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.typography.body.xs.copyWith(
+                        fontFamily: 'monospace',
+                        color: theme.colors.mutedForeground,
                       ),
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      label: const Text('Port'),
                     ),
                   ),
                 ],
-              )
-            else
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: theme.colors.muted.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      FLucideIcons.computer,
-                      size: 14,
+              ),
+              const SizedBox(height: 10),
+              Container(height: 1, color: theme.colors.border),
+              const SizedBox(height: 8),
+
+              // Pairs header
+              Row(
+                children: [
+                  Text(
+                    'Pairs (${pairs.length})',
+                    style: theme.typography.body.sm.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  FButton(
+                    key: ValueKey<String>('devices.pair.add.${device.id}'),
+                    variant: FButtonVariant.outline,
+                    size: FButtonSizeVariant.sm,
+                    onPress: _addPair,
+                    prefix: const Icon(FLucideIcons.plus, size: 14),
+                    child: const Text('Add'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              // Pairs list (compact)
+              if (pairs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'No pairs yet.',
+                    style: theme.typography.body.xs.copyWith(
                       color: theme.colors.mutedForeground,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Runs on this machine · ${device.baseUrl}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.typography.body.xs.copyWith(
-                          color: theme.colors.mutedForeground,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 16),
-            Container(height: 1, color: theme.colors.border),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Text(
-                  'Pairs (${pairs.length})',
-                  style: theme.typography.body.sm.copyWith(
-                    fontWeight: FontWeight.w600,
                   ),
-                ),
-                const Spacer(),
-                FButton(
-                  key: ValueKey<String>('devices.pair.add.${device.id}'),
-                  variant: FButtonVariant.outline,
-                  size: FButtonSizeVariant.sm,
-                  onPress: _addPair,
-                  prefix: const Icon(FLucideIcons.plus, size: 14),
-                  child: const Text('Add pair'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (pairs.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                child: Text(
-                  'No pairs yet. Add one to choose a local folder and a mount.',
-                  style: theme.typography.body.xs.copyWith(
-                    color: theme.colors.mutedForeground,
-                  ),
-                ),
-              )
-            else
-              FItemGroup(
-                divider: FItemDivider.full,
-                children: [
-                  for (final pair in pairs)
-                    FItem(
+                )
+              else ...[
+                for (final pair in pairs)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: _PairRow(
                       key: ValueKey<String>(
                         'devices.pair.${device.id}.${pair.name}',
                       ),
-                      prefix: Icon(
-                        FLucideIcons.folder,
-                        size: 15,
-                        color: theme.colors.mutedForeground,
-                      ),
-                      title: Text(
-                        pair.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.typography.body.sm.copyWith(
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      subtitle: Text(
-                        pair.localRoot,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.typography.body.xs.copyWith(
-                          fontFamily: 'monospace',
-                          color: theme.colors.mutedForeground,
-                        ),
-                      ),
-                      suffix: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          FButton.icon(
-                            key: ValueKey<String>(
-                              'devices.pair.edit.${device.id}.${pair.name}',
-                            ),
-                            variant: FButtonVariant.ghost,
-                            onPress: () => _editPair(pair),
-                            semanticsTooltip: 'Edit pair',
-                            child: const Icon(FLucideIcons.pencil, size: 14),
-                          ),
-                          FButton.icon(
-                            key: ValueKey<String>(
-                              'devices.pair.delete.${device.id}.${pair.name}',
-                            ),
-                            variant: FButtonVariant.ghost,
-                            onPress: () => _deletePair(pair),
-                            semanticsTooltip: 'Delete pair',
-                            child: Icon(
-                              FLucideIcons.trash2,
-                              size: 14,
-                              color: theme.colors.destructive,
-                            ),
-                          ),
-                        ],
-                      ),
+                      deviceId: device.id,
+                      pair: pair,
+                      onEdit: () => _editPair(pair),
+                      onDelete: () => _deletePair(pair),
                     ),
+                  ),
+              ],
+
+              const SizedBox(height: 10),
+              Container(height: 1, color: theme.colors.border),
+              const SizedBox(height: 8),
+
+              // Footer bar: model switcher + delete
+              Row(
+                children: [
+                  Icon(
+                    FLucideIcons.monitor,
+                    size: 13,
+                    color: theme.colors.mutedForeground,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: _ModelDropdown(
+                      model: device.resolvedModel,
+                      onChanged: (value) {
+                        _update(device.copyWith(model: value));
+                      },
+                    ),
+                  ),
+                  FButton.icon(
+                    key: ValueKey<String>('devices.delete.${device.id}'),
+                    variant: FButtonVariant.ghost,
+                    onPress: _deleteDevice,
+                    semanticsTooltip: 'Remove device',
+                    child: Icon(
+                      FLucideIcons.trash2,
+                      size: 14,
+                      color: theme.colors.destructive,
+                    ),
+                  ),
                 ],
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _ChipRow<T> extends StatelessWidget {
-  const _ChipRow({
+class _CapsuleTag extends StatelessWidget {
+  const _CapsuleTag({
     required this.label,
-    required this.values,
-    required this.selected,
-    required this.titleOf,
-    required this.keyOf,
-    required this.onSelect,
+    required this.color,
+    this.filled = true,
   });
 
   final String label;
-  final List<T> values;
-  final T selected;
-  final String Function(T value) titleOf;
-  final String Function(T value) keyOf;
-  final ValueChanged<T> onSelect;
+  final Color color;
+  final bool filled;
 
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: theme.typography.body.xs.copyWith(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: filled ? color.withValues(alpha: 0.14) : Colors.transparent,
+        borderRadius: BorderRadius.circular(999),
+        border: filled ? null : Border.all(color: theme.colors.border),
+      ),
+      child: Text(
+        label,
+        style: theme.typography.body.xs.copyWith(
+          fontWeight: FontWeight.w600,
+          color: filled ? color : theme.colors.mutedForeground,
+        ),
+      ),
+    );
+  }
+}
+
+class _PairRow extends StatelessWidget {
+  const _PairRow({
+    super.key,
+    required this.deviceId,
+    required this.pair,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final String deviceId;
+  final SyncPairEntry pair;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colors.muted.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            FLucideIcons.folder,
+            size: 14,
             color: theme.colors.mutedForeground,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.7,
           ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final value in values)
-              FButton(
-                key: ValueKey<String>(keyOf(value)),
-                variant: value == selected
-                    ? FButtonVariant.secondary
-                    : FButtonVariant.outline,
-                size: FButtonSizeVariant.sm,
-                mainAxisSize: MainAxisSize.min,
-                onPress: () => onSelect(value),
-                child: Text(titleOf(value)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              pair.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.typography.body.sm.copyWith(
+                fontWeight: FontWeight.w500,
               ),
-          ],
-        ),
-      ],
+            ),
+          ),
+          FButton.icon(
+            key: ValueKey<String>('devices.pair.edit.$deviceId.${pair.name}'),
+            variant: FButtonVariant.ghost,
+            onPress: onEdit,
+            semanticsTooltip: 'Edit pair',
+            child: const Icon(FLucideIcons.settings, size: 14),
+          ),
+          FButton.icon(
+            key: ValueKey<String>('devices.pair.delete.$deviceId.${pair.name}'),
+            variant: FButtonVariant.ghost,
+            onPress: onDelete,
+            semanticsTooltip: 'Delete pair',
+            child: Icon(
+              FLucideIcons.trash2,
+              size: 14,
+              color: theme.colors.destructive,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModelDropdown extends StatelessWidget {
+  const _ModelDropdown({required this.model, required this.onChanged});
+
+  final SyncDeviceModel model;
+  final ValueChanged<SyncDeviceModel> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    return FButton(
+      variant: FButtonVariant.ghost,
+      size: FButtonSizeVariant.sm,
+      onPress: () async {
+        final selected = await showFDialog<SyncDeviceModel>(
+          context: context,
+          builder: (context, style, animation) => FDialog(
+            animation: animation,
+            constraints: const BoxConstraints(minWidth: 260, maxWidth: 300),
+            builder: (context, style) => Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Device model', style: style.titleTextStyle),
+                  const SizedBox(height: 12),
+                  for (final m in SyncDeviceModel.values)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: FButton(
+                        variant: m == model
+                            ? FButtonVariant.secondary
+                            : FButtonVariant.outline,
+                        onPress: () => Navigator.of(context).pop(m),
+                        child: Text(m.label),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+        if (selected != null) onChanged(selected);
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              model.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.typography.body.xs.copyWith(
+                color: theme.colors.mutedForeground,
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+          Icon(
+            FLucideIcons.chevronsUpDown,
+            size: 12,
+            color: theme.colors.mutedForeground,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -710,24 +745,13 @@ class _EmptyDevices extends StatelessWidget {
   }
 }
 
-IconData _deviceIcon(SyncDeviceType type) {
+Color _platformColor(SyncDeviceType type, FThemeData theme) {
   return switch (type) {
-    SyncDeviceType.windows => FLucideIcons.monitor,
-    SyncDeviceType.macos => FLucideIcons.laptop,
-    SyncDeviceType.linux => FLucideIcons.terminal,
-    SyncDeviceType.android => FLucideIcons.smartphone,
+    SyncDeviceType.windows => const Color(0xFF3B82F6),
+    SyncDeviceType.macos => const Color(0xFF6B7280),
+    SyncDeviceType.linux => const Color(0xFF10B981),
+    SyncDeviceType.android => const Color(0xFF4ADE80),
+    SyncDeviceType.ios => const Color(0xFF0EA5E9),
+    SyncDeviceType.ipad => const Color(0xFF0284C7),
   };
-}
-
-String _typeLabel(SyncDeviceType type) {
-  return switch (type) {
-    SyncDeviceType.windows => 'Windows',
-    SyncDeviceType.macos => 'macOS',
-    SyncDeviceType.linux => 'Linux',
-    SyncDeviceType.android => 'Android',
-  };
-}
-
-String _hostTypeLabel(SyncHostType type) {
-  return type == SyncHostType.local ? 'Local' : 'Remote';
 }

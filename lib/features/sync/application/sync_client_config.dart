@@ -44,18 +44,79 @@ enum SyncDeviceType {
   windows,
   macos,
   linux,
-  android;
+  android,
+  ios,
+  ipad;
 
   static SyncDeviceType parse(Object? value) {
     return switch (value) {
       'macos' => SyncDeviceType.macos,
       'linux' => SyncDeviceType.linux,
       'android' => SyncDeviceType.android,
+      'ios' => SyncDeviceType.ios,
+      'ipad' => SyncDeviceType.ipad,
       _ => SyncDeviceType.windows,
     };
   }
 
   String get id => name;
+
+  String get label => switch (this) {
+    SyncDeviceType.windows => 'Windows',
+    SyncDeviceType.macos => 'macOS',
+    SyncDeviceType.linux => 'Linux',
+    SyncDeviceType.android => 'Android',
+    SyncDeviceType.ios => 'iOS',
+    SyncDeviceType.ipad => 'iPadOS',
+  };
+}
+
+/// Physical device form factor used for the 3D illustration.
+enum SyncDeviceModel {
+  macbook,
+  windowsLaptop,
+  windowsDesktop,
+  linuxDesktop,
+  iphone,
+  ipad,
+  androidPhone;
+
+  static SyncDeviceModel parse(Object? value) {
+    return switch (value) {
+      'macbook' => SyncDeviceModel.macbook,
+      'windowsLaptop' => SyncDeviceModel.windowsLaptop,
+      'windowsDesktop' => SyncDeviceModel.windowsDesktop,
+      'linuxDesktop' => SyncDeviceModel.linuxDesktop,
+      'iphone' => SyncDeviceModel.iphone,
+      'ipad' => SyncDeviceModel.ipad,
+      'androidPhone' => SyncDeviceModel.androidPhone,
+      _ => SyncDeviceModel.windowsLaptop,
+    };
+  }
+
+  /// Best-guess model from device type.
+  static SyncDeviceModel fallbackOf(SyncDeviceType type) {
+    return switch (type) {
+      SyncDeviceType.windows => SyncDeviceModel.windowsLaptop,
+      SyncDeviceType.macos => SyncDeviceModel.macbook,
+      SyncDeviceType.linux => SyncDeviceModel.linuxDesktop,
+      SyncDeviceType.android => SyncDeviceModel.androidPhone,
+      SyncDeviceType.ios => SyncDeviceModel.iphone,
+      SyncDeviceType.ipad => SyncDeviceModel.ipad,
+    };
+  }
+
+  String get id => name;
+
+  String get label => switch (this) {
+    SyncDeviceModel.macbook => 'MacBook',
+    SyncDeviceModel.windowsLaptop => 'Windows Laptop',
+    SyncDeviceModel.windowsDesktop => 'Windows Desktop',
+    SyncDeviceModel.linuxDesktop => 'Linux Desktop',
+    SyncDeviceModel.iphone => 'iPhone',
+    SyncDeviceModel.ipad => 'iPad',
+    SyncDeviceModel.androidPhone => 'Android Phone',
+  };
 }
 
 enum SyncHostType {
@@ -75,9 +136,11 @@ final class SyncDeviceEntry {
     required this.id,
     required this.name,
     this.type = SyncDeviceType.windows,
+    this.model,
     this.hostType = SyncHostType.remote,
     this.host = '',
     this.port = defaultPort,
+    this.createdAt,
   });
 
   static const defaultPort = 2160;
@@ -85,9 +148,14 @@ final class SyncDeviceEntry {
   final String id;
   final String name;
   final SyncDeviceType type;
+  final SyncDeviceModel? model;
   final SyncHostType hostType;
   final String host;
   final int port;
+  final DateTime? createdAt;
+
+  SyncDeviceModel get resolvedModel =>
+      model ?? SyncDeviceModel.fallbackOf(type);
 
   bool get isLocal => hostType == SyncHostType.local;
 
@@ -99,21 +167,34 @@ final class SyncDeviceEntry {
 
   String get baseUrl => 'http://$authority';
 
+  String get createdMonthLabel {
+    final when = createdAt;
+    if (when == null) return '—';
+    final year = when.year.toString().padLeft(4, '0');
+    final month = when.month.toString().padLeft(2, '0');
+    return '$year-$month';
+  }
+
   SyncDeviceEntry copyWith({
     String? id,
     String? name,
     SyncDeviceType? type,
+    SyncDeviceModel? model,
+    bool clearModel = false,
     SyncHostType? hostType,
     String? host,
     int? port,
+    DateTime? createdAt,
   }) {
     return SyncDeviceEntry(
       id: id ?? this.id,
       name: name ?? this.name,
       type: type ?? this.type,
+      model: clearModel ? null : (model ?? this.model),
       hostType: hostType ?? this.hostType,
       host: host ?? this.host,
       port: port ?? this.port,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 
@@ -122,15 +203,18 @@ final class SyncDeviceEntry {
       'id': id,
       'name': name,
       'type': type.id,
+      if (model != null) 'model': model!.id,
       'hostType': hostType.id,
       'host': host,
       'port': port,
+      if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
     };
   }
 
   factory SyncDeviceEntry.fromJson(Map<String, Object?> json) {
     final host = json['host'] as String? ?? '';
     final port = (json['port'] as num?)?.toInt() ?? defaultPort;
+    final createdAtRaw = json['createdAt'] as String?;
     return SyncDeviceEntry(
       id: (json['id'] as String?)?.trim().isNotEmpty == true
           ? (json['id'] as String).trim()
@@ -139,9 +223,13 @@ final class SyncDeviceEntry {
           ? (json['name'] as String).trim()
           : host,
       type: SyncDeviceType.parse(json['type']),
+      model: json['model'] == null
+          ? null
+          : SyncDeviceModel.parse(json['model']),
       hostType: SyncHostType.parse(json['hostType']),
       host: host,
       port: port,
+      createdAt: createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw),
     );
   }
 
