@@ -21,39 +21,28 @@ class FileSyncProApp extends StatefulWidget {
 }
 
 class _FileSyncProAppState extends State<FileSyncProApp> {
-  late ThemeMode _mode =
-      WidgetsBinding.instance.platformDispatcher.platformBrightness ==
-          Brightness.dark
-      ? ThemeMode.dark
-      : ThemeMode.light;
-
-  void _toggleTheme() {
-    setState(() {
-      _mode = _mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
-    });
-  }
+  // Note: themeMode: ThemeMode.light in MaterialApp already forces light.
+  // Nothing else needed here.
 
   @override
   Widget build(BuildContext context) {
-    final isDark = _mode == ThemeMode.dark;
     return MaterialApp(
       title: 'File Sync Pro',
       debugShowCheckedModeBanner: false,
-      themeMode: _mode,
+      themeMode: ThemeMode.light,
       theme: _materialTheme(Brightness.light),
-      darkTheme: _materialTheme(Brightness.dark),
       localizationsDelegates: FLocalizations.localizationsDelegates,
       supportedLocales: FLocalizations.supportedLocales,
       builder: (context, child) => FTheme(
-        data: isDark ? AppForuiTheme.dark : AppForuiTheme.light,
+        data: AppForuiTheme.light,
         child: FToaster(child: FTooltipGroup(child: child!)),
       ),
       home: HomeShell(
         projectRoot: widget.projectRoot,
         clientConfigPath: widget.clientConfigPath,
         serverConfigPath: widget.serverConfigPath,
-        isDark: isDark,
-        onToggleTheme: _toggleTheme,
+        isDark: false,
+        onToggleTheme: () {},
       ),
     );
   }

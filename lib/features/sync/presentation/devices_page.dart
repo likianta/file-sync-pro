@@ -97,22 +97,28 @@ class _DevicesPageState extends State<DevicesPage> {
                                   .floor()
                                   .clamp(1, 5)
                             : count;
-                        return GridView.count(
+                        final cardWidth =
+                            (width - spacing * (crossAxisCount - 1)) /
+                            crossAxisCount;
+                        return Padding(
                           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                          crossAxisCount: crossAxisCount,
-                          mainAxisSpacing: spacing,
-                          crossAxisSpacing: spacing,
-                          childAspectRatio: 0.72,
-                          children: [
-                            for (final device in devices)
-                              _DeviceCard(
-                                key: ValueKey<String>(
-                                  'devices.card.${device.id}',
+                          child: Wrap(
+                            spacing: spacing,
+                            runSpacing: spacing,
+                            children: [
+                              for (final device in devices)
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _DeviceCard(
+                                    key: ValueKey<String>(
+                                      'devices.card.${device.id}',
+                                    ),
+                                    store: widget.store,
+                                    device: device,
+                                  ),
                                 ),
-                                store: widget.store,
-                                device: device,
-                              ),
-                          ],
+                            ],
+                          ),
                         );
                       },
                     ),
@@ -642,61 +648,59 @@ class _ModelDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
-    return FButton(
-      variant: FButtonVariant.ghost,
-      size: FButtonSizeVariant.sm,
-      onPress: () async {
-        final selected = await showFDialog<SyncDeviceModel>(
-          context: context,
-          builder: (context, style, animation) => FDialog(
-            animation: animation,
-            constraints: const BoxConstraints(minWidth: 260, maxWidth: 300),
-            builder: (context, style) => Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text('Device model', style: style.titleTextStyle),
-                  const SizedBox(height: 12),
-                  for (final m in SyncDeviceModel.values)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: FButton(
-                        variant: m == model
-                            ? FButtonVariant.secondary
-                            : FButtonVariant.outline,
-                        onPress: () => Navigator.of(context).pop(m),
-                        child: Text(m.label),
-                      ),
-                    ),
-                ],
+    return FPopoverMenu(
+      control: FPopoverControl.managed(),
+      menuAnchor: Alignment.topCenter,
+      childAnchor: Alignment.bottomCenter,
+      maxHeight: 240,
+      menu: const [],
+      builder: (context, controller, _) => FTileGroup(
+        children: SyncDeviceModel.values
+            .map(
+              (m) => FTile(
+                key: ValueKey<String>('model.${m.name}'),
+                title: Text(m.label),
+                selected: m == model,
+                suffix: m == model
+                    ? Icon(
+                        FLucideIcons.check,
+                        size: 14,
+                        color: theme.colors.primary,
+                      )
+                    : null,
+                onPress: () {
+                  onChanged(m);
+                  controller.hide();
+                },
+              ),
+            )
+            .toList(),
+      ),
+      child: FButton(
+        variant: FButtonVariant.ghost,
+        size: FButtonSizeVariant.sm,
+        onPress: () {},
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                model.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.typography.body.xs.copyWith(
+                  color: theme.colors.mutedForeground,
+                ),
               ),
             ),
-          ),
-        );
-        if (selected != null) onChanged(selected);
-      },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(
-              model.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.typography.body.xs.copyWith(
-                color: theme.colors.mutedForeground,
-              ),
+            const SizedBox(width: 2),
+            Icon(
+              FLucideIcons.chevronsUpDown,
+              size: 12,
+              color: theme.colors.mutedForeground,
             ),
-          ),
-          const SizedBox(width: 2),
-          Icon(
-            FLucideIcons.chevronsUpDown,
-            size: 12,
-            color: theme.colors.mutedForeground,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -169,7 +169,7 @@ final class SyncDeviceEntry {
 
   String get createdMonthLabel {
     final when = createdAt;
-    if (when == null) return '—';
+    if (when == null) return '2026-11';
     final year = when.year.toString().padLeft(4, '0');
     final month = when.month.toString().padLeft(2, '0');
     return '$year-$month';

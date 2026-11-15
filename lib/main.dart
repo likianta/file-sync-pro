@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:marionette_flutter/marionette_flutter.dart';
 import 'package:path/path.dart' as p;
 
 import 'app/android_app.dart';
@@ -9,7 +10,11 @@ import 'app/app.dart';
 import 'features/sync/application/sync_pair_config.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+  if (kDebugMode && !kIsWeb) {
+    MarionetteBinding.ensureInitialized();
+  } else {
+    WidgetsFlutterBinding.ensureInitialized();
+  }
 
   if (!kIsWeb && Platform.isAndroid) {
     runApp(const AndroidFileServerApp());
