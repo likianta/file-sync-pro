@@ -37,7 +37,7 @@ dev = [
 homepage = "https://github.com/likianta/file-sync-pro"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/file_sync_pro"]
+packages = ["legacy/file_sync_pro"]
 
 [tool.ruff]
 line-length = 80
