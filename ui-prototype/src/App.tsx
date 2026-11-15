@@ -1,204 +1,140 @@
 import { useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import "./App.css";
+import { DeviceCard, type DeviceCardData } from "@/components/devices/DeviceCard";
 
-// --- Arc components ----------------------------------------------------------------------------
-import { Button } from "@/components/arc/button/button";
-import {
-  Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogClose,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/arc/dialog/dialog";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "@/components/arc/tabs/tabs";
-import { Switch } from "@/components/arc/switch/switch";
+/**
+ * DeviceCard prototype lab.
+ *
+ * The layout is intentionally generous so the card can move freely
+ * — the coding AI reads the card, not the page chrome, when porting to Flutter.
+ */
 
-function Section({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-3xl border border-border bg-surface-raised/60 p-8 shadow-[0_1px_0_rgba(255,255,255,0.06)_inset] backdrop-blur">
-      <div className="mb-6">
-        <h2 className="text-lg font-medium tracking-tight text-foreground">
-          {title}
-        </h2>
-        {description && (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
+const BASE: DeviceCardData = {
+  deviceType: "windows-desktop",
+  name: "Likianta's office rig",
+  address: "47.102.108.149",
+  url: "http://47.102.108.149:2160",
+  hostKind: "remote",
+  host: "47.102.108.149",
+  port: 2160,
+  pairId: "24a3f252df3f151002dd7261036bbbcb54c3efbf214ad04d",
+  rootPath: "/Users/Likianta/Desktop/work/likianta-projects",
+  pairs: [
+    {
+      label: "photolens",
+      localPath: "/Users/Likianta/Desktop/work/likianta-projects/photolens",
+    },
+    {
+      label: "pictures-inbox-test",
+      localPath:
+        "/Users/Likianta/Desktop/temp/2026-11/pictures-inbox-test",
+    },
+  ],
+};
 
 function App() {
-  const [syncEnabled, setSyncEnabled] = useState(true);
+  const [data, setData] = useState<DeviceCardData>(BASE);
+  const [cardKey, setCardKey] = useState(0);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  // Arc foundation reads `data-theme` and `data-accent` from <html>.
+  const htmlEl =
+    typeof document !== "undefined" ? document.documentElement : null;
+  if (htmlEl) {
+    htmlEl.setAttribute("data-theme", theme);
+    htmlEl.setAttribute("data-accent", "blue");
+  }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* Top bar */}
-      <header className="sticky top-0 z-50 flex items-center justify-between border-b border-border bg-background/80 px-10 py-4 backdrop-blur">
+    <div className="relative min-h-screen overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+      {/* Ambient gradient wash — quiet neo-skeuo backdrop */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 opacity-60"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 20% 10%, color-mix(in oklab, var(--tone-sky) 22%, transparent), transparent 60%), radial-gradient(circle at 85% 90%, color-mix(in oklab, var(--tone-violet) 14%, transparent), transparent 55%)",
+        }}
+      />
+
+      {/* Top bar — same arc-demo header, compact */}
+      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-[var(--border-subtle)] bg-[color-mix(in_oklab,var(--surface)_78%,transparent)] px-10 py-4 backdrop-blur-xl">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent text-sm font-semibold text-accent-foreground">
-            FP
+          <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-control)] bg-[var(--accent)] text-[var(--accent-foreground)] shadow-[var(--shadow-resting)]">
+            <span className="text-sm font-semibold">FP</span>
           </div>
-          <span className="text-sm font-medium tracking-tight">
-            File Sync Pro · UI Lab
+          <span className="text-sm font-medium tracking-[-0.005em] text-[var(--foreground)]">
+            DeviceCard · UI lab
+          </span>
+          <span className="ml-2 rounded-[var(--radius-pill)] border border-[var(--border-subtle)] px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            prototype
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm">
-            Share
-          </Button>
-          <Button size="sm">New Pair</Button>
+          <button
+            onClick={() =>
+              setTheme((t) => (t === "light" ? "dark" : "light"))
+            }
+            className="flex h-8 items-center gap-1.5 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--foreground)] active:scale-95"
+          >
+            {theme === "light" ? "☾ Dark" : "☀ Light"}
+          </button>
+          <button
+            onClick={() => {
+              setCardKey((k) => k + 1);
+              setData(BASE);
+            }}
+            className="flex h-8 items-center gap-1.5 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-muted)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--foreground)] active:scale-95"
+          >
+            ↻ Reset
+          </button>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-6xl flex-col gap-8 px-10 py-12">
-        {/* Hero */}
+      <main className="mx-auto flex max-w-6xl flex-col gap-10 px-10 py-14">
+        {/* Intro */}
         <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Arc × Tailwind prototype lab
+          <h1 className="text-[28px] font-semibold tracking-[-0.02em] text-[var(--foreground)]">
+            Remote device card
           </h1>
-          <p className="max-w-xl text-muted-foreground">
-            Each card below is a standalone Arc component wired up with dummy
-            data. The coding AI reads this visual language and re-implements
-            it in Flutter.
+          <p className="max-w-xl text-[var(--text-sm)] leading-[1.6] text-[var(--text-muted)]">
+            A single desktop card that represents one peer machine in the sync
+            network. 340 × wraps, Neo-skeuo surfaces, continuous radii,
+            spring-driven three-state mouse feedback. Every element here is
+            either Arc motion-tokens or pure Tailwind tokens — no random
+            inline styles.
           </p>
         </div>
 
-        {/* Buttons */}
-        <Section
-          title="Button"
-          description="Three states. Default, ghost, and destructive. Hover/press/leave all produce spring feedback."
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <Button>Sync now</Button>
-            <Button variant="ghost">Cancel</Button>
-            <Button variant="destructive">Delete pair</Button>
-            <Button disabled>Disabled</Button>
-          </div>
-        </Section>
+        {/* Row: DeviceCard + debug panel */}
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-[auto_1fr] md:items-start">
+          <AnimatePresence mode="wait">
+            <DeviceCard
+              key={cardKey}
+              data={data}
+              onChange={setData}
+            />
+          </AnimatePresence>
 
-        {/* Switch */}
-        <Section title="Switch" description="Tactile toggle with spring thumb.">
-          <div className="flex items-center gap-6">
-            <label className="flex items-center gap-3 text-sm">
-              <Switch
-                checked={syncEnabled}
-                onCheckedChange={setSyncEnabled}
-              />
-              Real-time sync
-            </label>
-            <span className="text-xs text-muted-foreground">
-              {syncEnabled ? "on" : "off"}
-            </span>
-          </div>
-        </Section>
+          {/* Right-side debug panel: live state of the card */}
+          <motion.aside
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.12 }}
+            className="rounded-[var(--radius-surface)] border border-[var(--border-subtle)] bg-[var(--surface)] p-6 shadow-[var(--shadow-raised)]"
+          >
+            <div className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--foreground)]">
+              Live card state
+            </div>
+            <pre className="max-h-[420px] overflow-auto rounded-[var(--radius-panel)] bg-[var(--surface-muted)] p-4 text-[12px] leading-[1.6] text-[var(--text-secondary)]">
+{JSON.stringify(data, null, 2)}
+            </pre>
+          </motion.aside>
+        </div>
 
-        {/* Tabs */}
-        <Section
-          title="Tabs"
-          description="Sliding indicator, smooth height morph when content switches."
-        >
-          <Tabs defaultValue="sync">
-            <TabsList>
-              <TabsTrigger value="sync">Sync</TabsTrigger>
-              <TabsTrigger value="server">Server</TabsTrigger>
-              <TabsTrigger value="settings">Settings</TabsTrigger>
-            </TabsList>
-            <TabsContent value="sync">
-              <div className="py-6 text-sm text-muted-foreground">
-                Last synced 4 min ago · 128 files · 3 conflicts need review.
-              </div>
-            </TabsContent>
-            <TabsContent value="server">
-              <div className="py-6 text-sm text-muted-foreground">
-                Server bound to 0.0.0.0:2160 · 3 mounts active · 2 devices
-                connected.
-              </div>
-            </TabsContent>
-            <TabsContent value="settings">
-              <div className="py-6 text-sm text-muted-foreground">
-                Theme: auto · Accent: blue · Hash cache: enabled · Retries: 3.
-              </div>
-            </TabsContent>
-          </Tabs>
-        </Section>
-
-        {/* Dialog */}
-        <Section
-          title="Dialog"
-          description="Portal, backdrop fade + spring scale on enter. Shortened transition on close."
-        >
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline">Resolve conflicts…</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogTitle>Keep local or remote?</DialogTitle>
-              <DialogDescription>
-                3 files differ between your machine and the server. Pick a
-                side for each, or bulk-keep one side.
-              </DialogDescription>
-              <div className="mt-6 flex justify-end gap-2">
-                <DialogClose asChild>
-                  <Button variant="ghost">Cancel</Button>
-                </DialogClose>
-                <Button variant="destructive">Keep local</Button>
-                <Button>Keep remote</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </Section>
-
-        {/* Card grid — custom Tailwind surfaces */}
-        <Section
-          title="Surface layers"
-          description="Cards with layered shadow tokens and three elevation levels."
-        >
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {[
-              { label: "Idle", surface: "bg-surface border-border" },
-              {
-                label: "Raised",
-                surface:
-                  "bg-surface-raised border-border shadow-[0_1px_0_rgba(255,255,255,0.06)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]",
-              },
-              {
-                label: "Pressed",
-                surface:
-                  "bg-surface-muted border-border shadow-[0_1px_2px_rgba(0,0,0,0.4)_inset]",
-              },
-            ].map((card) => (
-              <div
-                key={card.label}
-                className={`rounded-2xl border p-6 transition-all duration-200 ${card.surface}`}
-              >
-                <div className="text-sm font-medium">{card.label}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Surface token demo
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-
-        <footer className="pt-4 text-center text-xs text-muted-foreground">
-          ui-prototype · vite + react 19 + tailwind v4 + arc · source lives in{" "}
-          <code>src/</code>, dev server on port 5173
+        <footer className="pt-4 text-center text-[11px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
+          ui-prototype · vite + react 19 + tailwind v4 + arc library · port 5173
         </footer>
       </main>
     </div>
