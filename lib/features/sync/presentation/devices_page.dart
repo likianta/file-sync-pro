@@ -360,164 +360,173 @@ class _DeviceCardState extends State<_DeviceCard> {
 
     return FCard(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 3D model illustration
+              // 3D model illustration — trailing shadow extends below this
+              // SizedBox into the tag row, creating the "pressing" overlap.
               SizedBox(
-                height: 130,
+                height: 140,
                 child: DeviceModel3D(model: device.resolvedModel),
               ),
-              const SizedBox(height: 2),
+              Transform.translate(
+                offset: const Offset(0, -22),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Tag row
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        _CapsuleTag(
+                          label: device.type.label,
+                          color: _platformColor(device.type, theme),
+                        ),
+                        _CapsuleTag(
+                          label: device.hostType == SyncHostType.local
+                              ? 'Local'
+                              : 'Remote',
+                          color: device.hostType == SyncHostType.local
+                              ? const Color(0xFF059669)
+                              : const Color(0xFF2563EB),
+                        ),
+                        _CapsuleTag(
+                          label: device.createdMonthLabel,
+                          color: theme.colors.mutedForeground,
+                          filled: false,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
 
-              // Tag row
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: [
-                  _CapsuleTag(
-                    label: device.type.label,
-                    color: _platformColor(device.type, theme),
-                  ),
-                  _CapsuleTag(
-                    label: device.hostType == SyncHostType.local
-                        ? 'Local'
-                        : 'Remote',
-                    color: device.hostType == SyncHostType.local
-                        ? const Color(0xFF059669)
-                        : const Color(0xFF2563EB),
-                  ),
-                  _CapsuleTag(
-                    label: device.createdMonthLabel,
-                    color: theme.colors.mutedForeground,
-                    filled: false,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
+                    // Device name (editable)
+                    FTextField(
+                      key: ValueKey<String>('devices.name.${device.id}'),
+                      control: FTextFieldControl.managed(
+                        controller: _nameController,
+                        onChange: (value) =>
+                            _update(device.copyWith(name: value.text)),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
 
-              // Device name (editable)
-              FTextField(
-                key: ValueKey<String>('devices.name.${device.id}'),
-                control: FTextFieldControl.managed(
-                  controller: _nameController,
-                  onChange: (value) =>
-                      _update(device.copyWith(name: value.text)),
+                    // Device address
+                    Row(
+                      children: [
+                        Icon(
+                          FLucideIcons.globe,
+                          size: 13,
+                          color: theme.colors.mutedForeground,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            device.baseUrl,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.typography.body.xs.copyWith(
+                              fontFamily: 'monospace',
+                              color: theme.colors.mutedForeground,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Container(height: 1, color: theme.colors.border),
+                    const SizedBox(height: 8),
+
+                    // Pairs header
+                    Row(
+                      children: [
+                        Text(
+                          'Pairs (${pairs.length})',
+                          style: theme.typography.body.sm.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Spacer(),
+                        FButton(
+                          key: ValueKey<String>(
+                            'devices.pair.add.${device.id}',
+                          ),
+                          variant: FButtonVariant.outline,
+                          size: FButtonSizeVariant.sm,
+                          onPress: _addPair,
+                          prefix: const Icon(FLucideIcons.plus, size: 14),
+                          child: const Text('Add'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+
+                    // Pairs list (compact)
+                    if (pairs.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          'No pairs yet.',
+                          style: theme.typography.body.xs.copyWith(
+                            color: theme.colors.mutedForeground,
+                          ),
+                        ),
+                      )
+                    else ...[
+                      for (final pair in pairs)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: _PairRow(
+                            key: ValueKey<String>(
+                              'devices.pair.${device.id}.${pair.name}',
+                            ),
+                            deviceId: device.id,
+                            pair: pair,
+                            onEdit: () => _editPair(pair),
+                            onDelete: () => _deletePair(pair),
+                          ),
+                        ),
+                    ],
+
+                    const SizedBox(height: 10),
+                    Container(height: 1, color: theme.colors.border),
+                    const SizedBox(height: 8),
+
+                    // Footer bar: model switcher + delete
+                    Row(
+                      children: [
+                        Icon(
+                          FLucideIcons.monitor,
+                          size: 13,
+                          color: theme.colors.mutedForeground,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: _ModelDropdown(
+                            model: device.resolvedModel,
+                            onChanged: (value) {
+                              _update(device.copyWith(model: value));
+                            },
+                          ),
+                        ),
+                        FButton.icon(
+                          key: ValueKey<String>('devices.delete.${device.id}'),
+                          variant: FButtonVariant.ghost,
+                          onPress: _deleteDevice,
+                          semanticsTooltip: 'Remove device',
+                          child: Icon(
+                            FLucideIcons.trash2,
+                            size: 14,
+                            color: theme.colors.destructive,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 2),
-
-              // Device address
-              Row(
-                children: [
-                  Icon(
-                    FLucideIcons.globe,
-                    size: 13,
-                    color: theme.colors.mutedForeground,
-                  ),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      device.baseUrl,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.typography.body.xs.copyWith(
-                        fontFamily: 'monospace',
-                        color: theme.colors.mutedForeground,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Container(height: 1, color: theme.colors.border),
-              const SizedBox(height: 8),
-
-              // Pairs header
-              Row(
-                children: [
-                  Text(
-                    'Pairs (${pairs.length})',
-                    style: theme.typography.body.sm.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  FButton(
-                    key: ValueKey<String>('devices.pair.add.${device.id}'),
-                    variant: FButtonVariant.outline,
-                    size: FButtonSizeVariant.sm,
-                    onPress: _addPair,
-                    prefix: const Icon(FLucideIcons.plus, size: 14),
-                    child: const Text('Add'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-
-              // Pairs list (compact)
-              if (pairs.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'No pairs yet.',
-                    style: theme.typography.body.xs.copyWith(
-                      color: theme.colors.mutedForeground,
-                    ),
-                  ),
-                )
-              else ...[
-                for (final pair in pairs)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: _PairRow(
-                      key: ValueKey<String>(
-                        'devices.pair.${device.id}.${pair.name}',
-                      ),
-                      deviceId: device.id,
-                      pair: pair,
-                      onEdit: () => _editPair(pair),
-                      onDelete: () => _deletePair(pair),
-                    ),
-                  ),
-              ],
-
-              const SizedBox(height: 10),
-              Container(height: 1, color: theme.colors.border),
-              const SizedBox(height: 8),
-
-              // Footer bar: model switcher + delete
-              Row(
-                children: [
-                  Icon(
-                    FLucideIcons.monitor,
-                    size: 13,
-                    color: theme.colors.mutedForeground,
-                  ),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: _ModelDropdown(
-                      model: device.resolvedModel,
-                      onChanged: (value) {
-                        _update(device.copyWith(model: value));
-                      },
-                    ),
-                  ),
-                  FButton.icon(
-                    key: ValueKey<String>('devices.delete.${device.id}'),
-                    variant: FButtonVariant.ghost,
-                    onPress: _deleteDevice,
-                    semanticsTooltip: 'Remove device',
-                    child: Icon(
-                      FLucideIcons.trash2,
-                      size: 14,
-                      color: theme.colors.destructive,
-                    ),
-                  ),
-                ],
               ),
             ],
           ),
