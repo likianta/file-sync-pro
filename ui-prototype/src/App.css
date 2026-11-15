@@ -1,0 +1,3 @@
+/* Arc foundation.css and Tailwind layers are imported in main.tsx + index.css.
+   This file is intentionally minimal — only page-level layout overrides
+   that don't belong as utility classes go here. */
