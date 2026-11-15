@@ -4,20 +4,41 @@ import 'package:forui/forui.dart';
 
 import '../application/sync_client_config.dart';
 import '../application/sync_config_store.dart';
+import 'device_editor_dialog.dart';
 import 'pair_editor_dialog.dart';
 
-class DevicesPage extends StatelessWidget {
+class DevicesPage extends StatefulWidget {
   const DevicesPage({super.key, required this.store});
 
   final SyncConfigStore store;
 
   @override
+  State<DevicesPage> createState() => _DevicesPageState();
+}
+
+class _DevicesPageState extends State<DevicesPage> {
+  Future<void> _openAddDeviceDialog() async {
+    final store = widget.store;
+    final result = await showDeviceEditorDialog(
+      context: context,
+      existingNames: store.devices.map((d) => d.name).toSet(),
+    );
+    if (result == null) return;
+    store.addDeviceFromInput(
+      name: result.name,
+      host: result.host,
+      port: result.port,
+      hostType: result.hostType,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: store,
+      listenable: widget.store,
       builder: (context, _) {
         final theme = context.theme;
-        if (!store.loaded) {
+        if (!widget.store.loaded) {
           return Center(
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -38,16 +59,16 @@ class DevicesPage extends StatelessWidget {
             ),
           );
         }
-        final devices = store.devices;
+        final devices = widget.store.devices;
         return Column(
           children: [
-            _PageHeader(store: store),
+            _PageHeader(store: widget.store, onAdd: _openAddDeviceDialog),
             Expanded(
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 1080),
                   child: devices.isEmpty
-                      ? _EmptyDevices(onAdd: store.addDevice)
+                      ? _EmptyDevices(onAdd: _openAddDeviceDialog)
                       : ListView(
                           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
                           children: [
@@ -58,7 +79,7 @@ class DevicesPage extends StatelessWidget {
                                 ),
                                 padding: const EdgeInsets.only(bottom: 14),
                                 child: _DeviceCard(
-                                  store: store,
+                                  store: widget.store,
                                   device: device,
                                 ),
                               ),
@@ -75,9 +96,10 @@ class DevicesPage extends StatelessWidget {
 }
 
 class _PageHeader extends StatelessWidget {
-  const _PageHeader({required this.store});
+  const _PageHeader({required this.store, required this.onAdd});
 
   final SyncConfigStore store;
+  final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -116,7 +138,7 @@ class _PageHeader extends StatelessWidget {
           FButton(
             key: const ValueKey<String>('devices.add'),
             variant: FButtonVariant.outline,
-            onPress: store.addDevice,
+            onPress: onAdd,
             prefix: const Icon(FLucideIcons.plus, size: 15),
             child: const Text('Add device'),
           ),

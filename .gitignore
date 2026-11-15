@@ -9,6 +9,7 @@
 /readme.b64.html
 /refs/
 /test/local_sync_test/
+/ui-prototype/dist/
 
 **/doc/api/
 *.iml

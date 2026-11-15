@@ -64,6 +64,33 @@ final class SyncConfigStore extends ChangeNotifier {
     _notify();
   }
 
+  /// Adds a device constructed from user input. Generates a unique id and
+  /// ensures the device name does not collide with existing ones.
+  SyncDeviceEntry addDeviceFromInput({
+    required String name,
+    required String host,
+    required int port,
+    required SyncHostType hostType,
+  }) {
+    final id = 'dev-${DateTime.now().microsecondsSinceEpoch}';
+    final entry = SyncDeviceEntry(
+      id: id,
+      name: _uniqueDeviceName(name, excludingId: id),
+      hostType: hostType,
+      host: host,
+      port: port,
+    );
+    _config.devices.add(entry);
+    _scheduleSave();
+    _notify();
+    return entry;
+  }
+
+  /// Returns true if a device with the given [name] already exists.
+  bool hasDeviceName(String name) {
+    return _config.devices.any((device) => device.name == name.trim());
+  }
+
   void updateDevice(SyncDeviceEntry device) {
     final index = _config.devices.indexWhere((entry) => entry.id == device.id);
     if (index < 0) return;
