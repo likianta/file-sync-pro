@@ -187,9 +187,10 @@ class _DeviceRender {
     const tiltZ = -0.04;
 
     final baseSize = model._baseSize;
-    // topPadding keeps the rotated device body 8px away from the widget top.
-    // bottomPadding reserves space for the trailing shadow to bleed downward.
-    const topPadding = 28.0;
+    // Extra topPadding keeps rotated device bodies far enough from the widget
+    // top edge — iPad has the tallest tilted profile. bottomPadding reserves
+    // space for the trailing shadow to bleed into the card's label row.
+    const topPadding = 48.0;
     const bottomPadding = 28.0;
     const sidePadding = 16.0;
 

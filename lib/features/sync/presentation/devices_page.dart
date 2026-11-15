@@ -81,28 +81,17 @@ class _DevicesPageState extends State<DevicesPage> {
                   ? _EmptyDevices(onAdd: _openAddDeviceDialog)
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        // Keep cards narrow so at least 2 fit side-by-side on
-                        // common desktop widths.
-                        const minColumn = 260.0;
-                        const maxColumn = 380.0;
+                        // Dynamic columns, each at least 240 wide.
+                        const minColumn = 240.0;
                         const spacing = 14.0;
                         final width = constraints.maxWidth;
                         final crossAxisCount = math.max(
-                          2,
+                          1,
                           ((width + spacing) / (minColumn + spacing)).floor(),
                         );
-                        final capped =
-                            (width - spacing * (crossAxisCount - 1)) /
-                                    crossAxisCount <=
-                                maxColumn
-                            ? crossAxisCount
-                            : math.max(
-                                2,
-                                ((width + spacing) / (maxColumn + spacing))
-                                    .floor(),
-                              );
                         final cardWidth =
-                            (width - spacing * (capped - 1)) / capped;
+                            (width - spacing * (crossAxisCount - 1)) /
+                            crossAxisCount;
                         return SingleChildScrollView(
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
@@ -667,61 +656,20 @@ class _ModelDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
-    return FPopoverMenu(
-      control: FPopoverControl.managed(),
-      menuAnchor: Alignment.topLeft,
-      childAnchor: Alignment.bottomLeft,
-      maxHeight: 240,
-      menu: const [],
-      builder: (context, controller, _) => FTileGroup(
-        children: SyncDeviceModel.values
-            .map(
-              (m) => FTile(
-                key: ValueKey<String>('devices.model.${m.name}'),
-                title: Text(m.label),
-                selected: m == model,
-                suffix: m == model
-                    ? Icon(
-                        FLucideIcons.check,
-                        size: 14,
-                        color: theme.colors.primary,
-                      )
-                    : null,
-                onPress: () {
-                  onChanged(m);
-                  controller.hide();
-                },
-              ),
-            )
-            .toList(),
+    return FSelect<String>(
+      control: FSelectControl<String>.lifted(
+        value: model.name,
+        onChange: (value) {
+          if (value == null) return;
+          final m = SyncDeviceModel.values.firstWhere((e) => e.name == value);
+          onChanged(m);
+        },
       ),
-      child: FButton(
-        variant: FButtonVariant.ghost,
-        size: FButtonSizeVariant.sm,
-        onPress: () {},
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                model.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.typography.body.xs.copyWith(
-                  color: theme.colors.mutedForeground,
-                ),
-              ),
-            ),
-            const SizedBox(width: 2),
-            Icon(
-              FLucideIcons.chevronsUpDown,
-              size: 12,
-              color: theme.colors.mutedForeground,
-            ),
-          ],
-        ),
-      ),
+      // Forui items: Map<displayLabel, storedKey>.
+      // Default format(T value) => inverse[value]!
+      //   where inverse = {storedKey: displayLabel}.
+      // So value = model.name must match items' values for inverse lookup.
+      items: {for (final m in SyncDeviceModel.values) m.label: m.name},
     );
   }
 }
