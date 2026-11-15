@@ -75,20 +75,16 @@ enum SyncDeviceType {
 enum SyncDeviceModel {
   macbook,
   windowsLaptop,
-  windowsDesktop,
   linuxDesktop,
   iphone,
-  ipad,
   androidPhone;
 
   static SyncDeviceModel parse(Object? value) {
     return switch (value) {
       'macbook' => SyncDeviceModel.macbook,
-      'windowsLaptop' => SyncDeviceModel.windowsLaptop,
-      'windowsDesktop' => SyncDeviceModel.windowsDesktop,
+      'windowsLaptop' || 'windowsDesktop' => SyncDeviceModel.windowsLaptop,
       'linuxDesktop' => SyncDeviceModel.linuxDesktop,
-      'iphone' => SyncDeviceModel.iphone,
-      'ipad' => SyncDeviceModel.ipad,
+      'iphone' || 'ipad' => SyncDeviceModel.iphone,
       'androidPhone' => SyncDeviceModel.androidPhone,
       _ => SyncDeviceModel.windowsLaptop,
     };
@@ -101,21 +97,18 @@ enum SyncDeviceModel {
       SyncDeviceType.macos => SyncDeviceModel.macbook,
       SyncDeviceType.linux => SyncDeviceModel.linuxDesktop,
       SyncDeviceType.android => SyncDeviceModel.androidPhone,
-      SyncDeviceType.ios => SyncDeviceModel.iphone,
-      SyncDeviceType.ipad => SyncDeviceModel.ipad,
+      SyncDeviceType.ios || SyncDeviceType.ipad => SyncDeviceModel.iphone,
     };
   }
 
   String get id => name;
 
   String get label => switch (this) {
-    SyncDeviceModel.macbook => 'MacBook',
-    SyncDeviceModel.windowsLaptop => 'Windows Laptop',
-    SyncDeviceModel.windowsDesktop => 'Windows Desktop',
-    SyncDeviceModel.linuxDesktop => 'Linux Desktop',
-    SyncDeviceModel.iphone => 'iPhone',
-    SyncDeviceModel.ipad => 'iPad',
-    SyncDeviceModel.androidPhone => 'Android Phone',
+    SyncDeviceModel.macbook => 'macOS',
+    SyncDeviceModel.windowsLaptop => 'Windows',
+    SyncDeviceModel.linuxDesktop => 'Linux',
+    SyncDeviceModel.iphone => 'iOS & iPadOS',
+    SyncDeviceModel.androidPhone => 'Android',
   };
 }
 
