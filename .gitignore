@@ -29,3 +29,7 @@ dist/
 # local runtime config (may contain tokens)
 /tool/*.config.json
 /data/sync_pairs/*/
+
+# agent skills (downloaded plugins)
+/.agents/
+/skills-lock.json

@@ -81,43 +81,48 @@ class _DevicesPageState extends State<DevicesPage> {
                   ? _EmptyDevices(onAdd: _openAddDeviceDialog)
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        // Each column is ~400 wide, clamped to 300..500.
-                        const minColumn = 300.0;
-                        const maxColumn = 500.0;
+                        // Keep cards narrow so at least 2 fit side-by-side on
+                        // common desktop widths.
+                        const minColumn = 260.0;
+                        const maxColumn = 380.0;
                         const spacing = 14.0;
                         final width = constraints.maxWidth;
-                        final count = math.max(
-                          1,
+                        final crossAxisCount = math.max(
+                          2,
                           ((width + spacing) / (minColumn + spacing)).floor(),
                         );
-                        final columnWidth =
-                            (width - spacing * (count - 1)) / count;
-                        final crossAxisCount = columnWidth > maxColumn
-                            ? ((width + spacing) / (maxColumn + spacing))
-                                  .floor()
-                                  .clamp(1, 5)
-                            : count;
-                        final cardWidth =
+                        final capped =
                             (width - spacing * (crossAxisCount - 1)) /
-                            crossAxisCount;
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                          child: Wrap(
-                            spacing: spacing,
-                            runSpacing: spacing,
-                            children: [
-                              for (final device in devices)
-                                SizedBox(
-                                  width: cardWidth,
-                                  child: _DeviceCard(
-                                    key: ValueKey<String>(
-                                      'devices.card.${device.id}',
+                                    crossAxisCount <=
+                                maxColumn
+                            ? crossAxisCount
+                            : math.max(
+                                2,
+                                ((width + spacing) / (maxColumn + spacing))
+                                    .floor(),
+                              );
+                        final cardWidth =
+                            (width - spacing * (capped - 1)) / capped;
+                        return SingleChildScrollView(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                            child: Wrap(
+                              spacing: spacing,
+                              runSpacing: spacing,
+                              children: [
+                                for (final device in devices)
+                                  SizedBox(
+                                    width: cardWidth,
+                                    child: _DeviceCard(
+                                      key: ValueKey<String>(
+                                        'devices.card.${device.id}',
+                                      ),
+                                      store: widget.store,
+                                      device: device,
                                     ),
-                                    store: widget.store,
-                                    device: device,
                                   ),
-                                ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       },
@@ -366,23 +371,26 @@ class _DeviceCardState extends State<_DeviceCard> {
 
     return FCard(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 3D model illustration — trailing shadow extends below this
-              // SizedBox into the tag row, creating the "pressing" overlap.
-              SizedBox(
-                height: 140,
-                child: DeviceModel3D(model: device.resolvedModel),
-              ),
-              Transform.translate(
-                offset: const Offset(0, -22),
-                child: Column(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Stack so the 3D model paints ON TOP of everything below it but
+            // only occupies the top ~140px of the card. Its trailing shadow
+            // bleeds past that box (Clip.none) and gently covers the tag row.
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // Bottom layer — normal column flow.
+                Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // Placeholder for the 3D model area above.
+                    const SizedBox(height: 140),
+                    const SizedBox(height: 8),
+
                     // Tag row
                     Wrap(
                       spacing: 6,
@@ -390,20 +398,20 @@ class _DeviceCardState extends State<_DeviceCard> {
                       children: [
                         _CapsuleTag(
                           label: device.type.label,
-                          color: _platformColor(device.type, theme),
+                          color: const Color(0xFF2563EB),
+                          tint: const Color(0xFFDBEAFE),
                         ),
                         _CapsuleTag(
                           label: device.hostType == SyncHostType.local
                               ? 'Local'
                               : 'Remote',
-                          color: device.hostType == SyncHostType.local
-                              ? const Color(0xFF059669)
-                              : const Color(0xFF2563EB),
+                          color: const Color(0xFF7C3AED),
+                          tint: const Color(0xFFEDE9FE),
                         ),
                         _CapsuleTag(
                           label: device.createdMonthLabel,
-                          color: theme.colors.mutedForeground,
-                          filled: false,
+                          color: const Color(0xFF059669),
+                          tint: const Color(0xFFD1FAE5),
                         ),
                       ],
                     ),
@@ -442,100 +450,107 @@ class _DeviceCardState extends State<_DeviceCard> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    Container(height: 1, color: theme.colors.border),
-                    const SizedBox(height: 8),
-
-                    // Pairs header
-                    Row(
-                      children: [
-                        Text(
-                          'Pairs (${pairs.length})',
-                          style: theme.typography.body.sm.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const Spacer(),
-                        FButton(
-                          key: ValueKey<String>(
-                            'devices.pair.add.${device.id}',
-                          ),
-                          variant: FButtonVariant.outline,
-                          size: FButtonSizeVariant.sm,
-                          onPress: _addPair,
-                          prefix: const Icon(FLucideIcons.plus, size: 14),
-                          child: const Text('Add'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-
-                    // Pairs list (compact)
-                    if (pairs.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Text(
-                          'No pairs yet.',
-                          style: theme.typography.body.xs.copyWith(
-                            color: theme.colors.mutedForeground,
-                          ),
-                        ),
-                      )
-                    else ...[
-                      for (final pair in pairs)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: _PairRow(
-                            key: ValueKey<String>(
-                              'devices.pair.${device.id}.${pair.name}',
-                            ),
-                            deviceId: device.id,
-                            pair: pair,
-                            onEdit: () => _editPair(pair),
-                            onDelete: () => _deletePair(pair),
-                          ),
-                        ),
-                    ],
-
-                    const SizedBox(height: 10),
-                    Container(height: 1, color: theme.colors.border),
-                    const SizedBox(height: 8),
-
-                    // Footer bar: model switcher + delete
-                    Row(
-                      children: [
-                        Icon(
-                          FLucideIcons.monitor,
-                          size: 13,
-                          color: theme.colors.mutedForeground,
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: _ModelDropdown(
-                            model: device.resolvedModel,
-                            onChanged: (value) {
-                              _update(device.copyWith(model: value));
-                            },
-                          ),
-                        ),
-                        FButton.icon(
-                          key: ValueKey<String>('devices.delete.${device.id}'),
-                          variant: FButtonVariant.ghost,
-                          onPress: _deleteDevice,
-                          semanticsTooltip: 'Remove device',
-                          child: Icon(
-                            FLucideIcons.trash2,
-                            size: 14,
-                            color: theme.colors.destructive,
-                          ),
-                        ),
-                      ],
-                    ),
                   ],
                 ),
-              ),
+                // Top layer — model + shadow trails on top, clipped to first
+                // 150px so it doesn't consume the tag area.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: 150,
+                  child: DeviceModel3D(model: device.resolvedModel),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Container(height: 1, color: theme.colors.border),
+            const SizedBox(height: 8),
+
+            // Pairs header
+            Row(
+              children: [
+                Text(
+                  'Pairs (${pairs.length})',
+                  style: theme.typography.body.sm.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                FButton(
+                  key: ValueKey<String>('devices.pair.add.${device.id}'),
+                  variant: FButtonVariant.outline,
+                  size: FButtonSizeVariant.sm,
+                  onPress: _addPair,
+                  prefix: const Icon(FLucideIcons.plus, size: 14),
+                  child: const Text('Add'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+
+            // Pairs list (compact)
+            if (pairs.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'No pairs yet.',
+                  style: theme.typography.body.xs.copyWith(
+                    color: theme.colors.mutedForeground,
+                  ),
+                ),
+              )
+            else ...[
+              for (final pair in pairs)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _PairRow(
+                    key: ValueKey<String>(
+                      'devices.pair.${device.id}.${pair.name}',
+                    ),
+                    deviceId: device.id,
+                    pair: pair,
+                    onEdit: () => _editPair(pair),
+                    onDelete: () => _deletePair(pair),
+                  ),
+                ),
             ],
-          ),
+
+            const SizedBox(height: 10),
+            Container(height: 1, color: theme.colors.border),
+            const SizedBox(height: 8),
+
+            // Footer bar: model switcher + delete
+            Row(
+              children: [
+                Icon(
+                  FLucideIcons.monitor,
+                  size: 13,
+                  color: theme.colors.mutedForeground,
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: _ModelDropdown(
+                    model: device.resolvedModel,
+                    onChanged: (value) {
+                      _update(device.copyWith(model: value));
+                    },
+                  ),
+                ),
+                FButton.icon(
+                  key: ValueKey<String>('devices.delete.${device.id}'),
+                  variant: FButtonVariant.ghost,
+                  onPress: _deleteDevice,
+                  semanticsTooltip: 'Remove device',
+                  child: Icon(
+                    FLucideIcons.trash2,
+                    size: 14,
+                    color: theme.colors.destructive,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -547,19 +562,24 @@ class _CapsuleTag extends StatelessWidget {
     required this.label,
     required this.color,
     this.filled = true,
+    this.tint,
   });
 
   final String label;
   final Color color;
   final bool filled;
+  final Color? tint;
 
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
+    final bg = filled
+        ? (tint ?? color).withValues(alpha: tint != null ? 0.55 : 0.14)
+        : Colors.transparent;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: filled ? color.withValues(alpha: 0.14) : Colors.transparent,
+        color: bg,
         borderRadius: BorderRadius.circular(999),
         border: filled ? null : Border.all(color: theme.colors.border),
       ),
@@ -567,7 +587,7 @@ class _CapsuleTag extends StatelessWidget {
         label,
         style: theme.typography.body.xs.copyWith(
           fontWeight: FontWeight.w600,
-          color: filled ? color : theme.colors.mutedForeground,
+          color: color,
         ),
       ),
     );
@@ -650,15 +670,15 @@ class _ModelDropdown extends StatelessWidget {
     final theme = context.theme;
     return FPopoverMenu(
       control: FPopoverControl.managed(),
-      menuAnchor: Alignment.topCenter,
-      childAnchor: Alignment.bottomCenter,
+      menuAnchor: Alignment.topLeft,
+      childAnchor: Alignment.bottomLeft,
       maxHeight: 240,
       menu: const [],
       builder: (context, controller, _) => FTileGroup(
         children: SyncDeviceModel.values
             .map(
               (m) => FTile(
-                key: ValueKey<String>('model.${m.name}'),
+                key: ValueKey<String>('devices.model.${m.name}'),
                 title: Text(m.label),
                 selected: m == model,
                 suffix: m == model
@@ -756,15 +776,4 @@ class _EmptyDevices extends StatelessWidget {
       ),
     );
   }
-}
-
-Color _platformColor(SyncDeviceType type, FThemeData theme) {
-  return switch (type) {
-    SyncDeviceType.windows => const Color(0xFF3B82F6),
-    SyncDeviceType.macos => const Color(0xFF6B7280),
-    SyncDeviceType.linux => const Color(0xFF10B981),
-    SyncDeviceType.android => const Color(0xFF4ADE80),
-    SyncDeviceType.ios => const Color(0xFF0EA5E9),
-    SyncDeviceType.ipad => const Color(0xFF0284C7),
-  };
 }

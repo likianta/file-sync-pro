@@ -183,22 +183,27 @@ class _DeviceRender {
     required _ModelPalette palette,
   }) {
     final desktop = _isDesktop(model);
-    // Tilt: desktops sit flat; phones/tablets keep a small perspective tilt.
-    const tiltX = 0.05; // ~3° slight top-back
-    const tiltZ = -0.04; // ~2° slight left-rotation
+    const tiltX = 0.05;
+    const tiltZ = -0.04;
 
     final baseSize = model._baseSize;
-    final scaleX = size.width / (baseSize.width * 1.22);
-    final scaleY = (size.height * 0.62) / baseSize.height;
+    // topPadding keeps the rotated device body 8px away from the widget top.
+    // bottomPadding reserves space for the trailing shadow to bleed downward.
+    const topPadding = 28.0;
+    const bottomPadding = 28.0;
+    const sidePadding = 16.0;
+
+    final availableH = size.height - topPadding - bottomPadding;
+    final availableW = size.width - sidePadding * 2;
+    final scaleX = availableW / baseSize.width;
+    final scaleY = availableH / baseSize.height;
     final scale = math.min(scaleX, scaleY);
 
-    // Place device so its bottom is around size.height * 0.65, leaving room
-    // below for the shadow trail that overlaps card content.
-    final bottomY = size.height * 0.65;
-    final center = Offset(
-      size.width / 2,
-      bottomY - baseSize.height * scale / 2,
-    );
+    // Place center such that the device body (half of baseSize*scale) fits
+    // inside [topPadding, size.height - bottomPadding].
+    final bodyH = baseSize.height * scale;
+    final bottomY = size.height - bottomPadding - bodyH / 2;
+    final center = Offset(size.width / 2, bottomY);
     final matrix = Matrix4.identity()
       ..translateByDouble(center.dx, center.dy, 0, 1)
       ..scaleByDouble(scale, scale, 1, 1)
@@ -208,7 +213,7 @@ class _DeviceRender {
 
     // --- TRAILING SHADOW (painted before device so device sits on top) ---
     canvas.save();
-    final floorY = baseSize.height * scale / 2 + 4;
+    final floorY = bodyH / 2 + 2;
     canvas.translate(center.dx, center.dy + floorY);
     canvas.scale(scale);
     _paintShadowPile(canvas, palette, baseSize);
