@@ -17,7 +17,11 @@ abstract interface class SyncSource {
 
   FileStore get store;
 
-  Future<Manifest> scan({void Function(int scanned)? onProgress});
+  /// Scans the whole source, or only [subPath] and its subtree.
+  Future<Manifest> scan({
+    String? subPath,
+    void Function(int scanned)? onProgress,
+  });
 
   Future<void> close();
 }
@@ -46,8 +50,10 @@ final class LocalSyncSource implements SyncSource {
   FileStore get store => _store;
 
   @override
-  Future<Manifest> scan({void Function(int scanned)? onProgress}) =>
-      _scanner.scan(id, onProgress: onProgress);
+  Future<Manifest> scan({
+    String? subPath,
+    void Function(int scanned)? onProgress,
+  }) => _scanner.scan(id, subPath: subPath, onProgress: onProgress);
 
   @override
   Future<void> close() async {}
@@ -83,9 +89,12 @@ final class RemoteSyncSource implements SyncSource {
   HttpTransport get transport => _transport;
 
   @override
-  Future<Manifest> scan({void Function(int scanned)? onProgress}) async {
+  Future<Manifest> scan({
+    String? subPath,
+    void Function(int scanned)? onProgress,
+  }) async {
     onProgress?.call(0);
-    final manifest = await _scanner.scan();
+    final manifest = await _scanner.scan(relPath: subPath ?? '');
     onProgress?.call(manifest.entries.length);
     return manifest;
   }

@@ -80,6 +80,32 @@ void main() {
     expect(binA.sameContent(binB), isFalse);
   });
 
+  test('scans only the selected subtree with full relative paths', () async {
+    await File(p.join(temp.path, 'root.txt')).writeAsString('root');
+    await Directory(p.join(temp.path, 'docs', 'notes')).create(recursive: true);
+    await File(p.join(temp.path, 'docs', 'notes', 'a.txt')).writeAsString('a');
+    await File(p.join(temp.path, 'docs', 'info.txt')).writeAsString('i');
+
+    final manifest = await LocalScanner().scan(
+      temp.path,
+      subPath: 'docs/notes',
+    );
+
+    expect(manifest.entries.keys, ['docs/notes', 'docs/notes/a.txt']);
+    expect(manifest.entries['docs/notes']!.isDirectory, isTrue);
+    expect(manifest.entries['docs/notes/a.txt']!.hash, isNotNull);
+  });
+
+  test('scans a single selected file', () async {
+    await File(p.join(temp.path, 'root.txt')).writeAsString('root');
+
+    final manifest = await LocalScanner().scan(temp.path, subPath: 'root.txt');
+
+    expect(manifest.entries.keys, ['root.txt']);
+    expect(manifest.entries['root.txt']!.size, 4);
+    expect(manifest.entries['root.txt']!.hash, isNotNull);
+  });
+
   test('reuses cached hashes keyed by size and mtime', () async {
     final file = File(p.join(temp.path, 'a.txt'));
     await file.writeAsString('hello');

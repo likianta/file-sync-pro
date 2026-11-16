@@ -42,8 +42,8 @@ class _DiffSheetBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final preview = controller.preview;
-    final plan = preview?.plan;
+    final plan = controller.diffPlan;
+    final scope = controller.diffSubPath;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -69,7 +69,8 @@ class _DiffSheetBody extends StatelessWidget {
                 child: Text(
                   plan == null
                       ? 'Run Check to compare both sides.'
-                      : '${plan.actions.length} actions · '
+                      : '${scope ?? 'Whole tree'} · '
+                            '${plan.actions.length} actions · '
                             '${plan.conflicts.length} conflicts',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

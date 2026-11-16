@@ -21,6 +21,8 @@ final class SyncDashboardController extends ChangeNotifier {
 
   SyncDashboardStatus _status = SyncDashboardStatus.idle;
   SyncPreview? _preview;
+  SyncPreview? _diffPreview;
+  String? _diffSubPath;
   SyncReport? _report;
   String? _errorMessage;
   int _applied = 0;
@@ -34,6 +36,15 @@ final class SyncDashboardController extends ChangeNotifier {
   SyncDashboardStatus get status => _status;
 
   SyncPreview? get preview => _preview;
+
+  /// The preview shown in the Check sheet. It is scoped when Check was run on
+  /// a selected node.
+  SyncPreview? get diffPreview => _diffPreview;
+
+  SyncPlan? get diffPlan => _diffPreview?.plan ?? _preview?.plan;
+
+  /// The node Check was scoped to, or null for the whole tree.
+  String? get diffSubPath => _diffSubPath;
 
   SyncReport? get report => _report;
 
@@ -86,6 +97,8 @@ final class SyncDashboardController extends ChangeNotifier {
   /// Re-scans both sides and rebuilds the trees without touching the disk.
   Future<void> refresh() async {
     if (busy) return;
+    _diffPreview = null;
+    _diffSubPath = null;
     _status = SyncDashboardStatus.scanning;
     _errorMessage = null;
     _scanPhase = null;
@@ -105,23 +118,48 @@ final class SyncDashboardController extends ChangeNotifier {
     }
   }
 
-  /// Refreshes and logs the plan summary, used by the Check sheet.
-  Future<void> check() async {
+  /// Compares both sides and prepares the diff sheet.
+  ///
+  /// When [subPath] is set only that node's subtree is scanned and compared,
+  /// so checking one folder does not walk or hash the whole tree.
+  Future<void> check({String? subPath}) async {
     if (busy) return;
+    final scope = subPath == null || subPath.isEmpty ? null : subPath;
     _log.clear();
     _report = null;
     _applied = 0;
     _currentPath = null;
-    _appendLog('Scanning both sides...');
-    await refresh();
-    final plan = _preview?.plan;
-    if (plan != null) {
+    _diffSubPath = scope;
+    _status = SyncDashboardStatus.scanning;
+    _errorMessage = null;
+    _scanPhase = null;
+    _scanned = 0;
+    _appendLog('Checking ${scope ?? 'the whole tree'}...');
+    _notify();
+
+    final engine = _createEngine();
+    try {
+      final preview = await engine.preview(
+        subPath: scope,
+        onProgress: _onScanProgress,
+      );
+      _diffPreview = preview;
+      if (scope == null) {
+        _preview = preview;
+      }
+      _status = SyncDashboardStatus.idle;
+      final plan = preview.plan;
       _appendLog(
-        'Plan: ${plan.createCount} create, '
+        'Plan${scope == null ? '' : ' ($scope)'}: '
+        '${plan.createCount} create, '
         '${plan.updateCount} update, '
         '${plan.deleteCount} delete, '
         '${plan.conflicts.length} conflicts.',
       );
+    } catch (error) {
+      _fail(error);
+    } finally {
+      await engine.dispose();
       _notify();
     }
   }
@@ -175,6 +213,8 @@ final class SyncDashboardController extends ChangeNotifier {
       }
       _status = SyncDashboardStatus.idle;
       _preview = await engine.preview(onProgress: _onScanProgress);
+      _diffPreview = null;
+      _diffSubPath = null;
     } catch (error) {
       _fail(error);
     } finally {
@@ -192,7 +232,7 @@ final class SyncDashboardController extends ChangeNotifier {
 
   Future<void> resolveConflict(String path, ConflictSide side) async {
     if (busy) return;
-    final preview = _preview ?? _report?.preview;
+    final preview = _diffPreview ?? _preview ?? _report?.preview;
     if (preview == null) return;
 
     _status = SyncDashboardStatus.resolving;
@@ -207,6 +247,10 @@ final class SyncDashboardController extends ChangeNotifier {
     try {
       final result = await engine.resolveConflicts(preview, {path: side});
       _preview = await engine.preview();
+      final scope = _diffSubPath;
+      _diffPreview = scope == null
+          ? _preview
+          : await engine.preview(subPath: scope);
       _status = SyncDashboardStatus.idle;
       _appendLog(
         'Resolved ${result.resolved} conflict(s). '

@@ -244,8 +244,8 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
   Future<void> _check() async {
     final controller = _controller;
     if (controller == null || controller.busy) return;
-    await controller.check();
-    if (!mounted || controller.preview == null) return;
+    await controller.check(subPath: _activePath.isEmpty ? null : _activePath);
+    if (!mounted || controller.diffPreview == null) return;
     await showSyncDiffSheet(context, controller);
   }
 

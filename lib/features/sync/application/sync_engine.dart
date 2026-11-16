@@ -139,25 +139,33 @@ final class SyncEngine {
   }
 
   /// Scans both sides and builds a plan without touching the disk.
+  ///
+  /// When [subPath] is set, only that node's subtree is scanned and compared.
   Future<SyncPreview> preview({
+    String? subPath,
     void Function(ScanPhase phase, int scanned)? onProgress,
   }) async {
+    final scope = subPath == null || subPath.isEmpty ? null : subPath;
     final snapshots = await _loadSnapshots();
     final aManifest = await a.scan(
+      subPath: scope,
       onProgress: (scanned) => onProgress?.call(ScanPhase.local, scanned),
     );
     final bManifest = await b.scan(
+      subPath: scope,
       onProgress: (scanned) => onProgress?.call(ScanPhase.remote, scanned),
     );
+    final baseA = _scopeSnapshot(snapshots.a, scope);
+    final baseB = _scopeSnapshot(snapshots.b, scope);
     final plan = SyncPlanner.plan(
-      base: snapshots.a,
-      baseB: snapshots.b,
+      base: baseA,
+      baseB: baseB,
       a: aManifest,
       b: bManifest,
     );
     return SyncPreview(
-      baseA: snapshots.a,
-      baseB: snapshots.b,
+      baseA: baseA,
+      baseB: baseB,
       a: aManifest,
       b: bManifest,
       plan: plan,
@@ -587,6 +595,18 @@ final class SyncEngine {
   static bool _inScope(String path, String? scope) {
     if (scope == null || scope.isEmpty) return true;
     return path == scope || path.startsWith('$scope/');
+  }
+
+  static Manifest _scopeSnapshot(Manifest manifest, String? scope) {
+    if (scope == null) return manifest;
+    return Manifest(
+      root: manifest.root,
+      scannedAt: manifest.scannedAt,
+      entries: {
+        for (final entry in manifest.entries.entries)
+          if (_inScope(entry.key, scope)) entry.key: entry.value,
+      },
+    );
   }
 
   static String _timestamp() {

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
 import 'package:file_sync_pro/features/sync/application/sync_source.dart';
 import 'package:file_sync_pro/features/sync/domain/ignore_rules.dart';
+import 'package:file_sync_pro/features/sync/domain/sync_plan.dart';
 import 'package:file_sync_pro/features/transport/http_transport.dart';
 import 'package:file_sync_pro/features/transport/protocol.dart';
 import 'package:file_sync_pro/features/transport/remote_scanner.dart';
@@ -75,6 +76,40 @@ void main() {
       await File(p.join(remoteDir.path, 'from-mac.txt')).readAsString(),
       'mac',
     );
+  });
+
+  test('scoped preview only scans the selected remote subtree', () async {
+    await Directory(p.join(remoteDir.path, 'docs', 'notes'))
+        .create(recursive: true);
+    await File(p.join(remoteDir.path, 'docs', 'notes', 'a.txt'))
+        .writeAsString('a');
+    await File(p.join(remoteDir.path, 'docs', 'b.txt')).writeAsString('b');
+    await File(p.join(remoteDir.path, 'other.txt')).writeAsString('o');
+    await Directory(p.join(localDir.path, 'docs', 'notes'))
+        .create(recursive: true);
+    await File(p.join(localDir.path, 'docs', 'notes', 'a.txt'))
+        .writeAsString('a');
+
+    final preview = await withEngine(
+      (engine) => engine.preview(subPath: 'docs/notes'),
+    );
+
+    expect(preview.b.entries.keys, ['docs/notes', 'docs/notes/a.txt']);
+    expect(preview.a.entries.keys, ['docs/notes', 'docs/notes/a.txt']);
+    expect(preview.plan.isEmpty, isTrue);
+  });
+
+  test('scoped preview supports a single file', () async {
+    await File(p.join(remoteDir.path, 'other.txt')).writeAsString('o');
+
+    final preview = await withEngine(
+      (engine) => engine.preview(subPath: 'other.txt'),
+    );
+
+    expect(preview.b.entries.keys, ['other.txt']);
+    expect(preview.plan.actions, hasLength(1));
+    expect(preview.plan.actions.single.path, 'other.txt');
+    expect(preview.plan.actions.single.kind, SyncActionKind.createLeft);
   });
 
   test('propagates edits and deletions both ways', () async {

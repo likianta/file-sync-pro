@@ -265,6 +265,24 @@ void main() {
         );
       });
 
+      test('preview scopes scans and plan to one subtree', () async {
+        await engine().sync();
+
+        await _file(alice, 'docs/readme.md').writeAsString('docs edit\n');
+        await _file(alice, 'media/alice-note.md').writeAsString('media edit\n');
+
+        final preview = await engine().preview(subPath: 'docs');
+
+        bool inScope(String path) => path == 'docs' || path.startsWith('docs/');
+        expect(preview.a.entries.keys.every(inScope), isTrue);
+        expect(preview.b.entries.keys.every(inScope), isTrue);
+        expect(preview.baseA.entries.keys.every(inScope), isTrue);
+        expect(preview.baseB.entries.keys.every(inScope), isTrue);
+        expect(preview.plan.actions.map((action) => action.path), [
+          'docs/readme.md',
+        ]);
+      });
+
       test('syncs only the selected subtree', () async {
         await engine().sync();
 
