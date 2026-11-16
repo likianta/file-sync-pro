@@ -114,13 +114,23 @@ final class SyncPlan {
 final class SyncPlanner {
   const SyncPlanner._();
 
+  /// Plans the next sync.
+  ///
+  /// [base] is A's snapshot and [baseB] is B's snapshot. A device that has
+  /// never synced this folder has an empty snapshot; a device that already
+  /// synced keeps its own copy, so change detection does not depend on which
+  /// machine planned the previous run. When [baseB] is omitted, [base] is used
+  /// for both sides.
   static SyncPlan plan({
     required Manifest base,
+    Manifest? baseB,
     required Manifest a,
     required Manifest b,
   }) {
+    final baseRight = baseB ?? base;
     final paths = <String>{
       ...base.entries.keys,
+      ...baseRight.entries.keys,
       ...a.entries.keys,
       ...b.entries.keys,
     }.toList()..sort();
@@ -131,7 +141,9 @@ final class SyncPlanner {
     for (final path in paths) {
       final ae = a.entries[path];
       final be = b.entries[path];
-      final ke = base.entries[path];
+      final keA = base.entries[path];
+      final keB = baseRight.entries[path];
+      final ke = keA ?? keB;
 
       if (ae == null && be == null) {
         // Deleted on both sides.
@@ -145,8 +157,8 @@ final class SyncPlanner {
           continue;
         }
 
-        final aChanged = !ae.sameContent(ke);
-        final bChanged = !be.sameContent(ke);
+        final aChanged = !ae.sameContent(keA ?? ke);
+        final bChanged = !be.sameContent(keB ?? ke);
 
         if (aChanged && bChanged) {
           conflicts.add(
@@ -179,8 +191,9 @@ final class SyncPlanner {
             ),
           );
         } else {
-          // Both sides claim to be unchanged from base yet differ. This should
-          // not happen for consistent manifests; report instead of guessing.
+          // Both sides claim to be unchanged from their own snapshot yet
+          // differ. This should not happen for consistent snapshots; report
+          // instead of guessing.
           conflicts.add(
             SyncConflict(
               path: path,
@@ -205,7 +218,7 @@ final class SyncPlanner {
               entry: ae,
             ),
           );
-        } else if (ae.sameContent(ke)) {
+        } else if (ae.sameContent(keA ?? ke)) {
           actions.add(
             SyncAction(
               kind: SyncActionKind.deleteLeft,
@@ -228,8 +241,7 @@ final class SyncPlanner {
       }
 
       // A is missing, B exists.
-      final bEntry = be;
-      if (bEntry == null) continue;
+      final bEntry = be!;
       if (ke == null) {
         actions.add(
           SyncAction(
@@ -239,7 +251,7 @@ final class SyncPlanner {
             entry: bEntry,
           ),
         );
-      } else if (bEntry.sameContent(ke)) {
+      } else if (bEntry.sameContent(keB ?? ke)) {
         actions.add(
           SyncAction(
             kind: SyncActionKind.deleteRight,

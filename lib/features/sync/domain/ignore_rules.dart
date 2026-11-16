@@ -34,6 +34,9 @@ final class IgnoreRules {
     '.venv/',
     '__pycache__/',
     '.filesync/',
+    // The per-side sync snapshot. It must never be treated as content,
+    // otherwise every sync would see it as a changed file.
+    '/.file_sync_shot.json',
     '.DS_Store',
     '.gitkeep',
     '~*',

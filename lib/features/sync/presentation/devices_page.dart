@@ -565,30 +565,21 @@ class _DeviceCardState extends State<_DeviceCard> {
 }
 
 class _CapsuleTag extends StatelessWidget {
-  const _CapsuleTag({
-    required this.label,
-    required this.color,
-    this.filled = true,
-    this.tint,
-  });
+  const _CapsuleTag({required this.label, required this.color, this.tint});
 
   final String label;
   final Color color;
-  final bool filled;
   final Color? tint;
 
   @override
   Widget build(BuildContext context) {
     final theme = context.theme;
-    final bg = filled
-        ? (tint ?? color).withValues(alpha: tint != null ? 0.55 : 0.14)
-        : Colors.transparent;
+    final bg = (tint ?? color).withValues(alpha: tint != null ? 0.55 : 0.14);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(999),
-        border: filled ? null : Border.all(color: theme.colors.border),
       ),
       child: Text(
         label,
@@ -776,9 +767,13 @@ class _MasonryFlowState extends State<_MasonryFlow> {
         cardWidth: widget.cardWidth,
         cachedHeight: _totalHeight,
         onHeightChanged: (h) {
-          if ((h - _totalHeight).abs() > 0.5) {
+          if ((h - _totalHeight).abs() <= 0.5) return;
+          // The height is measured while painting. Updating state here would
+          // schedule a build during paint, so wait for the next frame.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || (h - _totalHeight).abs() <= 0.5) return;
             setState(() => _totalHeight = h);
-          }
+          });
         },
       ),
       children: widget.children,
@@ -832,10 +827,7 @@ class _MasonryFlowDelegate extends FlowDelegate {
 
       final x = shortestCol * (cardWidth + spacing);
       final y = colTops[shortestCol];
-      context.paintChild(
-        i,
-        transform: Matrix4.translationValues(x, y, 0),
-      );
+      context.paintChild(i, transform: Matrix4.translationValues(x, y, 0));
       colTops[shortestCol] += childSize.height + spacing;
     }
 
@@ -845,6 +837,17 @@ class _MasonryFlowDelegate extends FlowDelegate {
     }
     if (maxHeight > spacing) maxHeight -= spacing;
     onHeightChanged(maxHeight);
+  }
+
+  @override
+  bool shouldRelayout(covariant _MasonryFlowDelegate oldDelegate) {
+    // The size comes from [cachedHeight], which is measured during paint, so a
+    // changed height must trigger a layout pass. Otherwise the Flow keeps its
+    // initial zero height and cannot be hit tested.
+    return crossAxisCount != oldDelegate.crossAxisCount ||
+        spacing != oldDelegate.spacing ||
+        cardWidth != oldDelegate.cardWidth ||
+        cachedHeight != oldDelegate.cachedHeight;
   }
 
   @override

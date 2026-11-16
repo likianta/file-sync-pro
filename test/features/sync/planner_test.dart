@@ -192,6 +192,58 @@ void main() {
     });
   });
 
+  group('SyncPlanner per-side snapshots', () {
+    test('uses the right snapshot when only B has synced before', () {
+      // A (a new device) matches what B had at its last sync, while B has
+      // moved on. A must download B's change instead of reporting a conflict.
+      final plan = SyncPlanner.plan(
+        base: _manifest({}),
+        baseB: _manifest({'f.txt': _file('old')}),
+        a: _manifest({'f.txt': _file('old')}),
+        b: _manifest({'f.txt': _file('new')}),
+      );
+
+      expect(plan.conflicts, isEmpty);
+      expect(plan.actions.single.kind, SyncActionKind.updateLeft);
+    });
+
+    test('uses the left snapshot when only A has synced before', () {
+      final plan = SyncPlanner.plan(
+        base: _manifest({'f.txt': _file('old')}),
+        baseB: _manifest({}),
+        a: _manifest({'f.txt': _file('new')}),
+        b: _manifest({'f.txt': _file('old')}),
+      );
+
+      expect(plan.conflicts, isEmpty);
+      expect(plan.actions.single.kind, SyncActionKind.updateRight);
+    });
+
+    test('detects a deletion when the surviving side owns the snapshot', () {
+      final plan = SyncPlanner.plan(
+        base: _manifest({}),
+        baseB: _manifest({'f.txt': _file('x')}),
+        a: _manifest({'f.txt': _file('x')}),
+        b: _manifest({}),
+      );
+
+      expect(plan.conflicts, isEmpty);
+      expect(plan.actions.single.kind, SyncActionKind.deleteLeft);
+    });
+
+    test('still reports a conflict when both sides changed', () {
+      final plan = SyncPlanner.plan(
+        base: _manifest({'f.txt': _file('old')}),
+        baseB: _manifest({'f.txt': _file('old')}),
+        a: _manifest({'f.txt': _file('a')}),
+        b: _manifest({'f.txt': _file('b')}),
+      );
+
+      expect(plan.actions, isEmpty);
+      expect(plan.conflicts.single.reason, ConflictReason.bothModified);
+    });
+  });
+
   test('plan counts actions by category', () {
     final plan = SyncPlanner.plan(
       base: _manifest({'changed.txt': _file('old'), 'gone.txt': _file('x')}),

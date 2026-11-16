@@ -126,7 +126,8 @@ Future<void> main(List<String> args) async {
 void _printPreviewSummary(SyncPreview preview) {
   print('Local : ${_describeManifest(preview.a)}');
   print('Remote: ${_describeManifest(preview.b)}');
-  print('Base  : ${_describeManifest(preview.base)}');
+  print('Base A: ${_describeManifest(preview.baseA)}');
+  print('Base B: ${_describeManifest(preview.baseB)}');
   print(
     'Plan  : ${preview.plan.createCount} create, '
     '${preview.plan.updateCount} update, '

@@ -3,6 +3,7 @@ library;
 
 import 'package:path/path.dart' as p;
 
+import '../data/snapshot_store.dart';
 import '../data/sync_state_store.dart';
 import '../domain/ignore_rules.dart';
 import '../domain/manifest.dart';
@@ -13,13 +14,19 @@ import 'sync_source.dart';
 
 final class SyncPreview {
   const SyncPreview({
-    required this.base,
+    required this.baseA,
+    required this.baseB,
     required this.a,
     required this.b,
     required this.plan,
   });
 
-  final Manifest base;
+  /// A's snapshot, i.e. what A looked like at the end of the last sync.
+  final Manifest baseA;
+
+  /// B's snapshot, i.e. what B looked like at the end of the last sync.
+  final Manifest baseB;
+
   final Manifest a;
   final Manifest b;
   final SyncPlan plan;
@@ -79,9 +86,7 @@ final class SyncEngine {
     required this.b,
     required String stateDir,
     this.onAction,
-  }) : _stateDir = p.normalize(p.absolute(stateDir)) {
-    _state = SyncStateStore(p.join(_stateDir, 'pair_state.json'));
-  }
+  }) : _stateDir = p.normalize(p.absolute(stateDir));
 
   /// Convenience constructor for two local folders (used by tests and by
   /// "sync this Mac's folder to another local folder" scenarios).
@@ -106,7 +111,16 @@ final class SyncEngine {
   final ActionCallback? onAction;
   final String _stateDir;
 
-  late final SyncStateStore _state;
+  /// Per-side snapshots, stored inside each synced folder so any device that
+  /// can reach the folder can reuse them.
+  late final SnapshotStore _snapshotA = SnapshotStore(a.store);
+  late final SnapshotStore _snapshotB = SnapshotStore(b.store);
+
+  /// Read-only fallback for pairs created before snapshots moved into the
+  /// synced folders.
+  late final SyncStateStore _legacyState = SyncStateStore(
+    p.join(_stateDir, 'pair_state.json'),
+  );
 
   /// Releases network resources held by the sources.
   Future<void> dispose() async {
@@ -118,25 +132,31 @@ final class SyncEngine {
   Future<SyncPreview> preview({
     void Function(ScanPhase phase, int scanned)? onProgress,
   }) async {
-    final state = await _loadState();
+    final snapshots = await _loadSnapshots();
     final aManifest = await a.scan(
       onProgress: (scanned) => onProgress?.call(ScanPhase.local, scanned),
     );
     final bManifest = await b.scan(
       onProgress: (scanned) => onProgress?.call(ScanPhase.remote, scanned),
     );
-    final plan = SyncPlanner.plan(base: state.base, a: aManifest, b: bManifest);
+    final plan = SyncPlanner.plan(
+      base: snapshots.a,
+      baseB: snapshots.b,
+      a: aManifest,
+      b: bManifest,
+    );
     return SyncPreview(
-      base: state.base,
+      baseA: snapshots.a,
+      baseB: snapshots.b,
       a: aManifest,
       b: bManifest,
       plan: plan,
     );
   }
 
-  /// Applies the plan and commits a new shared base.
+  /// Applies the plan and writes a snapshot into each synced folder.
   ///
-  /// Conflicting paths are left untouched on both sides and their old base
+  /// Conflicting paths are left untouched on both sides and their old snapshot
   /// entries are preserved, so they keep showing up until resolved.
   Future<SyncReport> sync({
     bool dryRun = false,
@@ -191,18 +211,13 @@ final class SyncEngine {
       };
       _verifyConvergence(aAfter, bAfter, conflictPaths);
 
-      final nextBase = _nextBase(
-        after: aAfter,
-        previous: preview.base,
+      final committedAt = DateTime.now();
+      await _saveSnapshots(
+        aAfter: aAfter,
+        bAfter: bAfter,
+        preview: preview,
         conflicts: preview.plan.conflicts,
-      );
-      await _state.save(
-        SyncState(
-          rootA: a.id,
-          rootB: b.id,
-          base: nextBase,
-          committedAt: DateTime.now(),
-        ),
+        committedAt: committedAt,
       );
       journal?.record(
         'commit',
@@ -319,20 +334,15 @@ final class SyncEngine {
         .toSet();
     _verifyConvergence(aAfter, bAfter, remaining);
 
-    final nextBase = _nextBase(
-      after: aAfter,
-      previous: preview.base,
-      conflicts: preview.plan.conflicts
-          .where((conflict) => remaining.contains(conflict.path))
-          .toList(),
-    );
-    await _state.save(
-      SyncState(
-        rootA: a.id,
-        rootB: b.id,
-        base: nextBase,
-        committedAt: DateTime.now(),
-      ),
+    final unresolved = preview.plan.conflicts
+        .where((conflict) => remaining.contains(conflict.path))
+        .toList();
+    await _saveSnapshots(
+      aAfter: aAfter,
+      bAfter: bAfter,
+      preview: preview,
+      conflicts: unresolved,
+      committedAt: DateTime.now(),
     );
 
     return ConflictResolutionReport(
@@ -341,21 +351,60 @@ final class SyncEngine {
     );
   }
 
-  Future<SyncState> _loadState() async {
-    final state = await _state.load();
-    if (state != null &&
-        p.equals(state.rootA, a.id) &&
-        p.equals(state.rootB, b.id)) {
-      return state;
+  Future<({Manifest a, Manifest b})> _loadSnapshots() async {
+    final snapshotA = await _snapshotA.load();
+    final snapshotB = await _snapshotB.load();
+    if (snapshotA != null || snapshotB != null) {
+      return (
+        a: snapshotA ?? Manifest.empty(root: a.id),
+        b: snapshotB ?? Manifest.empty(root: b.id),
+      );
     }
-    return SyncState(
-      rootA: a.id,
-      rootB: b.id,
-      base: Manifest.empty(root: a.id),
+
+    // Pairs created by older versions kept a single shared base under the
+    // app's state directory. Reuse it once, then write per-side snapshots.
+    final legacy = await _legacyState.load();
+    if (legacy != null &&
+        p.equals(legacy.rootA, a.id) &&
+        p.equals(legacy.rootB, b.id)) {
+      return (a: legacy.base, b: legacy.base);
+    }
+
+    return (a: Manifest.empty(root: a.id), b: Manifest.empty(root: b.id));
+  }
+
+  /// Writes each side's snapshot after a successful sync.
+  ///
+  /// Unlike a shared base, each snapshot is expressed in that device's own
+  /// manifest terms (hashes, mtimes and line endings as that device sees
+  /// them). Unresolved conflicts keep their old snapshot entries so they keep
+  /// showing up until resolved.
+  Future<void> _saveSnapshots({
+    required Manifest aAfter,
+    required Manifest bAfter,
+    required SyncPreview preview,
+    required List<SyncConflict> conflicts,
+    required DateTime committedAt,
+  }) async {
+    await _snapshotA.save(
+      _nextSnapshot(
+        after: aAfter,
+        previous: preview.baseA,
+        conflicts: conflicts,
+      ),
+      committedAt: committedAt,
+    );
+    await _snapshotB.save(
+      _nextSnapshot(
+        after: bAfter,
+        previous: preview.baseB,
+        conflicts: conflicts,
+      ),
+      committedAt: committedAt,
     );
   }
 
-  Manifest _nextBase({
+  Manifest _nextSnapshot({
     required Manifest after,
     required Manifest previous,
     required List<SyncConflict> conflicts,

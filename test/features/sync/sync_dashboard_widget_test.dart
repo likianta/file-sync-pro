@@ -142,10 +142,14 @@ void main() {
     await tester.pumpWidget(wrap(DevicesPage(store: store)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Windows box'), findsWidgets);
-    await tester.tap(
-      find.byKey(const ValueKey<String>('devices.pair.edit.dev-test.demo')),
+    final edit = find.byKey(
+      const ValueKey<String>('devices.pair.edit.dev-test.demo'),
     );
+    await tester.ensureVisible(edit);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Windows box'), findsWidgets);
+    await tester.tap(edit);
     await tester.pumpAndSettle();
 
     expect(

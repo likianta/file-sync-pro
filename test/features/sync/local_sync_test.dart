@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
@@ -204,6 +205,64 @@ void main() {
 
         final after = await engine().preview();
         expect(after.plan.conflicts, isEmpty);
+      });
+
+      test('writes a snapshot into each synced folder', () async {
+        await engine().sync();
+
+        final aliceShot = File(p.join(alice.path, '.file_sync_shot.json'));
+        final bobShot = File(p.join(bob.path, '.file_sync_shot.json'));
+        expect(await aliceShot.exists(), isTrue);
+        expect(await bobShot.exists(), isTrue);
+
+        final json =
+            jsonDecode(await aliceShot.readAsString()) as Map<String, Object?>;
+        expect(json['schema'], 1);
+        final entries = (json['entries'] as Map).cast<String, Object?>();
+        expect(entries.containsKey('docs/readme.md'), isTrue);
+        expect(entries.containsKey('.file_sync_shot.json'), isFalse);
+
+        // Snapshots never take part in the sync itself.
+        final preview = await engine().preview();
+        expect(preview.a.entries.containsKey('.file_sync_shot.json'), isFalse);
+        expect(preview.b.entries.containsKey('.file_sync_shot.json'), isFalse);
+        expect(preview.plan.isEmpty, isTrue);
+      });
+
+      test('a new device reuses the peer snapshot after a sync', () async {
+        await engine().sync();
+
+        // Carol starts from Bob's last synced state, like a Windows machine
+        // that already has the same folder but has never run a sync.
+        final carol = Directory(p.join(temp.path, 'carol'));
+        await _copyTree(bob, carol);
+        await File(p.join(carol.path, '.file_sync_shot.json')).delete();
+
+        // Bob changes one file after the previous sync.
+        await _file(
+          bob,
+          'docs/readme.md',
+        ).writeAsString('bob after home sync\n');
+
+        final carolBob = SyncEngine.local(
+          rootA: carol.path,
+          rootB: bob.path,
+          stateDir: p.join(temp.path, 'state-carol'),
+        );
+        final report = await carolBob.sync();
+
+        expect(report.preview.plan.conflicts, isEmpty);
+        expect(report.preview.baseA.isEmpty, isTrue);
+        expect(report.preview.baseB.isEmpty, isFalse);
+        expect(await _read(carol, 'docs/readme.md'), 'bob after home sync\n');
+        expect(
+          await File(p.join(carol.path, '.file_sync_shot.json')).exists(),
+          isTrue,
+        );
+        expect(
+          await File(p.join(bob.path, '.file_sync_shot.json')).exists(),
+          isTrue,
+        );
       });
 
       test('syncs empty directories and removes them again', () async {
