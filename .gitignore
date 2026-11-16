@@ -1,14 +1,15 @@
+/.agents/
 /.idea/
 /.venv/
 /build/**
 /data/conflicts/*
 /data/downloads/*
-/data/remote_snapshot.json
-/data/snapshots/*
+/data/sync_pairs/*/
 /design/sparkle-inspirations/
 /readme.b64.html
 /refs/
 /test/local_sync_test/
+/tool/*.config.json
 /ui-prototype/dist/
 
 **/doc/api/
@@ -23,13 +24,4 @@ app.*.symbols
 dist/
 
 !**/.gitkeep
-!/build/image_config.json
-!/data/snapshots/readme.md
-
-# local runtime config (may contain tokens)
-/tool/*.config.json
-/data/sync_pairs/*/
-
-# agent skills (downloaded plugins)
-/.agents/
-/skills-lock.json
+!/build/depsland_manifest.json
