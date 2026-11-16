@@ -441,17 +441,19 @@ class _TopRow extends StatelessWidget {
       ],
     );
 
-    final controls = <Widget>[
-      SizedBox(
-        width: 180,
-        child: _SelectBox(
-          label: 'Sync pair',
-          value: selectedPair,
-          items: [for (final pair in pairs) pair.name],
-          onChanged: pairs.isEmpty ? null : onSelectPair,
-          emptyLabel: 'No pairs',
-        ),
+    final pair = SizedBox(
+      width: 220,
+      child: _SelectBox(
+        key: const ValueKey<String>('sync.pair.select'),
+        label: 'Sync pair',
+        value: selectedPair,
+        items: [for (final item in pairs) item.name],
+        onChanged: pairs.isEmpty ? null : onSelectPair,
+        emptyLabel: 'No pairs',
       ),
+    );
+
+    final actions = <Widget>[
       OutlinedButton.icon(
         key: const ValueKey<String>('sync.check'),
         onPressed: busy ? null : onCheck,
@@ -478,27 +480,11 @@ class _TopRow extends StatelessWidget {
         icon: const Icon(Icons.sync, size: 16),
         label: const Text('Sync'),
       ),
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Switch(
-            key: const ValueKey<String>('sync.autoLocate'),
-            value: autoLocate,
-            onChanged: onToggleAutoLocate,
-          ),
-          const SizedBox(width: 2),
-          Text(
-            'Auto locate',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
+      _AutoLocateButton(value: autoLocate, onChanged: onToggleAutoLocate),
     ];
 
     final peer = SizedBox(
-      width: 220,
+      width: 240,
       child: _SelectBox(
         key: const ValueKey<String>('sync.device.select'),
         label: 'Peer device',
@@ -518,54 +504,68 @@ class _TopRow extends StatelessWidget {
           bottom: BorderSide(color: theme.colorScheme.outlineVariant),
         ),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= 1040) {
-            return Row(
-              children: [
-                Expanded(flex: 2, child: machine),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 5,
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: controls,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(flex: 2, child: peer),
-              ],
-            );
-          }
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Row(
+              Expanded(child: machine),
+              const SizedBox(width: 12),
+              pair,
+              const SizedBox(width: 12),
+              peer,
+            ],
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(child: machine),
-                  const SizedBox(width: 12),
-                  peer,
+                  for (var i = 0; i < actions.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    actions[i],
+                  ],
                 ],
               ),
-              const SizedBox(height: 8),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (var i = 0; i < controls.length; i++) ...[
-                      if (i > 0) const SizedBox(width: 8),
-                      controls[i],
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact icon-only toggle used for auto-locate.
+class _AutoLocateButton extends StatelessWidget {
+  const _AutoLocateButton({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Tooltip(
+      message: value ? 'Auto locate is on' : 'Auto locate is off',
+      child: IconButton(
+        key: const ValueKey<String>('sync.autoLocate'),
+        isSelected: value,
+        selectedIcon: const Icon(Icons.center_focus_strong, size: 20),
+        icon: const Icon(Icons.center_focus_weak, size: 20),
+        style: IconButton.styleFrom(
+          minimumSize: const Size(38, 38),
+          backgroundColor: value
+              ? theme.colorScheme.primary.withValues(alpha: 0.12)
+              : null,
+          foregroundColor: value
+              ? theme.colorScheme.primary
+              : theme.colorScheme.onSurfaceVariant,
+          side: BorderSide(color: theme.colorScheme.outlineVariant),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        onPressed: () => onChanged(!value),
       ),
     );
   }

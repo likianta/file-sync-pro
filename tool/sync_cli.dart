@@ -61,18 +61,30 @@ Future<void> main(List<String> args) async {
     print('');
 
     stdout.write('Scanning both sides...');
-    final preview = await engine.preview();
+    final dry = await engine.sync(
+      dryRun: true,
+      direction: options.direction,
+      subPath: options.subPath,
+    );
     stdout.writeln(' done.');
+    final preview = dry.preview;
     _printPreviewSummary(preview);
+    if (options.subPath != null) {
+      print(
+        'Scope : ${options.subPath} '
+        '(${options.direction.name})',
+      );
+    }
+    final plan = dry.plan;
 
-    if (preview.plan.isEmpty) {
-      print('Already in sync.');
+    if (plan.isEmpty) {
+      print('Nothing to sync.');
       return;
     }
 
     if (options.dryRun) {
-      _printActions(preview.plan.actions);
-      _printConflicts(preview.plan.conflicts);
+      _printActions(plan.actions);
+      _printConflicts(plan.conflicts);
       print('');
       print('Dry run only; nothing was changed.');
       return;
@@ -80,7 +92,12 @@ Future<void> main(List<String> args) async {
 
     print('');
     print('Applying...');
-    final report = await engine.execute(preview, onAction: _printAction);
+    final report = await engine.execute(
+      preview,
+      direction: options.direction,
+      subPath: options.subPath,
+      onAction: _printAction,
+    );
     final apply = report.applyReport!;
 
     print('');
@@ -199,11 +216,15 @@ void _printHelp() {
 Sync a local folder with a remote file-sync-pro mount.
 
 Options:
+  --pair <name>      Sync pair from the config file
   --local <path>     Local folder (default: <project-root>/../photolens)
   --remote <url>     Remote mount URL (required)
   --token <token>    Shared token (or FILE_SYNC_TOKEN)
   --state <path>     State folder (default: data/sync_pairs/photolens)
   --timeout <sec>    HTTP timeout in seconds (default: 300)
+  --path <subpath>   Only sync this folder or file inside the pair
+  --pull             Copy from the peer to this machine only
+  --push             Copy from this machine to the peer only
   --dry-run          Show the plan without changing anything
   --config <path>    Config file (default: tool/sync.config.json)
   -h, --help         Show this help
@@ -215,6 +236,8 @@ final class _SyncOptions {
     required this.config,
     required this.dryRun,
     required this.showHelp,
+    this.subPath,
+    this.direction = SyncDirection.both,
   });
 
   factory _SyncOptions.parse(List<String> args, String projectRoot) {
@@ -223,9 +246,11 @@ final class _SyncOptions {
     String? tokenArg;
     String? stateArg;
     String? pairArg;
+    String? subPath;
     int? timeoutArg;
     var dryRun = false;
     var showHelp = false;
+    var direction = SyncDirection.both;
     String? configPath;
 
     for (var i = 0; i < args.length; i++) {
@@ -243,6 +268,12 @@ final class _SyncOptions {
           showHelp = true;
         case '--pair':
           pairArg = next(arg);
+        case '--path':
+          subPath = next(arg);
+        case '--pull':
+          direction = SyncDirection.pull;
+        case '--push':
+          direction = SyncDirection.push;
         case '--local':
           localArg = next(arg);
         case '--remote':
@@ -308,12 +339,20 @@ final class _SyncOptions {
       throw ArgumentError('The selected pair has no remote URL.');
     }
 
-    return _SyncOptions(config: config, dryRun: dryRun, showHelp: false);
+    return _SyncOptions(
+      config: config,
+      dryRun: dryRun,
+      showHelp: false,
+      subPath: subPath,
+      direction: direction,
+    );
   }
 
   final SyncPairConfig? config;
   final bool dryRun;
   final bool showHelp;
+  final String? subPath;
+  final SyncDirection direction;
 }
 
 String _projectRoot() {
