@@ -34,6 +34,7 @@ final class SyncPreview {
 final class SyncReport {
   const SyncReport({
     required this.preview,
+    required this.plan,
     required this.dryRun,
     this.applyReport,
     this.journalPath,
@@ -41,14 +42,18 @@ final class SyncReport {
   });
 
   final SyncPreview preview;
+
+  /// The plan that was actually executed. It can be a subtree or a one-way
+  /// variant of [preview]'s full plan.
+  final SyncPlan plan;
   final bool dryRun;
   final ApplyReport? applyReport;
   final String? journalPath;
   final String? conflictBackupRoot;
 
-  bool get hasConflicts => preview.plan.conflicts.isNotEmpty;
+  bool get hasConflicts => plan.conflicts.isNotEmpty;
 
-  int get conflictCount => preview.plan.conflicts.length;
+  int get conflictCount => plan.conflicts.length;
 }
 
 final class SyncDivergenceException implements Exception {
@@ -66,6 +71,18 @@ final class SyncDivergenceException implements Exception {
 }
 
 enum ConflictSide { left, right }
+
+/// The direction in which a one-way sync copies files.
+enum SyncDirection {
+  /// Copy only from left to right.
+  push,
+
+  /// Copy only from right to left.
+  pull,
+
+  /// Two-way sync with conflict detection.
+  both,
+}
 
 enum ScanPhase { local, remote }
 
@@ -151,22 +168,39 @@ final class SyncEngine {
   ///
   /// Conflicting paths are left untouched on both sides and their old snapshot
   /// entries are preserved, so they keep showing up until resolved.
+  ///
+  /// [subPath] restricts the run to one node's subtree (a folder or a file).
+  /// [direction] turns the run into a one-way copy, ignoring conflicts.
   Future<SyncReport> sync({
     bool dryRun = false,
+    SyncDirection direction = SyncDirection.both,
+    String? subPath,
     ActionCallback? onAction,
   }) async {
     final preview = await this.preview();
     if (dryRun) {
-      return SyncReport(preview: preview, dryRun: true);
+      return SyncReport(
+        preview: preview,
+        plan: _planFor(preview, direction: direction, subPath: subPath),
+        dryRun: true,
+      );
     }
-    return execute(preview, onAction: onAction);
+    return execute(
+      preview,
+      direction: direction,
+      subPath: subPath,
+      onAction: onAction,
+    );
   }
 
   /// Executes a previously computed preview without scanning again.
   Future<SyncReport> execute(
     SyncPreview preview, {
+    SyncDirection direction = SyncDirection.both,
+    String? subPath,
     ActionCallback? onAction,
   }) async {
+    final plan = _planFor(preview, direction: direction, subPath: subPath);
     final progress = onAction ?? this.onAction;
 
     SyncJournal? journal;
@@ -186,7 +220,7 @@ final class SyncEngine {
 
     try {
       final applyReport = await applier.apply(
-        preview.plan,
+        plan,
         onAction: (action) {
           progress?.call(action);
           journal?.record(
@@ -200,34 +234,36 @@ final class SyncEngine {
       final aAfter = await a.scan();
       final bAfter = await b.scan();
       final conflictPaths = {
-        for (final conflict in preview.plan.conflicts) conflict.path,
+        for (final conflict in plan.conflicts) conflict.path,
       };
-      _verifyConvergence(aAfter, bAfter, conflictPaths);
+      _verifyConvergence(aAfter, bAfter, conflictPaths, subPath: subPath);
 
       final committedAt = DateTime.now();
       await _saveSnapshots(
         aAfter: aAfter,
         bAfter: bAfter,
         preview: preview,
-        conflicts: preview.plan.conflicts,
+        conflicts: plan.conflicts,
+        scope: subPath,
         committedAt: committedAt,
       );
       journal?.record(
         'commit',
         data: {
-          'actions': preview.plan.actions.length,
-          'conflicts': preview.plan.conflicts.length,
+          'actions': plan.actions.length,
+          'conflicts': plan.conflicts.length,
+          'scope': ?subPath,
+          if (direction != SyncDirection.both) 'direction': direction.name,
         },
       );
 
       return SyncReport(
         preview: preview,
+        plan: plan,
         dryRun: false,
         applyReport: applyReport,
         journalPath: journal?.path,
-        conflictBackupRoot: preview.plan.conflicts.isEmpty
-            ? null
-            : conflictRoot,
+        conflictBackupRoot: plan.conflicts.isEmpty ? null : conflictRoot,
       );
     } catch (error) {
       journal?.record('error', data: {'message': error.toString()});
@@ -335,6 +371,7 @@ final class SyncEngine {
       bAfter: bAfter,
       preview: preview,
       conflicts: unresolved,
+      scope: null,
       committedAt: DateTime.now(),
     );
 
@@ -364,6 +401,7 @@ final class SyncEngine {
     required Manifest bAfter,
     required SyncPreview preview,
     required List<SyncConflict> conflicts,
+    required String? scope,
     required DateTime committedAt,
   }) async {
     await _snapshotA.save(
@@ -371,6 +409,7 @@ final class SyncEngine {
         after: aAfter,
         previous: preview.baseA,
         conflicts: conflicts,
+        scope: scope,
       ),
       committedAt: committedAt,
     );
@@ -379,17 +418,30 @@ final class SyncEngine {
         after: bAfter,
         previous: preview.baseB,
         conflicts: conflicts,
+        scope: scope,
       ),
       committedAt: committedAt,
     );
   }
 
+  /// Builds the next snapshot for one side.
+  ///
+  /// When [scope] is set only that subtree is replaced; entries outside it are
+  /// kept from the previous snapshot, because a partial sync must not mark
+  /// unrelated local changes as already synced.
   Manifest _nextSnapshot({
     required Manifest after,
     required Manifest previous,
     required List<SyncConflict> conflicts,
+    required String? scope,
   }) {
-    final entries = Map<String, ManifestEntry>.of(after.entries);
+    final entries = Map<String, ManifestEntry>.of(previous.entries);
+    entries.removeWhere((path, _) => _inScope(path, scope));
+    for (final entry in after.entries.entries) {
+      if (_inScope(entry.key, scope)) {
+        entries[entry.key] = entry.value;
+      }
+    }
     for (final conflict in conflicts) {
       final old = previous.entries[conflict.path];
       if (old == null) {
@@ -408,10 +460,12 @@ final class SyncEngine {
   void _verifyConvergence(
     Manifest aAfter,
     Manifest bAfter,
-    Set<String> conflictPaths,
-  ) {
+    Set<String> conflictPaths, {
+    String? subPath,
+  }) {
     final paths = <String>{...aAfter.entries.keys, ...bAfter.entries.keys}
-      ..removeWhere(conflictPaths.contains);
+      ..removeWhere(conflictPaths.contains)
+      ..removeWhere((path) => !_inScope(path, subPath));
 
     final diverged = <String>[];
     for (final path in paths) {
@@ -424,6 +478,115 @@ final class SyncEngine {
     if (diverged.isNotEmpty) {
       throw SyncDivergenceException(diverged..sort());
     }
+  }
+
+  /// Builds the plan for a run: scoped two-way, or one-way.
+  static SyncPlan _planFor(
+    SyncPreview preview, {
+    required SyncDirection direction,
+    required String? subPath,
+  }) {
+    return switch (direction) {
+      SyncDirection.both => _scopePlan(preview.plan, subPath),
+      SyncDirection.push => _directionalPlan(
+        preview,
+        toRight: true,
+        subPath: subPath,
+      ),
+      SyncDirection.pull => _directionalPlan(
+        preview,
+        toRight: false,
+        subPath: subPath,
+      ),
+    };
+  }
+
+  static SyncPlan _scopePlan(SyncPlan plan, String? subPath) {
+    if (subPath == null || subPath.isEmpty) return plan;
+    return SyncPlan(
+      actions: [
+        for (final action in plan.actions)
+          if (_inScope(action.path, subPath)) action,
+      ],
+      conflicts: [
+        for (final conflict in plan.conflicts)
+          if (_inScope(conflict.path, subPath)) conflict,
+      ],
+    );
+  }
+
+  /// One-way copy: the source side always wins, conflicts are not reported.
+  static SyncPlan _directionalPlan(
+    SyncPreview preview, {
+    required bool toRight,
+    required String? subPath,
+  }) {
+    final paths = <String>{
+      ...preview.a.entries.keys,
+      ...preview.b.entries.keys,
+    }.toList()..sort();
+
+    final actions = <SyncAction>[];
+    for (final path in paths) {
+      if (!_inScope(path, subPath)) continue;
+      final ae = preview.a.entries[path];
+      final be = preview.b.entries[path];
+      if (ae == null && be == null) continue;
+      if (ae != null && be != null && ae.sameContent(be)) continue;
+
+      if (toRight) {
+        if (ae == null) {
+          actions.add(
+            SyncAction(
+              kind: SyncActionKind.deleteRight,
+              path: path,
+              reason: ActionReason.deleted,
+              entry: be,
+            ),
+          );
+        } else {
+          actions.add(
+            SyncAction(
+              kind: be == null
+                  ? SyncActionKind.createRight
+                  : SyncActionKind.updateRight,
+              path: path,
+              reason: be == null ? ActionReason.created : ActionReason.updated,
+              entry: ae,
+            ),
+          );
+        }
+      } else {
+        if (be == null) {
+          actions.add(
+            SyncAction(
+              kind: SyncActionKind.deleteLeft,
+              path: path,
+              reason: ActionReason.deleted,
+              entry: ae,
+            ),
+          );
+        } else {
+          actions.add(
+            SyncAction(
+              kind: ae == null
+                  ? SyncActionKind.createLeft
+                  : SyncActionKind.updateLeft,
+              path: path,
+              reason: ae == null ? ActionReason.created : ActionReason.updated,
+              entry: be,
+            ),
+          );
+        }
+      }
+    }
+    return SyncPlan(actions: actions, conflicts: const []);
+  }
+
+  /// True when [path] is [scope] itself, or lives below it.
+  static bool _inScope(String path, String? scope) {
+    if (scope == null || scope.isEmpty) return true;
+    return path == scope || path.startsWith('$scope/');
   }
 
   static String _timestamp() {

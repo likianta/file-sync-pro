@@ -1,13 +1,18 @@
 import 'dart:io';
 
-import 'package:flutter/widgets.dart';
-import 'package:forui/forui.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
+import '../../../app/ui.dart';
 import '../application/sync_client_config.dart';
 import '../application/sync_config_store.dart';
+import '../application/sync_engine.dart';
 import '../application/sync_pair_config.dart';
+import 'diff_sheet.dart';
 import 'sync_dashboard_controller.dart';
-import 'sync_dashboard_page.dart';
+import 'sync_tree.dart';
+import 'tree_panel.dart';
 
 class SyncWorkspacePage extends StatefulWidget {
   const SyncWorkspacePage({super.key, required this.store});
@@ -24,6 +29,16 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
   SyncDashboardController? _controller;
   String? _controllerKey;
 
+  SyncTree? _leftTree;
+  SyncTree? _rightTree;
+  SyncPreview? _lastPreview;
+
+  String _leftSelection = '';
+  String _rightSelection = '';
+  String _activePath = '';
+  bool _autoLocate = true;
+  bool _logExpanded = false;
+
   @override
   void initState() {
     super.initState();
@@ -34,12 +49,10 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
   @override
   void dispose() {
     widget.store.removeListener(_syncSelection);
-    _controller?.dispose();
+    _detachController();
     super.dispose();
   }
 
-  /// Keeps the device/pair selection and the dashboard controller in sync with
-  /// the shared config.
   void _syncSelection() {
     if (!widget.store.loaded) return;
 
@@ -67,17 +80,28 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     _pairName = pairName;
 
     if (key != _controllerKey) {
-      _controller?.dispose();
+      _detachController();
       _controller = runtime == null
           ? null
           : SyncDashboardController(config: runtime);
       _controllerKey = key;
+      _leftTree = null;
+      _rightTree = null;
+      _lastPreview = null;
+      _leftSelection = '';
+      _rightSelection = '';
+      _activePath = '';
+      final controller = _controller;
+      if (controller != null) {
+        controller.addListener(_onControllerChanged);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) controller.refresh();
+        });
+      }
       changed = true;
     }
 
-    if (changed && mounted) {
-      setState(() {});
-    }
+    if (changed && mounted) setState(() {});
   }
 
   static String _keyOf(SyncPairConfig config) {
@@ -89,6 +113,61 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
       config.stateDir,
       config.extraIgnores.join('\u0000'),
     ].join('\u0001');
+  }
+
+  void _detachController() {
+    _controller?.removeListener(_onControllerChanged);
+    _controller?.dispose();
+    _controller = null;
+  }
+
+  void _onControllerChanged() {
+    _syncTrees();
+    if (mounted) setState(() {});
+  }
+
+  void _syncTrees() {
+    final preview = _controller?.preview;
+    if (preview == null || identical(preview, _lastPreview)) return;
+
+    final expandedLeft = _expandedPaths(_leftTree);
+    final expandedRight = _expandedPaths(_rightTree);
+    final rootName = _currentPair?.name ?? 'root';
+    final left = buildSyncTree(preview.a, rootName: rootName);
+    final right = buildSyncTree(preview.b, rootName: rootName);
+    for (final path in expandedLeft) {
+      left.byPath[path]?.expanded = true;
+    }
+    for (final path in expandedRight) {
+      right.byPath[path]?.expanded = true;
+    }
+    _leftTree = left;
+    _rightTree = right;
+    _lastPreview = preview;
+    left.reveal(_leftSelection);
+    right.reveal(_rightSelection);
+  }
+
+  static Set<String> _expandedPaths(SyncTree? tree) {
+    if (tree == null) return const {};
+    return {
+      for (final entry in tree.byPath.entries)
+        if (entry.value.expanded) entry.key,
+    };
+  }
+
+  SyncPairEntry? get _currentPair {
+    final name = _pairName;
+    if (name == null) return null;
+    for (final pair in widget.store.config.pairs) {
+      if (pair.name == name) return pair;
+    }
+    return null;
+  }
+
+  SyncDeviceEntry? get _currentDevice {
+    final id = _deviceId;
+    return id == null ? null : widget.store.config.deviceById(id);
   }
 
   void _selectDevice(String deviceId) {
@@ -104,101 +183,193 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     _syncSelection();
   }
 
+  void _selectNode({required bool left, required SyncTreeNode node}) {
+    setState(() {
+      _activePath = node.path;
+      final tree = left ? _leftTree : _rightTree;
+      tree?.reveal(node.path);
+      if (left) {
+        _leftSelection = node.path;
+      } else {
+        _rightSelection = node.path;
+      }
+      if (_autoLocate) {
+        final other = left ? _rightTree : _leftTree;
+        if (other?.byPath[node.path] != null) {
+          other!.reveal(node.path);
+          if (left) {
+            _rightSelection = node.path;
+          } else {
+            _leftSelection = node.path;
+          }
+        }
+      }
+    });
+  }
+
+  void _toggleNode(SyncTreeNode node) {
+    setState(() => node.expanded = !node.expanded);
+  }
+
+  void _toggleAutoLocate(bool value) {
+    setState(() {
+      _autoLocate = value;
+      if (!value) return;
+      final path = _activePath;
+      if (_leftTree?.byPath[path] != null) {
+        _leftTree!.reveal(path);
+        _leftSelection = path;
+      }
+      if (_rightTree?.byPath[path] != null) {
+        _rightTree!.reveal(path);
+        _rightSelection = path;
+      }
+    });
+  }
+
+  Future<void> _browseLocalRoot() async {
+    final pair = _currentPair;
+    if (pair == null) return;
+    final path = await getDirectoryPath(
+      initialDirectory: pair.localRoot,
+      confirmButtonText: 'Select folder',
+    );
+    if (path == null || !mounted) return;
+    widget.store.upsertPair(
+      pair.copyWith(localRoot: p.normalize(path)),
+      previousName: pair.name,
+    );
+  }
+
+  Future<void> _check() async {
+    final controller = _controller;
+    if (controller == null || controller.busy) return;
+    await controller.check();
+    if (!mounted || controller.preview == null) return;
+    await showSyncDiffSheet(context, controller);
+  }
+
+  Future<void> _run(SyncDirection direction) async {
+    final controller = _controller;
+    if (controller == null || controller.busy) return;
+    await controller.run(
+      direction: direction,
+      subPath: _activePath.isEmpty ? null : _activePath,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final store = widget.store;
     return ListenableBuilder(
-      listenable: store,
+      listenable: widget.store,
       builder: (context, _) {
-        final theme = context.theme;
-        if (!store.loaded) {
-          return Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: FCircularProgress(),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  'Loading sync pairs...',
-                  style: theme.typography.body.sm.copyWith(
-                    color: theme.colors.mutedForeground,
-                  ),
-                ),
-              ],
-            ),
-          );
+        if (!widget.store.loaded) {
+          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         }
-
-        if (store.error != null) {
+        if (widget.store.error != null) {
           return Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 520),
-              child: FAlert(
-                variant: FAlertVariant.destructive,
-                title: const Text('Cannot read sync config'),
-                subtitle: Text(store.error!),
-                icon: const Icon(FLucideIcons.circleAlert),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: AppErrorBanner(
+                  message: 'Cannot read sync config: ${widget.store.error}',
+                ),
               ),
             ),
           );
         }
 
-        final config = store.config;
-        final devices = config.devices;
-        final selectedDevice = _deviceId == null
-            ? null
-            : config.deviceById(_deviceId!);
-        final pairs = selectedDevice == null
-            ? const <SyncPairEntry>[]
-            : config.pairsForDevice(selectedDevice.id);
-        SyncPairEntry? pair;
-        for (final entry in pairs) {
-          if (entry.name == _pairName) {
-            pair = entry;
-            break;
-          }
-        }
         final controller = _controller;
+        final busy = controller?.busy ?? false;
+        final scanning = controller?.status == SyncDashboardStatus.scanning;
+        final canRun = controller != null && !busy;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-              child: _DevicePairStrip(
-                device: selectedDevice,
-                localRoot: pair?.localRoot,
-                devices: devices,
-                onSelectDevice: _selectDevice,
-              ),
+            _TopRow(
+              hostname: Platform.localHostname,
+              devices: widget.store.devices,
+              selectedDeviceId: _deviceId,
+              pairs: _deviceId == null
+                  ? const []
+                  : widget.store.config.pairsForDevice(_deviceId!),
+              selectedPair: _pairName,
+              autoLocate: _autoLocate,
+              busy: busy,
+              canRun: canRun,
+              onSelectDevice: _selectDevice,
+              onSelectPair: _selectPair,
+              onToggleAutoLocate: _toggleAutoLocate,
+              onCheck: _check,
+              onPull: () => _run(SyncDirection.pull),
+              onPush: () => _run(SyncDirection.push),
+              onSync: () => _run(SyncDirection.both),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-              child: _PairTabs(
-                pairs: pairs,
-                selected: _pairName,
-                onSelect: _selectPair,
+            if (controller?.errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: AppErrorBanner(
+                  message: controller!.errorMessage!,
+                  onDismiss: controller.clearError,
+                ),
               ),
-            ),
             Expanded(
-              child: controller == null
-                  ? _EmptyPairs(hasDevice: selectedDevice != null)
-                  : ListenableBuilder(
-                      listenable: controller,
-                      builder: (context, _) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child: SyncPreviewArea(controller: controller),
-                          ),
-                          SyncBottomBar(controller: controller),
-                        ],
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: SyncTreePanel(
+                        key: const ValueKey<String>('sync.tree.left'),
+                        idPrefix: 'left',
+                        title: Platform.localHostname.isEmpty
+                            ? 'This machine'
+                            : Platform.localHostname,
+                        subtitle:
+                            _currentPair?.localRoot ?? 'Choose a sync pair.',
+                        icon: Icons.computer_outlined,
+                        rootLabel: _currentPair?.name ?? 'root',
+                        tree: _leftTree,
+                        loading: scanning,
+                        selectedPath: _leftSelection,
+                        onSelect: (node) => _selectNode(left: true, node: node),
+                        onToggle: _toggleNode,
+                        onBrowse: _currentPair == null
+                            ? null
+                            : _browseLocalRoot,
+                        onRefresh: controller?.refresh,
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: SyncTreePanel(
+                        key: const ValueKey<String>('sync.tree.right'),
+                        idPrefix: 'right',
+                        title: _currentDevice?.name ?? 'Peer device',
+                        subtitle:
+                            _currentPair?.remoteUrl ?? 'Choose a sync pair.',
+                        icon: Icons.cloud_outlined,
+                        rootLabel: _currentPair?.name ?? 'root',
+                        tree: _rightTree,
+                        loading: scanning,
+                        selectedPath: _rightSelection,
+                        onSelect: (node) =>
+                            _selectNode(left: false, node: node),
+                        onToggle: _toggleNode,
+                        onRefresh: controller?.refresh,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            _ActivityPanel(
+              controller: controller,
+              expanded: _logExpanded,
+              onToggle: () => setState(() => _logExpanded = !_logExpanded),
             ),
           ],
         );
@@ -207,335 +378,394 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
   }
 }
 
-class _DevicePairStrip extends StatelessWidget {
-  const _DevicePairStrip({
-    required this.device,
-    required this.localRoot,
+class _TopRow extends StatelessWidget {
+  const _TopRow({
+    required this.hostname,
     required this.devices,
+    required this.selectedDeviceId,
+    required this.pairs,
+    required this.selectedPair,
+    required this.autoLocate,
+    required this.busy,
+    required this.canRun,
     required this.onSelectDevice,
+    required this.onSelectPair,
+    required this.onToggleAutoLocate,
+    required this.onCheck,
+    required this.onPull,
+    required this.onPush,
+    required this.onSync,
   });
 
-  final SyncDeviceEntry? device;
-  final String? localRoot;
+  final String hostname;
   final List<SyncDeviceEntry> devices;
+  final String? selectedDeviceId;
+  final List<SyncPairEntry> pairs;
+  final String? selectedPair;
+  final bool autoLocate;
+  final bool busy;
+  final bool canRun;
   final ValueChanged<String> onSelectDevice;
+  final ValueChanged<String> onSelectPair;
+  final ValueChanged<bool> onToggleAutoLocate;
+  final VoidCallback onCheck;
+  final VoidCallback onPull;
+  final VoidCallback onPush;
+  final VoidCallback onSync;
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
-    return FCard(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: _Endpoint(
-                icon: FLucideIcons.computer,
-                overline: 'THIS MACHINE',
-                title: _localMachineName(),
-                subtitle: localRoot ?? 'Choose a pair on the right.',
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Padding(
-                padding: const EdgeInsets.only(top: 22),
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: theme.colors.muted,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    FLucideIcons.arrowRightLeft,
-                    size: 14,
-                    color: theme.colors.mutedForeground,
-                  ),
-                ),
-              ),
-            ),
-            Expanded(
-              child: _PeerEndpoint(
-                device: device,
-                devices: devices,
-                onSelectDevice: onSelectDevice,
-              ),
-            ),
-          ],
+    final theme = Theme.of(context);
+
+    final machine = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'THIS MACHINE',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          hostname.isEmpty ? 'This machine' : hostname,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+
+    final controls = <Widget>[
+      SizedBox(
+        width: 180,
+        child: _SelectBox(
+          label: 'Sync pair',
+          value: selectedPair,
+          items: [for (final pair in pairs) pair.name],
+          onChanged: pairs.isEmpty ? null : onSelectPair,
+          emptyLabel: 'No pairs',
         ),
       ),
-    );
-  }
-
-  static String _localMachineName() {
-    final hostname = Platform.localHostname;
-    return hostname.isEmpty ? _platformName() : hostname;
-  }
-
-  static String _platformName() {
-    return switch (Platform.operatingSystem) {
-      'macos' => 'This Mac',
-      'windows' => 'This PC',
-      'linux' => 'This machine',
-      _ => 'This device',
-    };
-  }
-}
-
-class _Endpoint extends StatelessWidget {
-  const _Endpoint({
-    required this.icon,
-    required this.overline,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String overline;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.theme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colors.muted.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colors.border),
+      OutlinedButton.icon(
+        key: const ValueKey<String>('sync.check'),
+        onPressed: busy ? null : onCheck,
+        icon: const Icon(Icons.fact_check_outlined, size: 16),
+        label: const Text('Check'),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      _ActionButton(
+        key: const ValueKey<String>('sync.pull'),
+        tooltip: 'Copy the selected node from the peer to this machine',
+        icon: Icons.arrow_back,
+        label: 'Pull',
+        onPressed: canRun ? onPull : null,
+      ),
+      _ActionButton(
+        key: const ValueKey<String>('sync.push'),
+        tooltip: 'Copy the selected node from this machine to the peer',
+        icon: Icons.arrow_forward,
+        label: 'Push',
+        onPressed: canRun ? onPush : null,
+      ),
+      FilledButton.icon(
+        key: const ValueKey<String>('sync.run'),
+        onPressed: canRun ? onSync : null,
+        icon: const Icon(Icons.sync, size: 16),
+        label: const Text('Sync'),
+      ),
+      Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 14, color: theme.colors.mutedForeground),
-              const SizedBox(width: 6),
-              Text(
-                overline,
-                style: theme.typography.body.xs.copyWith(
-                  color: theme.colors.mutedForeground,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ],
+          Switch(
+            key: const ValueKey<String>('sync.autoLocate'),
+            value: autoLocate,
+            onChanged: onToggleAutoLocate,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(width: 2),
           Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.typography.body.sm.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            subtitle,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.typography.body.xs.copyWith(
-              fontFamily: 'monospace',
-              color: theme.colors.mutedForeground,
+            'Auto locate',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ],
       ),
-    );
-  }
-}
+    ];
 
-class _PeerEndpoint extends StatelessWidget {
-  const _PeerEndpoint({
-    required this.device,
-    required this.devices,
-    required this.onSelectDevice,
-  });
-
-  final SyncDeviceEntry? device;
-  final List<SyncDeviceEntry> devices;
-  final ValueChanged<String> onSelectDevice;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.theme;
-    final selected = device;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colors.muted.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colors.border),
+    final peer = SizedBox(
+      width: 220,
+      child: _SelectBox(
+        key: const ValueKey<String>('sync.device.select'),
+        label: 'Peer device',
+        value: selectedDeviceId,
+        items: [for (final device in devices) device.id],
+        labels: {for (final device in devices) device.id: device.name},
+        onChanged: devices.isEmpty ? null : onSelectDevice,
+        emptyLabel: 'No devices',
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                FLucideIcons.router,
-                size: 14,
-                color: theme.colors.mutedForeground,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                'PEER DEVICE',
-                style: theme.typography.body.xs.copyWith(
-                  color: theme.colors.mutedForeground,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.8,
-                ),
-              ),
-              const Spacer(),
-              if (selected != null)
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2EA121),
-                    shape: BoxShape.circle,
+    );
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 1040) {
+            return Row(
+              children: [
+                Expanded(flex: 2, child: machine),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 5,
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: controls,
                   ),
                 ),
+                const SizedBox(width: 12),
+                Expanded(flex: 2, child: peer),
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: machine),
+                  const SizedBox(width: 12),
+                  peer,
+                ],
+              ),
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < controls.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      controls[i],
+                    ],
+                  ],
+                ),
+              ),
             ],
-          ),
-          const SizedBox(height: 8),
-          if (devices.isEmpty)
-            Text(
-              'No devices yet. Add one in Devices.',
-              style: theme.typography.body.xs.copyWith(
-                color: theme.colors.mutedForeground,
-              ),
-            )
-          else
-            FSelect<String>(
-              key: const ValueKey<String>('sync.device.select'),
-              control: FSelectControl<String>.lifted(
-                value: selected?.name,
-                onChange: (value) {
-                  if (value == null) return;
-                  final device = devices.firstWhere(
-                    (entry) => entry.name == value,
-                  );
-                  onSelectDevice(device.id);
-                },
-              ),
-              items: {for (final entry in devices) entry.name: entry.name},
-              hint: 'Select a peer device',
-            ),
-          if (selected != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              selected.baseUrl,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.typography.body.xs.copyWith(
-                fontFamily: 'monospace',
-                color: theme.colors.mutedForeground,
-              ),
-            ),
-          ],
-        ],
+          );
+        },
       ),
     );
   }
 }
 
-class _PairTabs extends StatelessWidget {
-  const _PairTabs({
-    required this.pairs,
-    required this.selected,
-    required this.onSelect,
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    super.key,
+    required this.tooltip,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
   });
 
-  final List<SyncPairEntry> pairs;
-  final String? selected;
-  final ValueChanged<String> onSelect;
+  final String tooltip;
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
-    return SizedBox(
-      height: 32,
-      child: Row(
-        children: [
-          if (pairs.isEmpty)
-            Text(
-              'No pairs for this device.',
-              style: theme.typography.body.sm.copyWith(
-                color: theme.colors.mutedForeground,
+    return Tooltip(
+      message: tooltip,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16),
+        label: Text(label),
+      ),
+    );
+  }
+}
+
+class _SelectBox extends StatelessWidget {
+  const _SelectBox({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+    this.labels = const {},
+    this.emptyLabel = 'None',
+  });
+
+  final String label;
+  final String? value;
+  final List<String> items;
+  final ValueChanged<String>? onChanged;
+  final Map<String, String> labels;
+  final String emptyLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: label,
+        isDense: true,
+        contentPadding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
+      ),
+      child: items.isEmpty
+          ? Text(
+              emptyLabel,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             )
-          else
-            Expanded(
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final pair in pairs)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: FButton(
-                        key: ValueKey<String>('sync.pair.tab.${pair.name}'),
-                        variant: pair.name == selected
-                            ? FButtonVariant.secondary
-                            : FButtonVariant.ghost,
-                        size: FButtonSizeVariant.sm,
-                        onPress: () => onSelect(pair.name),
-                        child: Text(pair.name),
+          : DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: items.contains(value) ? value : null,
+                isDense: true,
+                isExpanded: true,
+                borderRadius: BorderRadius.circular(10),
+                items: [
+                  for (final item in items)
+                    DropdownMenuItem<String>(
+                      value: item,
+                      child: Text(
+                        labels[item] ?? item,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
                       ),
                     ),
                 ],
+                onChanged: onChanged == null
+                    ? null
+                    : (selected) {
+                        if (selected != null) onChanged!(selected);
+                      },
               ),
             ),
-        ],
-      ),
     );
   }
 }
 
-class _EmptyPairs extends StatelessWidget {
-  const _EmptyPairs({required this.hasDevice});
+class _ActivityPanel extends StatelessWidget {
+  const _ActivityPanel({
+    required this.controller,
+    required this.expanded,
+    required this.onToggle,
+  });
 
-  final bool hasDevice;
+  final SyncDashboardController? controller;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
-    return Center(
+    final theme = Theme.of(context);
+    final lines = controller?.log ?? const <String>[];
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: theme.colors.muted,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              FLucideIcons.folderOpen,
-              size: 24,
-              color: theme.colors.mutedForeground,
+          InkWell(
+            key: const ValueKey<String>('sync.log.toggle'),
+            onTap: onToggle,
+            child: SizedBox(
+              height: 38,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.terminal,
+                      size: 16,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Activity',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${lines.length} lines',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      expanded ? Icons.expand_more : Icons.expand_less,
+                      size: 18,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 14),
-          Text(
-            hasDevice ? 'No pairs for this device.' : 'No devices yet.',
-            style: theme.typography.body.md.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            hasDevice
-                ? 'Add a pair in Devices to choose a local folder and a mount.'
-                : 'Add a device in Devices, then add a pair to it.',
-            style: theme.typography.body.sm.copyWith(
-              color: theme.colors.mutedForeground,
-            ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: expanded
+                ? SizedBox(
+                    height: 168,
+                    child: lines.isEmpty
+                        ? Center(
+                            child: Text(
+                              'No activity yet.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            reverse: true,
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                            itemCount: lines.length,
+                            itemBuilder: (context, index) {
+                              final line = lines[lines.length - 1 - index];
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 2,
+                                ),
+                                child: Text(
+                                  line,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    fontFamily: 'monospace',
+                                    fontSize: 11,
+                                    color: line.contains('ERROR')
+                                        ? theme.colorScheme.error
+                                        : theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),

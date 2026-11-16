@@ -73,14 +73,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "3.0.8"
-  cupertino_ui:
-    dependency: transitive
-    description:
-      name: cupertino_ui
-      sha256: "369e39a1c5c030a6212589c3da1809920b1c2cfade7b02aade7695bfa4b88c3a"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "1.1.6"
   fake_async:
     dependency: transitive
     description:
@@ -174,11 +166,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "6.0.0"
-  flutter_localizations:
-    dependency: transitive
-    description: flutter
-    source: sdk
-    version: "0.0.0"
   flutter_test:
     dependency: "direct dev"
     description: flutter
@@ -197,22 +184,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "11.0.0"
-  forui:
-    dependency: "direct main"
-    description:
-      name: forui
-      sha256: af6dcb2f57467c39bc808b6576d6dfdad19be7caf788bdd89d8b2fe3b6a521a2
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "0.27.7"
-  forui_lucide:
-    dependency: transitive
-    description:
-      name: forui_lucide
-      sha256: "63c660e4213309d9558cfc1c10ec52c13dab88cc2794dc41b8be769a7c86206c"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "0.27.0"
   hooks:
     dependency: transitive
     description:
@@ -237,14 +208,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "4.1.2"
-  intl:
-    dependency: transitive
-    description:
-      name: intl
-      sha256: "1ca20c894b1717686a2319b8548763d812bc0aabdac580420a44c5178c57a867"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "0.20.3"
   jni:
     dependency: transitive
     description:
@@ -333,14 +296,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "0.13.0"
-  material_ui:
-    dependency: transitive
-    description:
-      name: material_ui
-      sha256: "474c135fd46b56ff1d35ca982155e8863d28fbc6464d1192acf4ee53a738680e"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "1.11.0"
   meta:
     dependency: transitive
     description:
@@ -538,14 +493,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "1.4.1"
-  sugar:
-    dependency: transitive
-    description:
-      name: sugar
-      sha256: a0a97f1d3552a3ef4cbec7c6e62c7b52c151cd5c11e984e8311700a918f73dc5
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "4.0.0"
   term_glyph:
     dependency: transitive
     description:

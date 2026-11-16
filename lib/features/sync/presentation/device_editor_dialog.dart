@@ -1,5 +1,4 @@
-import 'package:flutter/widgets.dart';
-import 'package:forui/forui.dart';
+import 'package:flutter/material.dart';
 
 import '../../transport/http_transport.dart';
 import '../application/sync_client_config.dart';
@@ -22,21 +21,16 @@ Future<DeviceEditorResult?> showDeviceEditorDialog({
   required BuildContext context,
   required Set<String> existingNames,
 }) {
-  return showFDialog<DeviceEditorResult>(
+  return showDialog<DeviceEditorResult>(
     context: context,
     barrierDismissible: false,
-    builder: (context, style, animation) =>
-        _DeviceEditorDialog(animation: animation, existingNames: existingNames),
+    builder: (context) => _DeviceEditorDialog(existingNames: existingNames),
   );
 }
 
 class _DeviceEditorDialog extends StatefulWidget {
-  const _DeviceEditorDialog({
-    required this.animation,
-    required this.existingNames,
-  });
+  const _DeviceEditorDialog({required this.existingNames});
 
-  final Animation<double> animation;
   final Set<String> existingNames;
 
   @override
@@ -51,9 +45,6 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
   List<String> _mounts = const [];
   bool _detecting = false;
   String? _detectError;
-
-  static const _mountItemHeight = 36.0;
-  static const _maxMountsVisible = 3;
 
   @override
   void dispose() {
@@ -72,7 +63,6 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
       return (uri.host, uri.port);
     }
 
-    // Handle host:port without scheme
     final lastColon = text.lastIndexOf(':');
     if (lastColon > 0 && !text.substring(lastColon + 1).contains(':')) {
       final port = int.tryParse(text.substring(lastColon + 1));
@@ -101,9 +91,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
     return null;
   }
 
-  bool get _canConfirm {
-    return _nameError == null && _addressError == null;
-  }
+  bool get _canConfirm => _nameError == null && _addressError == null;
 
   Future<void> _detectAccess() async {
     if (_detecting) return;
@@ -113,19 +101,16 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
     }
 
     final (host, port) = _parseAddress(_address.text);
-    final baseUrl = 'http://$host:$port';
-    final token = _token.text.trim();
+    final transport = HttpTransport(
+      baseUrl: 'http://$host:$port',
+      token: _token.text.trim(),
+      timeout: const Duration(seconds: 15),
+    );
 
     setState(() {
       _detecting = true;
       _detectError = null;
     });
-
-    final transport = HttpTransport(
-      baseUrl: baseUrl,
-      token: token,
-      timeout: const Duration(seconds: 15),
-    );
 
     try {
       final json = await transport.getJson('');
@@ -169,224 +154,202 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
-    final mountsHeight = _mounts.isEmpty
-        ? 0.0
-        : (_mounts.length > _maxMountsVisible
-              ? _maxMountsVisible * _mountItemHeight
-              : _mounts.length * _mountItemHeight);
-
-    return FDialog(
-      animation: widget.animation,
-      constraints: const BoxConstraints(minWidth: 480, maxWidth: 560),
-      builder: (context, style) => Padding(
-        padding: const EdgeInsets.all(22),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: theme.colors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
+    final theme = Theme.of(context);
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 540),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.router_outlined,
+                      size: 18,
+                      color: theme.colorScheme.primary,
+                    ),
                   ),
-                  child: Icon(
-                    FLucideIcons.router,
-                    size: 16,
-                    color: theme.colors.primary,
+                  const SizedBox(width: 10),
+                  Text(
+                    'Add device',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Text('Add device', style: style.titleTextStyle),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Enter the peer device address and shared token. "Detect access" '
-              'verifies the connection and lists its mounts.',
-              style: theme.typography.body.xs.copyWith(
-                color: theme.colors.mutedForeground,
+                ],
               ),
-            ),
-            const SizedBox(height: 18),
-            _Field(
-              label: 'Device name',
-              child: FTextField(
+              const SizedBox(height: 6),
+              Text(
+                'Enter the peer device address and shared token. "Detect '
+                'access" verifies the connection and lists its mounts.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 18),
+              TextField(
                 key: const ValueKey<String>('device.name'),
-                control: FTextFieldControl.managed(
-                  controller: _name,
-                  onChange: (_) => setState(() {}),
+                controller: _name,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Device name',
+                  hintText: "Likianta's Windows Computer in Office",
+                  errorText: _nameError,
                 ),
-                hint: "Likianta's Windows Computer in Office",
-                error: _nameError == null ? null : Text(_nameError!),
+                onChanged: (_) => setState(() {}),
               ),
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Address',
-              child: FTextField(
+              const SizedBox(height: 14),
+              TextField(
                 key: const ValueKey<String>('device.address'),
-                control: FTextFieldControl.managed(
-                  controller: _address,
-                  onChange: (_) {
-                    setState(() {
-                      _mounts = const [];
-                      _detectError = null;
-                    });
-                  },
-                ),
-                hint: '47.102.108.149:2160',
+                controller: _address,
                 keyboardType: TextInputType.url,
-                error: _addressError == null ? null : Text(_addressError!),
+                decoration: InputDecoration(
+                  labelText: 'Address',
+                  hintText: '47.102.108.149:2160',
+                  errorText: _addressError,
+                ),
+                onChanged: (_) {
+                  setState(() {
+                    _mounts = const [];
+                    _detectError = null;
+                  });
+                },
               ),
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Secret token',
-              child: FTextField.password(
+              const SizedBox(height: 14),
+              TextField(
                 key: const ValueKey<String>('device.token'),
-                control: FTextFieldControl.managed(controller: _token),
-                hint: '24a3f252df3f151002dd7261036bbbcb54c3efbf214ad04d',
+                controller: _token,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Secret token',
+                  hintText: '24a3f252df3f151002dd7261036bbbcb54c3efbf214ad04d',
+                ),
               ),
-            ),
-
-            // Animated mounts list
-            AnimatedSize(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: _mounts.isEmpty && _detectError == null
-                  ? const SizedBox.shrink()
-                  : Padding(
-                      padding: const EdgeInsets.only(top: 14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (_detectError != null)
-                            FAlert(
-                              variant: FAlertVariant.destructive,
-                              title: const Text('Cannot reach device'),
-                              subtitle: Text(_detectError!),
-                              icon: const Icon(FLucideIcons.circleAlert),
-                            ),
-                          if (_mounts.isNotEmpty) ...[
-                            Row(
-                              children: [
-                                Icon(
-                                  FLucideIcons.server,
-                                  size: 14,
-                                  color: theme.colors.mutedForeground,
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                alignment: Alignment.topCenter,
+                child: _mounts.isEmpty && _detectError == null
+                    ? const SizedBox.shrink()
+                    : Padding(
+                        padding: const EdgeInsets.only(top: 14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (_detectError != null)
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.errorContainer
+                                      .withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(8),
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Available mounts (${_mounts.length})',
-                                  style: theme.typography.body.xs.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    color: theme.colors.mutedForeground,
+                                child: Text(
+                                  'Cannot reach device: $_detectError',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onErrorContainer,
                                   ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            SizedBox(
-                              height: mountsHeight,
-                              child: FItemGroup(
-                                divider: FItemDivider.full,
+                              ),
+                            if (_mounts.isNotEmpty) ...[
+                              Row(
                                 children: [
-                                  for (final mount in _mounts)
-                                    FItem(
-                                      prefix: Icon(
-                                        FLucideIcons.folder,
-                                        size: 14,
-                                        color: theme.colors.mutedForeground,
-                                      ),
-                                      title: Text(
-                                        mount,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: theme.typography.body.sm
-                                            .copyWith(fontFamily: 'monospace'),
-                                      ),
+                                  Icon(
+                                    Icons.dns_outlined,
+                                    size: 14,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Available mounts (${_mounts.length})',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: theme.colorScheme.onSurfaceVariant,
                                     ),
+                                  ),
                                 ],
                               ),
-                            ),
+                              const SizedBox(height: 6),
+                              Container(
+                                constraints: const BoxConstraints(
+                                  maxHeight: 112,
+                                ),
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: theme.colorScheme.outlineVariant,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: ListView(
+                                  shrinkWrap: true,
+                                  padding: EdgeInsets.zero,
+                                  children: [
+                                    for (final mount in _mounts)
+                                      ListTile(
+                                        dense: true,
+                                        leading: const Icon(
+                                          Icons.folder_outlined,
+                                          size: 16,
+                                        ),
+                                        title: Text(
+                                          mount,
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                                fontFamily: 'monospace',
+                                              ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
-                    ),
-            ),
-
-            const SizedBox(height: 22),
-            Row(
-              children: [
-                FButton(
-                  key: const ValueKey<String>('device.detect'),
-                  variant: FButtonVariant.outline,
-                  onPress: _detecting ? null : _detectAccess,
-                  prefix: _detecting
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: FCircularProgress(),
-                        )
-                      : Icon(
-                          FLucideIcons.rss,
-                          size: 14,
-                          color: theme.colors.mutedForeground,
                         ),
-                  child: Text(_detecting ? 'Detecting...' : 'Detect access'),
-                ),
-                const Spacer(),
-                FButton(
-                  key: const ValueKey<String>('device.cancel'),
-                  variant: FButtonVariant.ghost,
-                  onPress: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 8),
-                FButton(
-                  key: const ValueKey<String>('device.confirm'),
-                  onPress: _canConfirm ? _confirm : null,
-                  child: const Text('Add device'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Field extends StatelessWidget {
-  const _Field({required this.label, required this.child});
-
-  final String label;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.theme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 6),
-          child: Text(
-            label,
-            style: theme.typography.body.xs.copyWith(
-              color: theme.colors.mutedForeground,
-              fontWeight: FontWeight.w600,
-            ),
+                      ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    key: const ValueKey<String>('device.detect'),
+                    onPressed: _detecting ? null : _detectAccess,
+                    icon: _detecting
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.wifi_tethering, size: 16),
+                    label: Text(_detecting ? 'Detecting...' : 'Detect access'),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    key: const ValueKey<String>('device.cancel'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    key: const ValueKey<String>('device.confirm'),
+                    onPressed: _canConfirm ? _confirm : null,
+                    child: const Text('Add device'),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
-        child,
-      ],
+      ),
     );
   }
 }

@@ -13,7 +13,7 @@ import '../domain/sync_plan.dart';
 
 enum SyncDashboardStatus { idle, scanning, applying, resolving, error }
 
-/// Drives one sync pair for the dashboard.
+/// Drives one sync pair for the new tree-based dashboard.
 final class SyncDashboardController extends ChangeNotifier {
   SyncDashboardController({required this.config});
 
@@ -24,7 +24,6 @@ final class SyncDashboardController extends ChangeNotifier {
   SyncReport? _report;
   String? _errorMessage;
   int _applied = 0;
-  int _total = 0;
   String? _currentPath;
   ScanPhase? _scanPhase;
   int _scanned = 0;
@@ -42,17 +41,7 @@ final class SyncDashboardController extends ChangeNotifier {
 
   int get applied => _applied;
 
-  int get total => _total;
-
   String? get currentPath => _currentPath;
-
-  /// Conflicts from the last check, or from the last sync when the preview
-  /// has already been cleared.
-  List<SyncConflict> get conflicts {
-    return _preview?.plan.conflicts ??
-        _report?.preview.plan.conflicts ??
-        const <SyncConflict>[];
-  }
 
   List<String> get log => List.unmodifiable(_log);
 
@@ -61,57 +50,53 @@ final class SyncDashboardController extends ChangeNotifier {
       _status == SyncDashboardStatus.applying ||
       _status == SyncDashboardStatus.resolving;
 
-  bool get canRun => !busy;
+  String? get selectionHint => null;
 
   String get statusLabel {
     return switch (_status) {
-      SyncDashboardStatus.idle => 'Ready',
+      SyncDashboardStatus.idle => _idleLabel,
       SyncDashboardStatus.scanning => _scanLabel,
-      SyncDashboardStatus.applying => 'Applying $_applied / $_total...',
+      SyncDashboardStatus.applying =>
+        _applied == 0 ? 'Applying...' : 'Applying... $_applied actions',
       SyncDashboardStatus.resolving => 'Resolving conflicts...',
       SyncDashboardStatus.error => 'Error',
     };
   }
 
+  String get _idleLabel {
+    final report = _report;
+    if (report == null) return 'Ready';
+    final apply = report.applyReport;
+    if (apply == null) return 'Ready';
+    return 'Last run: ${apply.total} actions · '
+        '${report.conflictCount} conflicts';
+  }
+
   String get _scanLabel {
     return switch (_scanPhase) {
-      ScanPhase.local => 'Scanning local files... $_scanned scanned',
+      ScanPhase.local => 'Scanning local files... $_scanned',
       ScanPhase.remote =>
         _scanned == 0
             ? 'Downloading remote manifest...'
-            : 'Scanning remote files... $_scanned scanned',
+            : 'Scanning remote files... $_scanned',
       null => 'Starting scan...',
     };
   }
 
-  Future<void> check() async {
+  /// Re-scans both sides and rebuilds the trees without touching the disk.
+  Future<void> refresh() async {
     if (busy) return;
-
     _status = SyncDashboardStatus.scanning;
     _errorMessage = null;
-    _preview = null;
-    _report = null;
-    _applied = 0;
-    _total = 0;
-    _currentPath = null;
     _scanPhase = null;
     _scanned = 0;
-    _log.clear();
-    _appendLog('Scanning both sides...');
     _notify();
 
     final engine = _createEngine();
     try {
       await Directory(config.localRoot).create(recursive: true);
-      final preview = await engine.preview(onProgress: _onScanProgress);
-      _preview = preview;
+      _preview = await engine.preview(onProgress: _onScanProgress);
       _status = SyncDashboardStatus.idle;
-      _appendLog(
-        'Plan: ${preview.plan.createCount} create, '
-        '${preview.plan.updateCount} update, '
-        '${preview.plan.deleteCount} delete, '
-        '${preview.plan.conflicts.length} conflicts.',
-      );
     } catch (error) {
       _fail(error);
     } finally {
@@ -120,40 +105,51 @@ final class SyncDashboardController extends ChangeNotifier {
     }
   }
 
-  Future<void> sync() async {
+  /// Refreshes and logs the plan summary, used by the Check sheet.
+  Future<void> check() async {
     if (busy) return;
-
-    _status = SyncDashboardStatus.scanning;
-    _errorMessage = null;
+    _log.clear();
     _report = null;
     _applied = 0;
-    _total = 0;
     _currentPath = null;
-    _scanPhase = null;
-    _scanned = 0;
-    _log.clear();
     _appendLog('Scanning both sides...');
+    await refresh();
+    final plan = _preview?.plan;
+    if (plan != null) {
+      _appendLog(
+        'Plan: ${plan.createCount} create, '
+        '${plan.updateCount} update, '
+        '${plan.deleteCount} delete, '
+        '${plan.conflicts.length} conflicts.',
+      );
+      _notify();
+    }
+  }
+
+  /// Runs a two-way or one-way sync for [subPath] (null means the whole tree).
+  Future<void> run({required SyncDirection direction, String? subPath}) async {
+    if (busy) return;
+    if (_preview == null) {
+      await refresh();
+      if (_preview == null || _status == SyncDashboardStatus.error) return;
+    }
+
+    _status = SyncDashboardStatus.applying;
+    _errorMessage = null;
+    _applied = 0;
+    _currentPath = null;
+    _appendLog(
+      '${_directionLabel(direction)} '
+      '${subPath == null || subPath.isEmpty ? 'whole tree' : subPath}...',
+    );
     _notify();
 
     final engine = _createEngine();
     try {
-      await Directory(config.localRoot).create(recursive: true);
-      final preview = await engine.preview(onProgress: _onScanProgress);
-      _preview = preview;
-      _total = preview.plan.actions.length;
-      _notify();
-
-      if (_total == 0 && preview.plan.conflicts.isEmpty) {
-        _status = SyncDashboardStatus.idle;
-        _appendLog('Already in sync.');
-        return;
-      }
-
-      _status = SyncDashboardStatus.applying;
-      _notify();
-
       final report = await engine.execute(
-        preview,
+        _preview!,
+        direction: direction,
+        subPath: subPath,
         onAction: (action) {
           _applied++;
           _currentPath = action.path;
@@ -162,11 +158,6 @@ final class SyncDashboardController extends ChangeNotifier {
         },
       );
       _report = report;
-      // The table is cleared after a sync; the preview area then shows a
-      // summary instead of a stale plan.
-      _preview = null;
-      _status = SyncDashboardStatus.idle;
-
       final apply = report.applyReport;
       if (apply != null) {
         _appendLog(
@@ -179,9 +170,11 @@ final class SyncDashboardController extends ChangeNotifier {
       if (report.hasConflicts) {
         _appendLog(
           '${report.conflictCount} conflict(s) left untouched. '
-          'Copies: ${report.conflictBackupRoot ?? config.stateDir}.',
+          'Backups: ${report.conflictBackupRoot}.',
         );
       }
+      _status = SyncDashboardStatus.idle;
+      _preview = await engine.preview(onProgress: _onScanProgress);
     } catch (error) {
       _fail(error);
     } finally {
@@ -190,41 +183,29 @@ final class SyncDashboardController extends ChangeNotifier {
     }
   }
 
-  void clearError() {
-    if (_errorMessage == null) return;
-    _errorMessage = null;
-    _notify();
+  /// Conflicts from the last check, or from the last executed run.
+  List<SyncConflict> get conflicts {
+    return _preview?.plan.conflicts ??
+        _report?.plan.conflicts ??
+        const <SyncConflict>[];
   }
 
-  Future<void> resolveConflict(String path, ConflictSide side) {
-    return _resolve({path: side});
-  }
-
-  Future<void> resolveAllConflicts(ConflictSide side) {
-    return _resolve({for (final conflict in conflicts) conflict.path: side});
-  }
-
-  Future<void> _resolve(Map<String, ConflictSide> choices) async {
-    if (busy || choices.isEmpty) return;
+  Future<void> resolveConflict(String path, ConflictSide side) async {
+    if (busy) return;
     final preview = _preview ?? _report?.preview;
     if (preview == null) return;
 
-    final side = choices.values.first;
-    final sideName = side == ConflictSide.left ? 'local' : 'remote';
     _status = SyncDashboardStatus.resolving;
     _errorMessage = null;
-    _applied = 0;
-    _total = 0;
-    _scanPhase = null;
-    _scanned = 0;
     _appendLog(
-      'Resolving ${choices.length} conflict(s) by keeping $sideName...',
+      'Resolving $path by keeping '
+      '${side == ConflictSide.left ? 'local' : 'remote'}...',
     );
     _notify();
 
     final engine = _createEngine();
     try {
-      final result = await engine.resolveConflicts(preview, choices);
+      final result = await engine.resolveConflicts(preview, {path: side});
       _preview = await engine.preview();
       _status = SyncDashboardStatus.idle;
       _appendLog(
@@ -237,6 +218,15 @@ final class SyncDashboardController extends ChangeNotifier {
       await engine.dispose();
       _notify();
     }
+  }
+
+  void clearError() {
+    if (_errorMessage == null) return;
+    _errorMessage = null;
+    if (_status == SyncDashboardStatus.error) {
+      _status = SyncDashboardStatus.idle;
+    }
+    _notify();
   }
 
   void _onScanProgress(ScanPhase phase, int scanned) {
@@ -287,9 +277,7 @@ final class SyncDashboardController extends ChangeNotifier {
   String _describe(Object error) {
     if (error is RemoteException) {
       final hint = switch (error.statusCode) {
-        401 =>
-          'Authentication failed. Set the same token on the server and '
-              'client.',
+        401 => 'Authentication failed. Set the same token on both sides.',
         404 =>
           'Mount or path not found. The URL must include the mount name, '
               'for example http://host:2160/photolens.',
@@ -302,8 +290,7 @@ final class SyncDashboardController extends ChangeNotifier {
     }
     if (error is SocketException) {
       return 'Cannot reach ${config.remoteUrl}.\n'
-          'Check that the Windows server is running and that the tunnel '
-          'forwards the public port to it.';
+          'Check that the peer file server is running and reachable.';
     }
     if (error is SyncDivergenceException) {
       return 'Sync finished but the two sides diverged: $error';
@@ -317,6 +304,14 @@ final class SyncDashboardController extends ChangeNotifier {
     if (_log.length > 500) {
       _log.removeAt(0);
     }
+  }
+
+  static String _directionLabel(SyncDirection direction) {
+    return switch (direction) {
+      SyncDirection.both => 'Syncing',
+      SyncDirection.push => 'Pushing',
+      SyncDirection.pull => 'Pulling',
+    };
   }
 
   static String _formatAction(SyncAction action) {
@@ -340,9 +335,7 @@ final class SyncDashboardController extends ChangeNotifier {
   }
 
   void _notify() {
-    if (!_disposed) {
-      notifyListeners();
-    }
+    if (!_disposed) notifyListeners();
   }
 
   @override

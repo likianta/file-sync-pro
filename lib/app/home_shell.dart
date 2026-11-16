@@ -1,12 +1,11 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
-import 'package:forui/forui.dart';
+import 'package:flutter/material.dart';
 
 import '../features/server/presentation/file_server_page.dart';
 import '../features/sync/application/sync_config_store.dart';
 import '../features/sync/presentation/devices_page.dart';
 import '../features/sync/presentation/sync_workspace_page.dart';
-import 'forui_theme.dart';
+import 'theme.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({
@@ -51,67 +50,129 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
-    return FScaffold(
-      childPad: false,
-      scaffoldStyle: AppForuiTheme.scaffoldStyle(dark: widget.isDark),
-      sidebar: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border(right: BorderSide(color: theme.colors.border)),
-        ),
-        child: FSidebar(
-          header: const _Brand(),
-          footer: _SidebarFooter(
-            isDark: widget.isDark,
-            onToggleTheme: widget.onToggleTheme,
-          ),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
-              child: Text(
-                'WORKSPACE',
-                style: theme.typography.body.xs.copyWith(
-                  color: theme.colors.mutedForeground,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.9,
-                ),
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            width: 232,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              border: Border(
+                right: BorderSide(color: theme.colorScheme.outlineVariant),
               ),
             ),
-            FSidebarGroup(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                FSidebarItem(
-                  icon: const Icon(FLucideIcons.refreshCw),
-                  label: const Text('Sync'),
+                const _Brand(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
+                  child: Text(
+                    'WORKSPACE',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.9,
+                    ),
+                  ),
+                ),
+                _NavItem(
+                  icon: Icons.sync,
+                  label: 'Sync',
                   selected: _index == 0,
-                  onPress: () => setState(() => _index = 0),
+                  onTap: () => setState(() => _index = 0),
                 ),
-                FSidebarItem(
-                  icon: const Icon(FLucideIcons.router),
-                  label: const Text('Devices'),
+                _NavItem(
+                  icon: Icons.devices_other,
+                  label: 'Devices',
                   selected: _index == 1,
-                  onPress: () => setState(() => _index = 1),
+                  onTap: () => setState(() => _index = 1),
                 ),
-                FSidebarItem(
-                  icon: const Icon(FLucideIcons.server),
-                  label: const Text('File server'),
+                _NavItem(
+                  icon: Icons.dns_outlined,
+                  label: 'File server',
                   selected: _index == 2,
-                  onPress: () => setState(() => _index = 2),
+                  onTap: () => setState(() => _index = 2),
+                ),
+                const Spacer(),
+                _SidebarFooter(
+                  isDark: widget.isDark,
+                  onToggleTheme: widget.onToggleTheme,
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-      child: IndexedStack(
-        index: _index,
-        children: [
-          SyncWorkspacePage(store: _store),
-          DevicesPage(store: _store),
-          FileServerPage(
-            configPath: widget.serverConfigPath,
-            projectRoot: widget.projectRoot,
+          ),
+          Expanded(
+            child: IndexedStack(
+              index: _index,
+              children: [
+                SyncWorkspacePage(store: _store),
+                DevicesPage(store: _store),
+                FileServerPage(
+                  configPath: widget.serverConfigPath,
+                  projectRoot: widget.projectRoot,
+                ),
+              ],
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = selected
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 1),
+      child: Material(
+        color: selected ? AppTheme.selectedColor(context) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          key: ValueKey<String>('nav.$label'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: SizedBox(
+            height: 38,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: [
+                  Icon(icon, size: 18, color: color),
+                  const SizedBox(width: 10),
+                  Text(
+                    label,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: selected
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurface,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -122,7 +183,7 @@ class _Brand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
       child: Row(
@@ -131,14 +192,10 @@ class _Brand extends StatelessWidget {
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: theme.colors.primary,
+              color: theme.colorScheme.primary,
               borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(
-              FLucideIcons.arrowRightLeft,
-              size: 17,
-              color: theme.colors.primaryForeground,
-            ),
+            child: const Icon(Icons.swap_horiz, size: 19, color: Colors.white),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -149,15 +206,15 @@ class _Brand extends StatelessWidget {
                   'File Sync Pro',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.typography.body.sm.copyWith(
+                  style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                     letterSpacing: -0.2,
                   ),
                 ),
                 Text(
                   'LAN file sync',
-                  style: theme.typography.body.xs.copyWith(
-                    color: theme.colors.mutedForeground,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -177,25 +234,27 @@ class _SidebarFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          FButton(
-            variant: FButtonVariant.ghost,
-            size: FButtonSizeVariant.sm,
-            onPress: onToggleTheme,
-            prefix: Icon(
-              isDark ? FLucideIcons.sun : FLucideIcons.moon,
-              size: 15,
+          TextButton.icon(
+            onPressed: onToggleTheme,
+            icon: Icon(
+              isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+              size: 16,
             ),
-            child: Text(isDark ? 'Light mode' : 'Dark mode'),
+            label: Text(isDark ? 'Light mode' : 'Dark mode'),
+            style: TextButton.styleFrom(
+              alignment: Alignment.centerLeft,
+              foregroundColor: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Row(
               children: [
                 Container(
@@ -207,12 +266,10 @@ class _SidebarFooter extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'v0.3.0 · desktop',
-                    style: theme.typography.body.xs.copyWith(
-                      color: theme.colors.mutedForeground,
-                    ),
+                Text(
+                  'v0.3.0 · desktop',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],

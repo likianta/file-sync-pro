@@ -1,10 +1,10 @@
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
-import 'package:forui/forui.dart';
 
+import '../../../app/ui.dart';
 import 'file_server_controller.dart';
 
 class FileServerPage extends StatefulWidget {
@@ -15,6 +15,7 @@ class FileServerPage extends StatefulWidget {
   });
 
   final String configPath;
+
   final String projectRoot;
 
   @override
@@ -66,19 +67,19 @@ class _FileServerPageState extends State<FileServerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
+        final theme = Theme.of(context);
         if (_loadError != null) {
           return Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 520),
-              child: FAlert(
-                variant: FAlertVariant.destructive,
-                title: const Text('Cannot read server config'),
-                subtitle: Text(_loadError!),
-                icon: const Icon(FLucideIcons.circleAlert),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: AppErrorBanner(
+                  message: 'Cannot read server config: $_loadError',
+                ),
               ),
             ),
           );
@@ -91,13 +92,13 @@ class _FileServerPageState extends State<FileServerPage> {
                 const SizedBox(
                   width: 16,
                   height: 16,
-                  child: FCircularProgress(),
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 const SizedBox(width: 10),
                 Text(
                   'Loading settings...',
-                  style: theme.typography.body.sm.copyWith(
-                    color: theme.colors.mutedForeground,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -112,14 +113,19 @@ class _FileServerPageState extends State<FileServerPage> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 1080),
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _buildConnectionCard(context),
                         if (_controller.errorMessage != null) ...[
                           const SizedBox(height: 12),
-                          _buildError(context),
+                          AppErrorBanner(
+                            message:
+                                'File server error: '
+                                '${_controller.errorMessage}',
+                            onDismiss: _controller.clearError,
+                          ),
                         ],
                         const SizedBox(height: 14),
                         _buildMountsCard(context),
@@ -136,19 +142,20 @@ class _FileServerPageState extends State<FileServerPage> {
   }
 
   Widget _buildHeader(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     final running = _controller.status == FileServerStatus.running;
     final color = _controller.status == FileServerStatus.error
-        ? theme.colors.destructive
+        ? theme.colorScheme.error
         : running
         ? const Color(0xFF2EA121)
-        : theme.colors.mutedForeground;
+        : theme.colorScheme.onSurfaceVariant;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
       decoration: BoxDecoration(
-        color: theme.colors.background,
-        border: Border(bottom: BorderSide(color: theme.colors.border)),
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
       ),
       child: Row(
         children: [
@@ -156,13 +163,13 @@ class _FileServerPageState extends State<FileServerPage> {
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: theme.colors.primary.withValues(alpha: 0.1),
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              FLucideIcons.server,
-              size: 16,
-              color: theme.colors.primary,
+              Icons.dns_outlined,
+              size: 18,
+              color: theme.colorScheme.primary,
             ),
           ),
           const SizedBox(width: 10),
@@ -172,17 +179,16 @@ class _FileServerPageState extends State<FileServerPage> {
               children: [
                 Text(
                   'File server',
-                  style: theme.typography.body.xl.copyWith(
+                  style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
-                    letterSpacing: -0.3,
                   ),
                 ),
                 Text(
                   'Share folders with other devices over HTTP on the LAN.',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.typography.body.sm.copyWith(
-                    color: theme.colors.mutedForeground,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -197,22 +203,22 @@ class _FileServerPageState extends State<FileServerPage> {
           const SizedBox(width: 7),
           Text(
             _controller.statusLabel,
-            style: theme.typography.body.sm.copyWith(
+            style: theme.textTheme.bodySmall?.copyWith(
               color: color,
               fontWeight: FontWeight.w500,
             ),
           ),
           const SizedBox(width: 12),
-          FButton(
+          FilledButton.icon(
             key: const ValueKey<String>('server.run'),
-            onPress: _controller.isRunning
+            onPressed: _controller.isRunning
                 ? _controller.stop
                 : _controller.start,
-            prefix: Icon(
-              _controller.isRunning ? FLucideIcons.square : FLucideIcons.play,
-              size: 15,
+            icon: Icon(
+              _controller.isRunning ? Icons.stop : Icons.play_arrow,
+              size: 17,
             ),
-            child: Text(
+            label: Text(
               _controller.isRunning ? 'Stop server' : 'Run file server',
             ),
           ),
@@ -222,8 +228,8 @@ class _FileServerPageState extends State<FileServerPage> {
   }
 
   Widget _buildConnectionCard(BuildContext context) {
-    final theme = context.theme;
-    return FCard(
+    final theme = Theme.of(context);
+    return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
         child: Column(
@@ -232,14 +238,14 @@ class _FileServerPageState extends State<FileServerPage> {
             Row(
               children: [
                 Icon(
-                  FLucideIcons.settings,
-                  size: 15,
-                  color: theme.colors.mutedForeground,
+                  Icons.settings_outlined,
+                  size: 16,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 7),
                 Text(
                   'Connection',
-                  style: theme.typography.body.md.copyWith(
+                  style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -249,36 +255,35 @@ class _FileServerPageState extends State<FileServerPage> {
                     'Bind address and the token every client must send.',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.typography.body.xs.copyWith(
-                      color: theme.colors.mutedForeground,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            FTextField(
+            TextField(
               key: const ValueKey<String>('server.token'),
-              control: FTextFieldControl.managed(
-                controller: _tokenController,
-                onChange: (value) => _controller.updateToken(value.text),
-              ),
+              controller: _tokenController,
               enabled: !_controller.isRunning,
               obscureText: _obscureToken,
-              label: const Text('Input token'),
-              description: const Text(
-                'Clients must use the same token. It is required before the '
-                'server starts.',
-              ),
-              suffixBuilder: (context, style, variants) => FButton.icon(
-                variant: FButtonVariant.ghost,
-                onPress: () => setState(() => _obscureToken = !_obscureToken),
-                semanticsTooltip: _obscureToken ? 'Show token' : 'Hide token',
-                child: Icon(
-                  _obscureToken ? FLucideIcons.eye : FLucideIcons.eyeOff,
-                  size: 15,
+              decoration: InputDecoration(
+                labelText: 'Input token',
+                helperText:
+                    'Clients must use the same token. It is required '
+                    'before the server starts.',
+                suffixIcon: IconButton(
+                  tooltip: _obscureToken ? 'Show token' : 'Hide token',
+                  onPressed: () =>
+                      setState(() => _obscureToken = !_obscureToken),
+                  icon: Icon(
+                    _obscureToken ? Icons.visibility_off : Icons.visibility,
+                    size: 17,
+                  ),
                 ),
               ),
+              onChanged: (value) => _controller.updateToken(value),
             ),
             const SizedBox(height: 16),
             Row(
@@ -286,60 +291,71 @@ class _FileServerPageState extends State<FileServerPage> {
               children: [
                 Expanded(
                   flex: 3,
-                  child: FSelect<String>(
-                    key: const ValueKey<String>('server.ip'),
-                    control: FSelectControl<String>.lifted(
-                      value: _controller.selectedIp,
-                      onChange: (value) {
-                        if (value == null) return;
-                        _controller.selectAddress(value);
-                        _ipController.text = value;
-                      },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Local IPv4',
+                      helperText: 'Shown for reference; binding uses 0.0.0.0.',
+                      isDense: true,
                     ),
-                    items: {
-                      for (final address in _controller.addresses)
-                        address: address,
-                    },
-                    enabled: !_controller.isRunning,
-                    label: const Text('Local IPv4'),
-                    description: const Text(
-                      'Shown for reference; binding uses 0.0.0.0.',
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value:
+                            _controller.addresses.contains(
+                              _controller.selectedIp,
+                            )
+                            ? _controller.selectedIp
+                            : null,
+                        isDense: true,
+                        isExpanded: true,
+                        borderRadius: BorderRadius.circular(10),
+                        hint: const Text('No IPv4 address found'),
+                        items: [
+                          for (final address in _controller.addresses)
+                            DropdownMenuItem<String>(
+                              value: address,
+                              child: Text(address),
+                            ),
+                        ],
+                        onChanged: _controller.isRunning
+                            ? null
+                            : (value) {
+                                if (value == null) return;
+                                _controller.selectAddress(value);
+                                _ipController.text = value;
+                              },
+                      ),
                     ),
-                    hint: 'No IPv4 address found',
                   ),
                 ),
                 const SizedBox(width: 12),
                 SizedBox(
-                  width: 116,
-                  child: FTextField(
+                  width: 120,
+                  child: TextField(
                     key: const ValueKey<String>('server.port'),
-                    control: FTextFieldControl.managed(
-                      controller: _portController,
-                      onChange: (value) {
-                        final port = int.tryParse(value.text);
-                        if (port != null && port > 0 && port < 65536) {
-                          _controller.updatePort(port);
-                        }
-                      },
-                    ),
+                    controller: _portController,
                     enabled: !_controller.isRunning,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    label: const Text('Port'),
+                    decoration: const InputDecoration(labelText: 'Port'),
+                    onChanged: (value) {
+                      final port = int.tryParse(value);
+                      if (port != null && port > 0 && port < 65536) {
+                        _controller.updatePort(port);
+                      }
+                    },
                   ),
                 ),
                 const SizedBox(width: 12),
-                FButton(
+                OutlinedButton.icon(
                   key: const ValueKey<String>('server.refreshIp'),
-                  variant: FButtonVariant.outline,
-                  onPress: _controller.isRunning
+                  onPressed: _controller.isRunning
                       ? null
                       : () async {
                           await _controller.refreshAddresses();
                           _ipController.text = _controller.selectedIp ?? '';
                         },
-                  prefix: const Icon(FLucideIcons.refreshCw, size: 15),
-                  child: const Text('Refresh IP'),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Refresh IP'),
                 ),
               ],
             ),
@@ -348,8 +364,8 @@ class _FileServerPageState extends State<FileServerPage> {
               'The server listens on 0.0.0.0:${_controller.config.port}. '
               'Expose this port with your own frp/tunnel. Do not expose it '
               'without a token.',
-              style: theme.typography.body.xs.copyWith(
-                color: theme.colors.mutedForeground,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -358,36 +374,9 @@ class _FileServerPageState extends State<FileServerPage> {
     );
   }
 
-  Widget _buildError(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: FAlert(
-            variant: FAlertVariant.destructive,
-            title: const Text('File server error'),
-            subtitle: Text(_controller.errorMessage!),
-            icon: const Icon(FLucideIcons.circleAlert),
-          ),
-        ),
-        const SizedBox(width: 8),
-        FButton.icon(
-          key: const ValueKey<String>('server.error.dismiss'),
-          variant: FButtonVariant.ghost,
-          onPress: _controller.clearError,
-          semanticsTooltip: 'Dismiss',
-          child: const Icon(FLucideIcons.x, size: 15),
-        ),
-      ],
-    );
-  }
-
   Widget _buildMountsCard(BuildContext context) {
-    final theme = context.theme;
-    return FCard(
-      style: FCardStyleDelta.delta(
-        padding: EdgeInsetsGeometryDelta.value(EdgeInsets.zero),
-      ),
+    final theme = Theme.of(context);
+    return Card(
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -402,53 +391,51 @@ class _FileServerPageState extends State<FileServerPage> {
                     children: [
                       Text(
                         'Shared folders',
-                        style: theme.typography.body.md.copyWith(
+                        style: theme.textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         'Each folder is exposed as a named mount.',
-                        style: theme.typography.body.xs.copyWith(
-                          color: theme.colors.mutedForeground,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ],
                   ),
                 ),
-                FButton(
+                OutlinedButton.icon(
                   key: const ValueKey<String>('server.addMount'),
-                  variant: FButtonVariant.outline,
-                  onPress: _controller.isRunning ? null : _addMount,
-                  prefix: const Icon(FLucideIcons.plus, size: 15),
-                  child: const Text('Add folder'),
+                  onPressed: _controller.isRunning ? null : _addMount,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Add folder'),
                 ),
               ],
             ),
           ),
-          Container(height: 1, color: theme.colors.border),
+          Divider(height: 1, color: theme.colorScheme.outlineVariant),
           if (_controller.config.mounts.isEmpty)
             Padding(
               padding: const EdgeInsets.all(28),
               child: Center(
                 child: Text(
                   'No folders yet. Click "Add folder" to share one.',
-                  style: theme.typography.body.sm.copyWith(
-                    color: theme.colors.mutedForeground,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
             )
           else
-            FItemGroup(
-              divider: FItemDivider.full,
+            Column(
               children: [
                 for (
                   var index = 0;
                   index < _controller.config.mounts.length;
                   index++
                 )
-                  _mountItem(context, index),
+                  _mountRow(context, index),
               ],
             ),
         ],
@@ -456,100 +443,120 @@ class _FileServerPageState extends State<FileServerPage> {
     );
   }
 
-  FItem _mountItem(BuildContext context, int index) {
-    final theme = context.theme;
+  Widget _mountRow(BuildContext context, int index) {
+    final theme = Theme.of(context);
     final mount = _controller.config.mounts[index];
     final editing = _editingIndex == index;
     final nameEditable = !_controller.isRunning;
 
-    return FItem(
+    return Container(
       key: ValueKey<String>('server.mount.$index'),
-      prefix: Icon(
-        FLucideIcons.folder,
-        size: 15,
-        color: theme.colors.mutedForeground,
-      ),
-      title: editing
-          ? Row(
-              children: [
-                SizedBox(
-                  width: 200,
-                  child: FTextField(
-                    key: ValueKey<String>('server.mount.nameField.$index'),
-                    control: FTextFieldControl.managed(
-                      controller: _nameController,
-                    ),
-                    autofocus: true,
-                    onSubmit: (_) => _commitName(index),
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      decoration: BoxDecoration(
+        border: Border(
+          top: index == 0
+              ? BorderSide.none
+              : BorderSide(
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.5,
                   ),
                 ),
-                const SizedBox(width: 6),
-                FButton.icon(
-                  key: ValueKey<String>('server.mount.nameOk.$index'),
-                  variant: FButtonVariant.ghost,
-                  onPress: () => _commitName(index),
-                  semanticsTooltip: 'Save name',
-                  child: const Icon(FLucideIcons.check, size: 15),
-                ),
-                FButton.icon(
-                  key: ValueKey<String>('server.mount.nameCancel.$index'),
-                  variant: FButtonVariant.ghost,
-                  onPress: () => setState(() => _editingIndex = null),
-                  semanticsTooltip: 'Cancel',
-                  child: const Icon(FLucideIcons.x, size: 15),
-                ),
-              ],
-            )
-          : Text(
-              mount.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.typography.body.sm.copyWith(
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-      subtitle: Text(
-        mount.path.isEmpty ? 'Choose a folder...' : mount.path,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: theme.typography.body.xs.copyWith(
-          fontFamily: 'monospace',
-          color: theme.colors.mutedForeground,
         ),
       ),
-      suffix: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
         children: [
-          FButton.icon(
+          Icon(
+            Icons.folder_outlined,
+            size: 17,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                editing
+                    ? Row(
+                        children: [
+                          SizedBox(
+                            width: 200,
+                            child: TextField(
+                              key: ValueKey<String>(
+                                'server.mount.nameField.$index',
+                              ),
+                              controller: _nameController,
+                              autofocus: true,
+                              decoration: const InputDecoration(isDense: true),
+                              onSubmitted: (_) => _commitName(index),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            key: ValueKey<String>('server.mount.nameOk.$index'),
+                            tooltip: 'Save name',
+                            onPressed: () => _commitName(index),
+                            icon: const Icon(Icons.check, size: 16),
+                          ),
+                          IconButton(
+                            key: ValueKey<String>(
+                              'server.mount.nameCancel.$index',
+                            ),
+                            tooltip: 'Cancel',
+                            onPressed: () =>
+                                setState(() => _editingIndex = null),
+                            icon: const Icon(Icons.close, size: 16),
+                          ),
+                        ],
+                      )
+                    : Text(
+                        mount.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                const SizedBox(height: 2),
+                Text(
+                  mount.path.isEmpty ? 'Choose a folder...' : mount.path,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
             key: ValueKey<String>('server.mount.edit.$index'),
-            variant: FButtonVariant.ghost,
-            onPress: nameEditable
+            tooltip: 'Rename',
+            onPressed: nameEditable
                 ? () {
                     _nameController.text = mount.name;
                     setState(() => _editingIndex = index);
                   }
                 : null,
-            semanticsTooltip: 'Rename',
-            child: const Icon(FLucideIcons.pencil, size: 14),
+            icon: const Icon(Icons.edit_outlined, size: 16),
           ),
-          FButton.icon(
+          IconButton(
             key: ValueKey<String>('server.mount.browse.$index'),
-            variant: FButtonVariant.ghost,
-            onPress: _controller.isRunning ? null : () => _browse(index),
-            semanticsTooltip: 'Browse',
-            child: const Icon(FLucideIcons.folderOpen, size: 14),
+            tooltip: 'Browse',
+            onPressed: _controller.isRunning ? null : () => _browse(index),
+            icon: const Icon(Icons.folder_open_outlined, size: 16),
           ),
-          FButton.icon(
+          IconButton(
             key: ValueKey<String>('server.mount.delete.$index'),
-            variant: FButtonVariant.ghost,
-            onPress: _controller.isRunning
+            tooltip: 'Remove',
+            onPressed: _controller.isRunning
                 ? null
                 : () => _controller.removeMount(index),
-            semanticsTooltip: 'Remove',
-            child: Icon(
-              FLucideIcons.trash2,
-              size: 14,
-              color: theme.colors.destructive,
+            icon: Icon(
+              Icons.delete_outline,
+              size: 16,
+              color: theme.colorScheme.error,
             ),
           ),
         ],

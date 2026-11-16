@@ -1,13 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_sync_pro/app/forui_theme.dart';
+import 'package:file_sync_pro/app/theme.dart';
 import 'package:file_sync_pro/features/sync/application/sync_config_store.dart';
 import 'package:file_sync_pro/features/sync/presentation/devices_page.dart';
 import 'package:file_sync_pro/features/sync/presentation/sync_workspace_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forui/forui.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
@@ -26,13 +25,8 @@ void main() {
 
   Widget wrap(Widget child) {
     return MaterialApp(
-      localizationsDelegates: FLocalizations.localizationsDelegates,
-      supportedLocales: FLocalizations.supportedLocales,
-      builder: (context, child) => FTheme(
-        data: AppForuiTheme.light,
-        child: FToaster(child: FTooltipGroup(child: child!)),
-      ),
-      home: child,
+      theme: AppTheme.light,
+      home: Scaffold(body: child),
     );
   }
 
@@ -67,19 +61,31 @@ void main() {
 
     final store = await loadStore(configPath);
     await tester.pumpWidget(wrap(SyncWorkspacePage(store: store)));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(
       find.byKey(const ValueKey<String>('sync.device.select')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey<String>('sync.pair.tab.demo')),
+      find.byKey(const ValueKey<String>('sync.tree.left')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey<String>('sync.tree.right')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey<String>('sync.check')), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('sync.run')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('sync.pull')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('sync.push')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('sync.autoLocate')),
+      findsOneWidget,
+    );
     expect(find.text('THIS MACHINE'), findsOneWidget);
-    expect(find.text('PEER DEVICE'), findsOneWidget);
+    expect(find.text('Peer device'), findsOneWidget);
     expect(find.text('demo'), findsWidgets);
   });
 
@@ -95,10 +101,10 @@ void main() {
     await tester.pumpWidget(wrap(SyncWorkspacePage(store: store)));
     await tester.pumpAndSettle();
 
-    expect(find.text('No devices yet.'), findsOneWidget);
+    expect(find.text('No devices'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('sync.device.select')),
-      findsNothing,
+      findsOneWidget,
     );
   });
 

@@ -265,6 +265,98 @@ void main() {
         );
       });
 
+      test('syncs only the selected subtree', () async {
+        await engine().sync();
+
+        await _file(alice, 'docs/readme.md').writeAsString('docs edit\n');
+        await _file(alice, 'media/alice-note.md').writeAsString('media edit\n');
+
+        final scoped = engine();
+        final preview = await scoped.preview();
+        final report = await scoped.execute(preview, subPath: 'docs');
+
+        expect(report.plan.actions, isNotEmpty);
+        expect(
+          report.plan.actions.every(
+            (action) => action.path.startsWith('docs/'),
+          ),
+          isTrue,
+        );
+        expect(await _read(bob, 'docs/readme.md'), 'docs edit\n');
+        expect(await _read(bob, 'media/alice-note.md'), isNot('media edit\n'));
+
+        // The untouched subtree is still pending, while docs is settled.
+        final after = await engine().preview();
+        expect(after.plan.actions.map((action) => action.path), [
+          'media/alice-note.md',
+        ]);
+      });
+
+      test('push copies the selected subtree from left to right', () async {
+        await engine().sync();
+
+        await _file(alice, 'docs/readme.md').writeAsString('alice docs\n');
+        await _file(bob, 'shared/common.txt').writeAsString('bob shared\n');
+
+        final pushing = engine();
+        final preview = await pushing.preview();
+        final report = await pushing.execute(
+          preview,
+          direction: SyncDirection.push,
+          subPath: 'docs',
+        );
+
+        expect(report.plan.conflicts, isEmpty);
+        expect(await _read(bob, 'docs/readme.md'), 'alice docs\n');
+        expect(await _read(bob, 'shared/common.txt'), 'bob shared\n');
+
+        final after = await engine().preview();
+        expect(after.plan.actions.map((action) => action.path), [
+          'shared/common.txt',
+        ]);
+        expect(after.plan.conflicts, isEmpty);
+      });
+
+      test('pull copies the selected subtree from right to left', () async {
+        await engine().sync();
+
+        await _file(bob, 'docs/readme.md').writeAsString('bob docs\n');
+
+        final pulling = engine();
+        final preview = await pulling.preview();
+        await pulling.execute(
+          preview,
+          direction: SyncDirection.pull,
+          subPath: 'docs',
+        );
+
+        expect(await _read(alice, 'docs/readme.md'), 'bob docs\n');
+      });
+
+      test('push resolves conflicts in favor of the left side', () async {
+        await engine().sync();
+
+        await _file(alice, 'docs/readme.md').writeAsString('alice wins\n');
+        await _file(bob, 'docs/readme.md').writeAsString('bob loses\n');
+
+        final pushing = engine();
+        final preview = await pushing.preview();
+        expect(preview.plan.conflicts, hasLength(1));
+
+        final report = await pushing.execute(
+          preview,
+          direction: SyncDirection.push,
+          subPath: 'docs',
+        );
+
+        expect(report.plan.conflicts, isEmpty);
+        expect(await _read(bob, 'docs/readme.md'), 'alice wins\n');
+
+        final after = await engine().preview();
+        expect(after.plan.conflicts, isEmpty);
+        expect(after.plan.actions, isEmpty);
+      });
+
       test('syncs empty directories and removes them again', () async {
         await engine().sync();
 

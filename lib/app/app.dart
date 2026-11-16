@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:forui/forui.dart';
 
-import 'forui_theme.dart';
 import 'home_shell.dart';
+import 'theme.dart';
 
 class FileSyncProApp extends StatefulWidget {
   const FileSyncProApp({
@@ -21,44 +20,33 @@ class FileSyncProApp extends StatefulWidget {
 }
 
 class _FileSyncProAppState extends State<FileSyncProApp> {
-  // Note: themeMode: ThemeMode.light in MaterialApp already forces light.
-  // Nothing else needed here.
+  late ThemeMode _mode =
+      WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+          Brightness.dark
+      ? ThemeMode.dark
+      : ThemeMode.light;
+
+  void _toggleTheme() {
+    setState(() {
+      _mode = _mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'File Sync Pro',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.light,
-      theme: _materialTheme(Brightness.light),
-      localizationsDelegates: FLocalizations.localizationsDelegates,
-      supportedLocales: FLocalizations.supportedLocales,
-      builder: (context, child) => FTheme(
-        data: AppForuiTheme.light,
-        child: FToaster(child: FTooltipGroup(child: child!)),
-      ),
+      themeMode: _mode,
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
       home: HomeShell(
         projectRoot: widget.projectRoot,
         clientConfigPath: widget.clientConfigPath,
         serverConfigPath: widget.serverConfigPath,
-        isDark: false,
-        onToggleTheme: () {},
+        isDark: _mode == ThemeMode.dark,
+        onToggleTheme: _toggleTheme,
       ),
-    );
-  }
-
-  /// Material is only kept for the app shell (navigation routes, overlays).
-  /// Every visible widget is a Forui widget.
-  ThemeData _materialTheme(Brightness brightness) {
-    return ThemeData(
-      brightness: brightness,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: AppForuiTheme.accent,
-        brightness: brightness,
-      ),
-      scaffoldBackgroundColor: brightness == Brightness.light
-          ? const Color(0xFFF6F7F9)
-          : const Color(0xFF0B0B0C),
     );
   }
 }

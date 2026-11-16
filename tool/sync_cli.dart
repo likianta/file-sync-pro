@@ -90,7 +90,7 @@ Future<void> main(List<String> args) async {
       '${apply.deleted} deleted, '
       '${apply.removedDirectories} dirs removed.',
     );
-    _printConflicts(report.preview.plan.conflicts);
+    _printConflicts(report.plan.conflicts);
     if (report.conflictBackupRoot != null) {
       print('Conflict copies: ${report.conflictBackupRoot}');
     }

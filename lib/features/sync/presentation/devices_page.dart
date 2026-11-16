@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:forui/forui.dart';
 
 import '../application/sync_client_config.dart';
 import '../application/sync_config_store.dart';
@@ -50,7 +49,7 @@ class _DevicesPageState extends State<DevicesPage> {
     return ListenableBuilder(
       listenable: widget.store,
       builder: (context, _) {
-        final theme = context.theme;
+        final theme = Theme.of(context);
         if (!widget.store.loaded) {
           return Center(
             child: Row(
@@ -59,13 +58,13 @@ class _DevicesPageState extends State<DevicesPage> {
                 const SizedBox(
                   width: 16,
                   height: 16,
-                  child: FCircularProgress(),
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 const SizedBox(width: 10),
                 Text(
                   'Loading devices...',
-                  style: theme.typography.body.sm.copyWith(
-                    color: theme.colors.mutedForeground,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -129,11 +128,13 @@ class _PageHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: theme.colors.border)),
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
       ),
       child: Row(
         children: [
@@ -143,9 +144,8 @@ class _PageHeader extends StatelessWidget {
               children: [
                 Text(
                   'Devices',
-                  style: theme.typography.body.xl.copyWith(
+                  style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
-                    letterSpacing: -0.3,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -154,19 +154,18 @@ class _PageHeader extends StatelessWidget {
                   'each of them.',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.typography.body.sm.copyWith(
-                    color: theme.colors.mutedForeground,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
-          FButton(
+          OutlinedButton.icon(
             key: const ValueKey<String>('devices.add'),
-            variant: FButtonVariant.outline,
-            onPress: onAdd,
-            prefix: const Icon(FLucideIcons.plus, size: 15),
-            child: const Text('Add device'),
+            onPressed: onAdd,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Add device'),
           ),
         ],
       ),
@@ -212,49 +211,16 @@ class _DeviceCardState extends State<_DeviceCard> {
   }
 
   Future<void> _deleteDevice() async {
-    final confirmed = await showFDialog<bool>(
-      context: context,
-      builder: (context, style, animation) => FDialog(
-        animation: animation,
-        constraints: const BoxConstraints(minWidth: 380, maxWidth: 460),
-        builder: (context, style) => Padding(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Remove device?', style: style.titleTextStyle),
-              const SizedBox(height: 8),
-              Text(
-                '"${widget.device.name}" and its ${widget.store.config.pairsForDevice(widget.device.id).length} '
-                'pair(s) will be removed from this device. Files are not '
-                'deleted.',
-                style: style.bodyTextStyle,
-              ),
-              const SizedBox(height: 22),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  FButton(
-                    variant: FButtonVariant.outline,
-                    onPress: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  FButton(
-                    key: const ValueKey<String>('devices.deleteConfirm'),
-                    variant: FButtonVariant.destructive,
-                    onPress: () => Navigator.of(context).pop(true),
-                    child: const Text('Remove'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+    final confirmed = await _confirm(
+      context,
+      title: 'Remove device?',
+      message:
+          '"${widget.device.name}" and its ${widget.store.config.pairsForDevice(widget.device.id).length} '
+          'pair(s) will be removed from this device. Files are not deleted.',
+      confirmLabel: 'Remove',
+      confirmKey: const ValueKey<String>('devices.deleteConfirm'),
     );
-    if (confirmed == true) {
+    if (confirmed) {
       widget.store.removeDevice(widget.device.id);
     }
   }
@@ -268,11 +234,7 @@ class _DeviceCardState extends State<_DeviceCard> {
     );
     if (result == null || !mounted) return;
     if (widget.store.pairs.any((pair) => pair.name == result.entry.name)) {
-      showFToast(
-        context: context,
-        title: Text('A pair named "${result.entry.name}" already exists.'),
-        icon: const Icon(FLucideIcons.circleAlert),
-      );
+      _toast('A pair named "${result.entry.name}" already exists.');
       return;
     }
     widget.store.updateToken(result.token);
@@ -290,11 +252,7 @@ class _DeviceCardState extends State<_DeviceCard> {
     if (result == null || !mounted) return;
     if (result.entry.name != pair.name &&
         widget.store.pairs.any((entry) => entry.name == result.entry.name)) {
-      showFToast(
-        context: context,
-        title: Text('A pair named "${result.entry.name}" already exists.'),
-        icon: const Icon(FLucideIcons.circleAlert),
-      );
+      _toast('A pair named "${result.entry.name}" already exists.');
       return;
     }
     widget.store.updateToken(result.token);
@@ -302,83 +260,47 @@ class _DeviceCardState extends State<_DeviceCard> {
   }
 
   Future<void> _deletePair(SyncPairEntry pair) async {
-    final confirmed = await showFDialog<bool>(
-      context: context,
-      builder: (context, style, animation) => FDialog(
-        animation: animation,
-        constraints: const BoxConstraints(minWidth: 380, maxWidth: 460),
-        builder: (context, style) => Padding(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Delete sync pair?', style: style.titleTextStyle),
-              const SizedBox(height: 8),
-              Text(
-                'Remove "${pair.name}" from this device. Files are not deleted; '
-                'only the pair configuration and its state remain on disk.',
-                style: style.bodyTextStyle,
-              ),
-              const SizedBox(height: 22),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  FButton(
-                    variant: FButtonVariant.outline,
-                    onPress: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  FButton(
-                    key: ValueKey<String>(
-                      'devices.pair.deleteConfirm.${pair.name}',
-                    ),
-                    variant: FButtonVariant.destructive,
-                    onPress: () => Navigator.of(context).pop(true),
-                    child: const Text('Delete'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+    final confirmed = await _confirm(
+      context,
+      title: 'Delete sync pair?',
+      message:
+          'Remove "${pair.name}" from this device. Files are not deleted; '
+          'only the pair configuration and its state remain on disk.',
+      confirmLabel: 'Delete',
+      confirmKey: ValueKey<String>('devices.pair.deleteConfirm.${pair.name}'),
     );
-    if (confirmed == true) {
+    if (confirmed) {
       widget.store.removePair(pair.name);
     }
   }
 
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     final device = widget.device;
     final pairs = widget.store.config.pairsForDevice(device.id);
 
-    return FCard(
+    return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Stack so the 3D model paints ON TOP of everything below it but
-            // only occupies the top ~140px of the card. Its trailing shadow
-            // bleeds past that box (Clip.none) and gently covers the tag row.
             Stack(
               clipBehavior: Clip.none,
               children: [
-                // Bottom layer — normal column flow.
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Placeholder for the 3D model area above.
                     const SizedBox(height: 140),
                     const SizedBox(height: 8),
-
-                    // Tag row
                     Wrap(
                       spacing: 6,
                       runSpacing: 4,
@@ -403,25 +325,24 @@ class _DeviceCardState extends State<_DeviceCard> {
                       ],
                     ),
                     const SizedBox(height: 8),
-
-                    // Device name (editable)
-                    FTextField(
+                    TextField(
                       key: ValueKey<String>('devices.name.${device.id}'),
-                      control: FTextFieldControl.managed(
-                        controller: _nameController,
-                        onChange: (value) =>
-                            _update(device.copyWith(name: value.text)),
+                      controller: _nameController,
+                      style: theme.textTheme.bodyMedium,
+                      decoration: const InputDecoration(
+                        hintText: 'Device name',
+                        isDense: true,
                       ),
+                      onChanged: (value) =>
+                          _update(device.copyWith(name: value)),
                     ),
-                    const SizedBox(height: 2),
-
-                    // Device address
+                    const SizedBox(height: 4),
                     Row(
                       children: [
                         Icon(
-                          FLucideIcons.globe,
+                          Icons.language,
                           size: 13,
-                          color: theme.colors.mutedForeground,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                         const SizedBox(width: 5),
                         Expanded(
@@ -429,9 +350,10 @@ class _DeviceCardState extends State<_DeviceCard> {
                             device.baseUrl,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: theme.typography.body.xs.copyWith(
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 11,
                               fontFamily: 'monospace',
-                              color: theme.colors.mutedForeground,
+                              color: theme.colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ),
@@ -439,8 +361,6 @@ class _DeviceCardState extends State<_DeviceCard> {
                     ),
                   ],
                 ),
-                // Top layer — model + shadow trails on top, clipped to first
-                // 150px so it doesn't consume the tag area.
                 Positioned(
                   left: 0,
                   right: 0,
@@ -451,32 +371,31 @@ class _DeviceCardState extends State<_DeviceCard> {
               ],
             ),
             const SizedBox(height: 10),
-            Container(height: 1, color: theme.colors.border),
+            Divider(height: 1, color: theme.colorScheme.outlineVariant),
             const SizedBox(height: 8),
-
-            // Pairs header
             Row(
               children: [
                 Text(
                   'Pairs (${pairs.length})',
-                  style: theme.typography.body.sm.copyWith(
+                  style: theme.textTheme.bodySmall?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 const Spacer(),
-                FButton(
+                OutlinedButton.icon(
                   key: ValueKey<String>('devices.pair.add.${device.id}'),
-                  variant: FButtonVariant.outline,
-                  size: FButtonSizeVariant.sm,
-                  onPress: _addPair,
-                  prefix: const Icon(FLucideIcons.plus, size: 14),
-                  child: const Text('Add'),
+                  onPressed: _addPair,
+                  icon: const Icon(Icons.add, size: 14),
+                  label: const Text('Add'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 30),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    textStyle: const TextStyle(fontSize: 12),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 6),
-
-            // Pairs list — natural height up to 5 rows, scrolls beyond.
             Builder(
               builder: (context) {
                 const maxRows = 5;
@@ -488,8 +407,8 @@ class _DeviceCardState extends State<_DeviceCard> {
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Text(
                       'No pairs yet.',
-                      style: theme.typography.body.xs.copyWith(
-                        color: theme.colors.mutedForeground,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   );
@@ -522,19 +441,16 @@ class _DeviceCardState extends State<_DeviceCard> {
                 );
               },
             ),
-
             const SizedBox(height: 10),
-            Container(height: 1, color: theme.colors.border),
+            Divider(height: 1, color: theme.colorScheme.outlineVariant),
             const SizedBox(height: 8),
-
-            // Footer bar: model switcher + delete
             Row(
               spacing: 6,
               children: [
                 Icon(
-                  FLucideIcons.monitor,
+                  Icons.monitor_outlined,
                   size: 13,
-                  color: theme.colors.mutedForeground,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
                 Expanded(
                   child: _ModelDropdown(
@@ -544,15 +460,14 @@ class _DeviceCardState extends State<_DeviceCard> {
                     },
                   ),
                 ),
-                FButton.icon(
+                IconButton(
                   key: ValueKey<String>('devices.delete.${device.id}'),
-                  variant: FButtonVariant.ghost,
-                  onPress: _deleteDevice,
-                  semanticsTooltip: 'Remove device',
-                  child: Icon(
-                    FLucideIcons.trash2,
-                    size: 14,
-                    color: theme.colors.destructive,
+                  tooltip: 'Remove device',
+                  onPressed: _deleteDevice,
+                  icon: Icon(
+                    Icons.delete_outline,
+                    size: 17,
+                    color: theme.colorScheme.error,
                   ),
                 ),
               ],
@@ -573,7 +488,7 @@ class _CapsuleTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     final bg = (tint ?? color).withValues(alpha: tint != null ? 0.55 : 0.14);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -583,7 +498,8 @@ class _CapsuleTag extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: theme.typography.body.xs.copyWith(
+        style: theme.textTheme.bodySmall?.copyWith(
+          fontSize: 11,
           fontWeight: FontWeight.w600,
           color: color,
         ),
@@ -608,19 +524,19 @@ class _PairRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.fromLTRB(8, 2, 2, 2),
       decoration: BoxDecoration(
-        color: theme.colors.muted.withValues(alpha: 0.4),
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         children: [
           Icon(
-            FLucideIcons.folder,
+            Icons.folder_outlined,
             size: 14,
-            color: theme.colors.mutedForeground,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -628,27 +544,25 @@ class _PairRow extends StatelessWidget {
               pair.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: theme.typography.body.sm.copyWith(
+              style: theme.textTheme.bodySmall?.copyWith(
                 fontWeight: FontWeight.w500,
               ),
             ),
           ),
-          FButton.icon(
+          IconButton(
             key: ValueKey<String>('devices.pair.edit.$deviceId.${pair.name}'),
-            variant: FButtonVariant.ghost,
-            onPress: onEdit,
-            semanticsTooltip: 'Edit pair',
-            child: const Icon(FLucideIcons.settings, size: 14),
+            tooltip: 'Edit pair',
+            onPressed: onEdit,
+            icon: const Icon(Icons.settings_outlined, size: 16),
           ),
-          FButton.icon(
+          IconButton(
             key: ValueKey<String>('devices.pair.delete.$deviceId.${pair.name}'),
-            variant: FButtonVariant.ghost,
-            onPress: onDelete,
-            semanticsTooltip: 'Delete pair',
-            child: Icon(
-              FLucideIcons.trash2,
-              size: 14,
-              color: theme.colors.destructive,
+            tooltip: 'Delete pair',
+            onPressed: onDelete,
+            icon: Icon(
+              Icons.delete_outline,
+              size: 16,
+              color: theme.colorScheme.error,
             ),
           ),
         ],
@@ -665,20 +579,32 @@ class _ModelDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FSelect<String>(
-      control: FSelectControl<String>.lifted(
+    final theme = Theme.of(context);
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
         value: model.name,
-        onChange: (value) {
+        isDense: true,
+        isExpanded: true,
+        borderRadius: BorderRadius.circular(10),
+        style: theme.textTheme.bodySmall,
+        items: [
+          for (final item in SyncDeviceModel.values)
+            DropdownMenuItem<String>(
+              value: item.name,
+              child: Text(
+                item.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+        onChanged: (value) {
           if (value == null) return;
-          final m = SyncDeviceModel.values.firstWhere((e) => e.name == value);
-          onChanged(m);
+          onChanged(
+            SyncDeviceModel.values.firstWhere((item) => item.name == value),
+          );
         },
       ),
-      // Forui items: Map<displayLabel, storedKey>.
-      // Default format(T value) => inverse[value]!
-      //   where inverse = {storedKey: displayLabel}.
-      // So value = model.name must match items' values for inverse lookup.
-      items: {for (final m in SyncDeviceModel.values) m.label: m.name},
     );
   }
 }
@@ -690,7 +616,7 @@ class _EmptyDevices extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.theme;
+    final theme = Theme.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -699,40 +625,74 @@ class _EmptyDevices extends StatelessWidget {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: theme.colors.muted,
+              color: theme.colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
-              FLucideIcons.router,
+              Icons.router_outlined,
               size: 24,
-              color: theme.colors.mutedForeground,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 14),
           Text(
             'No peer devices yet.',
-            style: theme.typography.body.md.copyWith(
+            style: theme.textTheme.bodyMedium?.copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 4),
           Text(
             'Add a device to describe the peer and the mounts it shares.',
-            style: theme.typography.body.sm.copyWith(
-              color: theme.colors.mutedForeground,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 18),
-          FButton(
+          FilledButton.icon(
             key: const ValueKey<String>('devices.emptyAdd'),
-            onPress: onAdd,
-            prefix: const Icon(FLucideIcons.plus, size: 16),
-            child: const Text('Add device'),
+            onPressed: onAdd,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Add device'),
           ),
         ],
       ),
     );
   }
+}
+
+/// Shows a Material confirmation dialog.
+Future<bool> _confirm(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String confirmLabel,
+  Key? confirmKey,
+}) async {
+  final theme = Theme.of(context);
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Text(message, style: theme.textTheme.bodyMedium),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: confirmKey,
+          style: FilledButton.styleFrom(
+            backgroundColor: theme.colorScheme.error,
+            foregroundColor: theme.colorScheme.onError,
+          ),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(confirmLabel),
+        ),
+      ],
+    ),
+  );
+  return result == true;
 }
 
 /// Zero-dependency masonry (Pinterest-style) layout.
