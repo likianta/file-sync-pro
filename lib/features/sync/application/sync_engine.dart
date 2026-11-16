@@ -4,7 +4,6 @@ library;
 import 'package:path/path.dart' as p;
 
 import '../data/snapshot_store.dart';
-import '../data/sync_state_store.dart';
 import '../domain/ignore_rules.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
@@ -115,12 +114,6 @@ final class SyncEngine {
   /// can reach the folder can reuse them.
   late final SnapshotStore _snapshotA = SnapshotStore(a.store);
   late final SnapshotStore _snapshotB = SnapshotStore(b.store);
-
-  /// Read-only fallback for pairs created before snapshots moved into the
-  /// synced folders.
-  late final SyncStateStore _legacyState = SyncStateStore(
-    p.join(_stateDir, 'pair_state.json'),
-  );
 
   /// Releases network resources held by the sources.
   Future<void> dispose() async {
@@ -354,23 +347,10 @@ final class SyncEngine {
   Future<({Manifest a, Manifest b})> _loadSnapshots() async {
     final snapshotA = await _snapshotA.load();
     final snapshotB = await _snapshotB.load();
-    if (snapshotA != null || snapshotB != null) {
-      return (
-        a: snapshotA ?? Manifest.empty(root: a.id),
-        b: snapshotB ?? Manifest.empty(root: b.id),
-      );
-    }
-
-    // Pairs created by older versions kept a single shared base under the
-    // app's state directory. Reuse it once, then write per-side snapshots.
-    final legacy = await _legacyState.load();
-    if (legacy != null &&
-        p.equals(legacy.rootA, a.id) &&
-        p.equals(legacy.rootB, b.id)) {
-      return (a: legacy.base, b: legacy.base);
-    }
-
-    return (a: Manifest.empty(root: a.id), b: Manifest.empty(root: b.id));
+    return (
+      a: snapshotA ?? Manifest.empty(root: a.id),
+      b: snapshotB ?? Manifest.empty(root: b.id),
+    );
   }
 
   /// Writes each side's snapshot after a successful sync.
