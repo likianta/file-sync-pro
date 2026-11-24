@@ -14,7 +14,6 @@ void main() {
   late Directory temp;
   late Directory localDir;
   late Directory remoteDir;
-  late String stateDir;
   late String backupDir;
   late FileServer server;
   late String baseUrl;
@@ -23,7 +22,6 @@ void main() {
     temp = await Directory.systemTemp.createTemp('filesync-http-');
     localDir = Directory(p.join(temp.path, 'local'));
     remoteDir = Directory(p.join(temp.path, 'remote'));
-    stateDir = p.join(temp.path, 'state');
     backupDir = p.join(temp.path, 'chore');
     await localDir.create();
     await remoteDir.create();
@@ -58,7 +56,7 @@ void main() {
         snapshotBackupDir: backupDir,
         snapshotLabel: 'pair-remote',
       ),
-      stateDir: stateDir,
+      conflictRoot: p.join(temp.path, 'conflicts'),
     );
     try {
       return await run(engine);

@@ -242,8 +242,7 @@ final class SyncPairEntry {
     required this.localRoot,
     required this.remoteRoot,
     this.deviceId = '',
-    String? stateDir,
-  }) : stateDir = stateDir ?? '';
+  });
 
   /// Unique and immutable. Format: `p-<[a-z0-9]+>`.
   final String id;
@@ -256,16 +255,12 @@ final class SyncPairEntry {
   /// The [SyncDeviceEntry.id] this pair belongs to.
   final String deviceId;
 
-  /// Runtime-only state folder; never serialized.
-  final String stateDir;
-
   SyncPairEntry copyWith({
     String? id,
     String? name,
     String? localRoot,
     String? remoteRoot,
     String? deviceId,
-    String? stateDir,
   }) {
     return SyncPairEntry(
       id: id ?? this.id,
@@ -273,7 +268,6 @@ final class SyncPairEntry {
       localRoot: localRoot ?? this.localRoot,
       remoteRoot: remoteRoot ?? this.remoteRoot,
       deviceId: deviceId ?? this.deviceId,
-      stateDir: stateDir ?? this.stateDir,
     );
   }
 
@@ -314,19 +308,12 @@ final class SyncPairEntry {
             p.join(projectRoot, '..', 'photolens'),
       ),
     );
-    final rawState = json['stateDir'] as String?;
     return SyncPairEntry(
       id: id,
       name: name,
       localRoot: localRoot,
       remoteRoot: remoteRoot,
       deviceId: deviceId,
-      stateDir: rawState == null || rawState.trim().isEmpty
-          ? p.join(projectRoot, 'data', 'sync_pairs', id)
-          : SyncClientConfig._resolve(
-              projectRoot,
-              SyncClientConfig._expandUser(rawState),
-            ),
     );
   }
 }
@@ -407,7 +394,7 @@ final class SyncClientConfig {
       }
     }
 
-    _ensurePairState(devices, projectRoot);
+    _ensurePairState(devices);
     return SyncClientConfig(
       token: token,
       timeoutSeconds: timeoutSeconds,
@@ -522,7 +509,6 @@ final class SyncClientConfig {
       localRoot: pair.localRoot,
       remoteUrl: pair.remoteUrlFor(device),
       token: token,
-      stateDir: pair.stateDir,
       conflictRoot: p.join(root, 'data', 'conflicts', device.id, pair.id),
       timeoutSeconds: timeoutSeconds,
     );
@@ -572,10 +558,7 @@ final class SyncClientConfig {
     return id != null && RegExp(r'^p-[a-z0-9]+$').hasMatch(id);
   }
 
-  static void _ensurePairState(
-    List<SyncDeviceEntry> devices,
-    String projectRoot,
-  ) {
+  static void _ensurePairState(List<SyncDeviceEntry> devices) {
     final seenPairIds = <String>{};
     for (final device in devices) {
       final nextPairs = <SyncPairEntry>[];
@@ -585,15 +568,7 @@ final class SyncClientConfig {
           id = newPairId();
           seenPairIds.add(id);
         }
-        nextPairs.add(
-          pair.copyWith(
-            id: id,
-            deviceId: device.id,
-            stateDir: pair.stateDir.isEmpty
-                ? p.join(projectRoot, 'data', 'sync_pairs', id)
-                : pair.stateDir,
-          ),
-        );
+        nextPairs.add(pair.copyWith(id: id, deviceId: device.id));
       }
       device.pairs
         ..clear()
@@ -628,7 +603,6 @@ final class SyncClientConfig {
     final name = (json['name'] as String?)?.trim().isNotEmpty == true
         ? (json['name'] as String).trim()
         : (path == '/' ? 'pair' : p.posix.basename(path));
-    final rawState = json['stateDir'] as String?;
     return SyncPairEntry(
       id: newPairId(),
       name: name,
@@ -641,9 +615,6 @@ final class SyncClientConfig {
       ),
       remoteRoot: _normalizeRemoteRoot(path),
       deviceId: device.id,
-      stateDir: rawState == null || rawState.trim().isEmpty
-          ? ''
-          : _resolve(projectRoot, _expandUser(rawState)),
     );
   }
 

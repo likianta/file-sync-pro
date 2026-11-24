@@ -630,8 +630,9 @@ final class SyncDashboardController extends ChangeNotifier {
         snapshotBackupDir: backupDir,
         snapshotLabel: '${config.pairName}-remote',
       ),
-      stateDir: config.stateDir,
-      conflictRoot: config.conflictRoot.isEmpty ? null : config.conflictRoot,
+      conflictRoot: config.conflictRoot.isEmpty
+          ? '${Directory.systemTemp.path}/file-sync-pro-conflicts'
+          : config.conflictRoot,
     );
   }
 

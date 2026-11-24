@@ -11,7 +11,6 @@ import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
 import '../domain/sync_snapshot.dart';
 import 'plan_applier.dart';
-import 'sync_journal.dart';
 import 'sync_source.dart';
 
 final class SyncPreview {
@@ -39,7 +38,6 @@ final class SyncReport {
     required this.preview,
     required this.plan,
     this.applyReport,
-    this.journalPath,
     this.conflictArchiveRoot,
     this.conflictArchives = const [],
     this.aSnapshot,
@@ -52,7 +50,6 @@ final class SyncReport {
   /// variant of [preview]'s full plan.
   final SyncPlan plan;
   final ApplyReport? applyReport;
-  final String? journalPath;
 
   /// Directory that contains the archived remote copies for this run.
   final String? conflictArchiveRoot;
@@ -129,21 +126,16 @@ final class SyncEngine {
   SyncEngine({
     required this.a,
     required this.b,
-    required String stateDir,
-    String? conflictRoot,
+    required String conflictRoot,
     this.onAction,
-  }) : _stateDir = p.normalize(p.absolute(stateDir)),
-       _conflictRoot = p.normalize(
-         p.absolute(conflictRoot ?? p.join(stateDir, 'conflicts')),
-       );
+  }) : _conflictRoot = p.normalize(p.absolute(conflictRoot));
 
   /// Convenience constructor for two local folders (used by tests and by
   /// "sync this Mac's folder to another local folder" scenarios).
   factory SyncEngine.local({
     required String rootA,
     required String rootB,
-    required String stateDir,
-    String? conflictRoot,
+    required String conflictRoot,
     String? snapshotBackupDir,
     String labelA = 'a',
     String labelB = 'b',
@@ -163,7 +155,6 @@ final class SyncEngine {
         snapshotLabel: labelB,
         defaultIgnores: defaultIgnores,
       ),
-      stateDir: stateDir,
       conflictRoot: conflictRoot,
       onAction: onAction,
     );
@@ -172,7 +163,6 @@ final class SyncEngine {
   final SyncSource a;
   final SyncSource b;
   final ActionCallback? onAction;
-  final String _stateDir;
   final String _conflictRoot;
 
   /// Releases network resources held by the sources.
@@ -279,115 +269,70 @@ final class SyncEngine {
       subPaths: subPaths,
     );
     final progress = onAction ?? this.onAction;
-
-    SyncJournal? journal;
-    try {
-      journal = await SyncJournal.create(p.join(_stateDir, 'journal'));
-    } catch (_) {
-      // The journal is diagnostic; never block a sync on it.
-      journal = null;
-    }
-
     final conflicts = plan.conflicts;
     final archived = await _archiveConflicts(preview, conflicts);
     final executionPlan = SyncPlan(
       actions: [...plan.actions, ..._localWinsActions(preview, conflicts)],
       conflicts: const [],
     );
-    final applier = PlanApplier(
-      a: a.store,
-      b: b.store,
-      conflictRoot: p.join(_stateDir, 'conflicts'),
+    final applier = PlanApplier(a: a.store, b: b.store);
+
+    final applyReport = await applier.apply(executionPlan, onAction: progress);
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final aCurrent = _applyActionsToCurrent(
+      aSnapshot.current,
+      executionPlan,
+      applyReport.written,
+      targetsRight: false,
+      updatedAt: now,
+    );
+    final bCurrent = _applyActionsToCurrent(
+      bSnapshot.current,
+      executionPlan,
+      applyReport.written,
+      targetsRight: true,
+      updatedAt: now,
+    );
+    final aBase = _nextBase(
+      previous: aSnapshot.base,
+      current: aCurrent,
+      conflicts: const [],
+      scope: subPath,
+      subPaths: subPaths,
+      updatedAt: now,
+    );
+    final bBase = _nextBase(
+      previous: bSnapshot.base,
+      current: bCurrent,
+      conflicts: const [],
+      scope: subPath,
+      subPaths: subPaths,
+      updatedAt: now,
     );
 
-    try {
-      final applyReport = await applier.apply(
-        executionPlan,
-        onAction: (action) {
-          progress?.call(action);
-          journal?.record(
-            'action',
-            path: action.path,
-            data: {'kind': action.kind.name},
-          );
-        },
-      );
+    final aAfter = SideSnapshot(
+      base: aBase,
+      current: aCurrent,
+      ignores: aSnapshot.ignores,
+    );
+    final bAfter = SideSnapshot(
+      base: bBase,
+      current: bCurrent,
+      ignores: bSnapshot.ignores,
+    );
+    await a.saveSnapshot(aAfter);
+    await b.saveSnapshot(bAfter);
 
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final aCurrent = _applyActionsToCurrent(
-        aSnapshot.current,
-        executionPlan,
-        applyReport.written,
-        targetsRight: false,
-        updatedAt: now,
-      );
-      final bCurrent = _applyActionsToCurrent(
-        bSnapshot.current,
-        executionPlan,
-        applyReport.written,
-        targetsRight: true,
-        updatedAt: now,
-      );
-      final aBase = _nextBase(
-        previous: aSnapshot.base,
-        current: aCurrent,
-        conflicts: const [],
-        scope: subPath,
-        subPaths: subPaths,
-        updatedAt: now,
-      );
-      final bBase = _nextBase(
-        previous: bSnapshot.base,
-        current: bCurrent,
-        conflicts: const [],
-        scope: subPath,
-        subPaths: subPaths,
-        updatedAt: now,
-      );
-
-      final aAfter = SideSnapshot(
-        base: aBase,
-        current: aCurrent,
-        ignores: aSnapshot.ignores,
-      );
-      final bAfter = SideSnapshot(
-        base: bBase,
-        current: bCurrent,
-        ignores: bSnapshot.ignores,
-      );
-      await a.saveSnapshot(aAfter);
-      await b.saveSnapshot(bAfter);
-
-      journal?.record(
-        'commit',
-        data: {
-          'actions': executionPlan.actions.length,
-          'conflicts': conflicts.length,
-          'scope': ?subPath,
-          if (direction != SyncDirection.both) 'direction': direction.name,
-        },
-      );
-
-      return SyncReport(
-        preview: preview,
-        plan: plan,
-        applyReport: applyReport,
-        journalPath: journal?.path,
-        conflictArchiveRoot: archived.root,
-        conflictArchives: archived.entries,
-        aSnapshot: aAfter,
-        bSnapshot: bAfter,
-      );
-    } catch (error) {
-      journal?.record('error', data: {'message': error.toString()});
-      rethrow;
-    } finally {
-      try {
-        await journal?.close();
-      } catch (_) {
-        // Ignore journal close failures.
-      }
-    }
+    return SyncReport(
+      preview: preview,
+      plan: plan,
+      applyReport: applyReport,
+      conflictArchiveRoot: archived.root,
+      conflictArchives: archived.entries,
+      aSnapshot: aAfter,
+      bSnapshot: bAfter,
+    );
   }
 
   /// Resolves selected conflicts by copying one side over the other.
@@ -464,11 +409,7 @@ final class SyncEngine {
 
     var applyReport = const ApplyReport();
     if (actions.isNotEmpty) {
-      final applier = PlanApplier(
-        a: a.store,
-        b: b.store,
-        conflictRoot: p.join(_stateDir, 'conflicts', _timestamp()),
-      );
+      final applier = PlanApplier(a: a.store, b: b.store);
       applyReport = await applier.apply(
         SyncPlan(actions: actions, conflicts: const []),
       );
@@ -981,12 +922,5 @@ final class SyncEngine {
       return false;
     }
     return _inScope(path, scope);
-  }
-
-  static String _timestamp() {
-    return DateTime.now().toUtc().toIso8601String().replaceAll(
-      RegExp('[:.]'),
-      '-',
-    );
   }
 }

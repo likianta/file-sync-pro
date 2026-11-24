@@ -73,10 +73,6 @@ void main() {
     expect(runtime.localRoot, p.normalize(p.join(temp.path, '..', 'gitbook')));
     expect(runtime.remoteUrl, 'http://host:2160/gitbook');
     expect(
-      runtime.stateDir,
-      p.join(temp.path, 'data', 'sync_pairs', 'p-gitbook'),
-    );
-    expect(
       runtime.conflictRoot,
       p.join(temp.path, 'data', 'conflicts', 'd-phone', 'p-gitbook'),
     );
@@ -120,7 +116,6 @@ void main() {
     expect(pair.name, 'photos');
     expect(pair.remoteRoot, '/photos');
     expect(pair.deviceId, config.devices.single.id);
-    expect(pair.stateDir, p.join(temp.path, 'data', 'sync_pairs', 'photos'));
     expect(config.firstRuntime!.remoteUrl, 'http://host:2160/photos');
   });
 
@@ -151,7 +146,6 @@ void main() {
               localRoot: '/tmp/demo',
               remoteRoot: '/demo',
               deviceId: 'd-box',
-              stateDir: '/tmp/state-demo',
             ),
           ],
         ),

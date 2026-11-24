@@ -181,7 +181,6 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
       config.remoteUrl,
       config.token,
       config.timeoutSeconds,
-      config.stateDir,
     ].join('\u0001');
   }
 

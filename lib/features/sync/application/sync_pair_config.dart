@@ -16,7 +16,6 @@ final class SyncPairConfig {
     required this.localRoot,
     required this.remoteUrl,
     required this.token,
-    required this.stateDir,
     this.conflictRoot = '',
     this.timeoutSeconds = 300,
   });
@@ -27,7 +26,6 @@ final class SyncPairConfig {
   final String localRoot;
   final String remoteUrl;
   final String token;
-  final String stateDir;
 
   /// Base folder for archived remote copies of conflicts.
   final String conflictRoot;

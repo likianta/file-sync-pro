@@ -4,7 +4,6 @@
 /build/**
 /data/conflicts/*
 /data/downloads/*
-/data/sync_pairs/*/
 /design/sparkle-inspirations/
 /readme.b64.html
 /refs/

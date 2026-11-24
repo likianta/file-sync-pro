@@ -60,14 +60,12 @@ Future<void> main(List<String> args) async {
   final engine = SyncEngine(
     a: local,
     b: remote,
-    stateDir: config.stateDir,
     conflictRoot: config.conflictRoot,
   );
 
   try {
     print('Local : ${local.id}');
     print('Remote: ${remote.id}');
-    print('State : ${config.stateDir}');
     print('');
 
     if (options.scan) {
@@ -140,9 +138,6 @@ Future<void> main(List<String> args) async {
     _printConflicts(report.plan.conflicts);
     if (report.conflictArchiveRoot != null) {
       print('Conflict copies: ${report.conflictArchiveRoot}');
-    }
-    if (report.journalPath != null) {
-      print('Journal: ${report.journalPath}');
     }
     if (report.hasConflicts) {
       print('');
@@ -246,7 +241,6 @@ Options:
   --local <path>     Local folder (default: <project-root>/../photolens)
   --remote <url>     Remote mount URL (required)
   --token <token>    Shared token (or FILE_SYNC_TOKEN)
-  --state <path>     State folder (default: data/sync_pairs/photolens)
   --timeout <sec>    HTTP timeout in seconds (default: 300)
   --path <subpath>   Only sync this folder or file inside the pair
   --pull             Copy from the peer to this machine only
@@ -272,7 +266,6 @@ final class _SyncOptions {
     String? localArg;
     String? remoteArg;
     String? tokenArg;
-    String? stateArg;
     String? pairArg;
     String? subPath;
     int? timeoutArg;
@@ -309,8 +302,6 @@ final class _SyncOptions {
           remoteArg = next(arg);
         case '--token':
           tokenArg = next(arg);
-        case '--state':
-          stateArg = next(arg);
         case '--timeout':
           timeoutArg = int.parse(next(arg));
         case '--dry-run':
@@ -371,9 +362,6 @@ final class _SyncOptions {
           : _resolvePath(projectRoot, _expandUser(localArg)),
       remoteUrl: remoteArg ?? runtime.remoteUrl,
       token: tokenArg ?? client.token,
-      stateDir: stateArg == null
-          ? runtime.stateDir
-          : _resolvePath(projectRoot, _expandUser(stateArg)),
       conflictRoot: p.join(
         projectRoot,
         'data',

@@ -152,9 +152,6 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
       deviceId: widget.device.id,
       localRoot: p.normalize(_localRoot.text.trim()),
       remoteRoot: remoteRoot,
-      stateDir: widget.entry?.stateDir.isNotEmpty == true
-          ? widget.entry!.stateDir
-          : p.normalize(p.join(widget.projectRoot, 'data', 'sync_pairs', id)),
     );
     Navigator.of(context)
         .pop(PairEditorResult(entry: entry, token: _token.text.trim()));

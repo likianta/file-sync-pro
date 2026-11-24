@@ -12,7 +12,6 @@ void main() {
   late Directory temp;
   late Directory alice;
   late Directory bob;
-  late String stateDir;
   late String snapshotBackupDir;
 
   setUp(() async {
@@ -21,7 +20,6 @@ void main() {
     bob = Directory(p.join(temp.path, 'bob'));
     await alice.create();
     await bob.create();
-    stateDir = p.join(temp.path, 'state');
     snapshotBackupDir = p.join(temp.path, 'chore');
   });
 
@@ -33,7 +31,7 @@ void main() {
     final engine = SyncEngine.local(
       rootA: alice.path,
       rootB: bob.path,
-      stateDir: stateDir,
+      conflictRoot: p.join(temp.path, 'conflicts'),
       snapshotBackupDir: snapshotBackupDir,
       labelA: 'alice',
       labelB: 'bob',

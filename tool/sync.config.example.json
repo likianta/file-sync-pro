@@ -1,23 +1,23 @@
 {
-  "version": 2,
-  "token": "PASTE_THE_TOKEN_FROM_tool/sync.config.json",
+  "version": 4,
+  "token": "PASTE_A_SHARED_TOKEN",
   "timeoutSeconds": 300,
-  "ignores": [
-    "/.git/",
-    "/.idea/",
-    "/.venv/",
-    ".DS_Store",
-    "__pycache__/"
-  ],
-  "pairs": [
+  "devices": [
     {
-      "name": "photolens",
-      "localRoot": "~/Desktop/work/likianta-projects/photolens",
-      "remoteUrl": "http://47.102.108.149:2160/photolens",
-      "stateDir": "data/sync_pairs/photolens",
-      "ignores": [
-        "/blog/",
-        "**.b64.html"
+      "id": "d-xxxxxxxx",
+      "name": "Peer device",
+      "type": "android",
+      "model": "androidPhone",
+      "host_type": "remote",
+      "host": "192.168.1.10",
+      "port": 2160,
+      "pairs": [
+        {
+          "id": "p-xxxxxxxx",
+          "name": "gitbook",
+          "local_root": "~/Desktop/documents/gitbook",
+          "remote_root": "/gitbook"
+        }
       ]
     }
   ]

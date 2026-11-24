@@ -34,7 +34,6 @@ final class ApplyReport {
     this.updated = 0,
     this.deleted = 0,
     this.removedDirectories = 0,
-    this.backedUpConflicts = 0,
     this.written = const {},
   });
 
@@ -42,34 +41,27 @@ final class ApplyReport {
   final int updated;
   final int deleted;
   final int removedDirectories;
-  final int backedUpConflicts;
 
   /// Files written to either side, keyed by path. Used to update snapshots
   /// without scanning the tree again.
   final Map<String, AppliedFile> written;
 
-  int get total =>
-      created + updated + deleted + removedDirectories + backedUpConflicts;
+  int get total => created + updated + deleted + removedDirectories;
 }
 
 typedef ActionCallback = void Function(SyncAction action);
 
 final class PlanApplier {
-  PlanApplier({required this.a, required this.b, required this.conflictRoot});
+  PlanApplier({required this.a, required this.b});
 
   final FileStore a;
   final FileStore b;
-
-  /// Directory where conflict copies are written. Usually under the app state
-  /// directory, never inside the synced roots.
-  final String conflictRoot;
 
   Future<ApplyReport> apply(SyncPlan plan, {ActionCallback? onAction}) async {
     var created = 0;
     var updated = 0;
     var deleted = 0;
     var removedDirectories = 0;
-    var backedUp = 0;
     final written = <String, AppliedFile>{};
 
     final actions = plan.actions;
@@ -151,7 +143,7 @@ final class PlanApplier {
     }
 
     if (plan.conflicts.isNotEmpty) {
-      backedUp = await _backupConflicts(plan.conflicts);
+      throw StateError('Conflicts must be resolved before applying a plan.');
     }
 
     return ApplyReport(
@@ -159,7 +151,6 @@ final class PlanApplier {
       updated: updated,
       deleted: deleted,
       removedDirectories: removedDirectories,
-      backedUpConflicts: backedUp,
       written: written,
     );
   }
@@ -287,42 +278,6 @@ final class PlanApplier {
     if (tail.isNotEmpty) {
       onBytes(tail.length);
       yield tail;
-    }
-  }
-
-  Future<int> _backupConflicts(List<SyncConflict> conflicts) async {
-    var count = 0;
-    for (final conflict in conflicts) {
-      final aEntry = conflict.aEntry;
-      if (aEntry != null && aEntry.isFile) {
-        await _backupFile(a, conflict.path, p.join(conflictRoot, 'a'));
-        count++;
-      }
-      final bEntry = conflict.bEntry;
-      if (bEntry != null && bEntry.isFile) {
-        await _backupFile(b, conflict.path, p.join(conflictRoot, 'b'));
-        count++;
-      }
-    }
-    return count;
-  }
-
-  Future<void> _backupFile(
-    FileStore store,
-    String relPath,
-    String targetRoot,
-  ) async {
-    final targetPath = p.joinAll([targetRoot, ...relPath.split('/')]);
-    final parent = Directory(p.dirname(targetPath));
-    if (!await parent.exists()) {
-      await parent.create(recursive: true);
-    }
-    final sink = File(targetPath).openWrite();
-    try {
-      await sink.addStream(store.openRead(relPath));
-      await sink.flush();
-    } finally {
-      await sink.close();
     }
   }
 

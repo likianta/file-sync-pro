@@ -31,7 +31,6 @@ void main() {
     final applier = PlanApplier(
       a: LocalFileStore(source.path),
       b: LocalFileStore(target.path),
-      conflictRoot: p.join(temp.path, 'conflicts'),
     );
 
     await applier.apply(

@@ -1,6 +1,0 @@
-source:
-  type: local
-  path: C:/Likianta/workspace/dev.master.likianta/pyproject-manager/src/pyproject_manager_sc
-target:
-  type: local
-  path: C:/Likianta/workspace/dev.master.likianta/streamlit-canary/test/event_driven_structure/pyproject_manager_copy
