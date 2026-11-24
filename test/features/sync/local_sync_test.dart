@@ -504,6 +504,65 @@ void main() {
     expect(snapshot.ignores.useGitignore, isTrue);
   });
 
+  test('refreshFile updates only the selected file', () async {
+    await _file(alice, 'a.txt').writeAsString('a1\n');
+    await _file(alice, 'b.txt').writeAsString('b1\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+    final before = await withEngine((engine) => engine.loadSnapshots());
+    final bHash = before.a.snapshot!.current.entries['.']!.files['b.txt']!.hash;
+
+    await _file(alice, 'a.txt').writeAsString('a2\n');
+    final snapshot = await withEngine(
+      (engine) => engine.refreshFile(left: true, path: 'a.txt'),
+    );
+
+    expect(snapshot.current.entries['.']!.files['a.txt']!.size, 3);
+    expect(
+      snapshot.current.entries['.']!.files['b.txt']!.hash,
+      bHash,
+      reason: 'b.txt was not refreshed',
+    );
+    final preview = await withEngine(planNow);
+    expect(preview.plan.actions.map((action) => action.path), ['a.txt']);
+  });
+
+  test('pushes only the selected resolved paths', () async {
+    await _file(alice, 'a.txt').writeAsString('a1\n');
+    await _file(alice, 'b.txt').writeAsString('b1\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'a.txt').writeAsString('a2\n');
+    await _file(alice, 'b.txt').writeAsString('b2\n');
+    await withEngine((engine) async {
+      await engine.refreshFile(left: true, path: 'a.txt');
+      await engine.refreshFile(left: true, path: 'b.txt');
+      final loaded = await engine.loadSnapshots();
+      final preview = engine.planFromSnapshots(
+        loaded.a.snapshot!,
+        loaded.b.snapshot!,
+      );
+      final report = await engine.execute(
+        preview,
+        aSnapshot: loaded.a.snapshot!,
+        bSnapshot: loaded.b.snapshot!,
+        direction: SyncDirection.push,
+        subPaths: {'a.txt'},
+      );
+      expect(report.plan.actions.map((action) => action.path), ['a.txt']);
+    });
+
+    expect(await _read(bob, 'a.txt'), 'a2\n');
+    expect(await _read(bob, 'b.txt'), 'b1\n');
+    final next = await withEngine(planNow);
+    expect(next.plan.actions.map((action) => action.path), ['b.txt']);
+  });
+
   test('silently ignores snapshot files during a scan', () async {
     await _file(alice, 'doc.txt').writeAsString('v1\n');
     await withEngine((engine) async {

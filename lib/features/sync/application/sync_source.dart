@@ -35,6 +35,9 @@ abstract interface class SyncSource {
   /// Writes this side's `.file_sync_shot.json`.
   Future<void> saveSnapshot(SideSnapshot snapshot);
 
+  /// Refreshes one file's entry in `current`, without scanning its folder.
+  Future<SideSnapshot> refreshFile(String relPath);
+
   Future<void> close();
 }
 
@@ -88,6 +91,11 @@ final class LocalSyncSource implements SyncSource {
 
   @override
   Future<void> saveSnapshot(SideSnapshot snapshot) => _snapshots.save(snapshot);
+
+  @override
+  Future<SideSnapshot> refreshFile(String relPath) {
+    return _snapshots.refreshFile(relPath);
+  }
 
   @override
   Future<void> close() async {}
@@ -158,6 +166,11 @@ final class RemoteSyncSource implements SyncSource {
   @override
   Future<void> saveSnapshot(SideSnapshot snapshot) async {
     await _snapshotStore.save(snapshot);
+  }
+
+  @override
+  Future<SideSnapshot> refreshFile(String relPath) async {
+    throw UnsupportedError('Refreshing a single remote file is not supported.');
   }
 
   @override

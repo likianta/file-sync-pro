@@ -204,6 +204,12 @@ final class SyncEngine {
     );
   }
 
+  /// Refreshes one file's snapshot entry on one side.
+  Future<SideSnapshot> refreshFile({required bool left, required String path}) {
+    final source = left ? a : b;
+    return source.refreshFile(path);
+  }
+
   /// Scans both roots, used when the pair has no usable snapshot yet.
   ///
   /// The remote side reuses the local snapshot's ignores when it has to create
@@ -263,9 +269,15 @@ final class SyncEngine {
     required SideSnapshot bSnapshot,
     SyncDirection direction = SyncDirection.both,
     String? subPath,
+    Set<String>? subPaths,
     ActionCallback? onAction,
   }) async {
-    final plan = _planFor(preview, direction: direction, subPath: subPath);
+    final plan = _planFor(
+      preview,
+      direction: direction,
+      subPath: subPath,
+      subPaths: subPaths,
+    );
     final progress = onAction ?? this.onAction;
 
     SyncJournal? journal;
@@ -321,6 +333,7 @@ final class SyncEngine {
         current: aCurrent,
         conflicts: const [],
         scope: subPath,
+        subPaths: subPaths,
         updatedAt: now,
       );
       final bBase = _nextBase(
@@ -328,6 +341,7 @@ final class SyncEngine {
         current: bCurrent,
         conflicts: const [],
         scope: subPath,
+        subPaths: subPaths,
         updatedAt: now,
       );
 
@@ -632,32 +646,42 @@ final class SyncEngine {
     SyncPreview preview, {
     required SyncDirection direction,
     required String? subPath,
+    Set<String>? subPaths,
   }) {
     return switch (direction) {
-      SyncDirection.both => _scopePlan(preview.plan, subPath),
+      SyncDirection.both => _scopePlan(preview.plan, subPath, subPaths),
       SyncDirection.push => _directionalPlan(
         preview,
         toRight: true,
         subPath: subPath,
+        subPaths: subPaths,
       ),
       SyncDirection.pull => _directionalPlan(
         preview,
         toRight: false,
         subPath: subPath,
+        subPaths: subPaths,
       ),
     };
   }
 
-  static SyncPlan _scopePlan(SyncPlan plan, String? subPath) {
-    if (subPath == null || subPath.isEmpty) return plan;
+  static SyncPlan _scopePlan(
+    SyncPlan plan,
+    String? subPath, [
+    Set<String>? subPaths,
+  ]) {
+    if ((subPath == null || subPath.isEmpty) &&
+        (subPaths == null || subPaths.isEmpty)) {
+      return plan;
+    }
     return SyncPlan(
       actions: [
         for (final action in plan.actions)
-          if (_inScope(action.path, subPath)) action,
+          if (_inScopeOrPaths(action.path, subPath, subPaths)) action,
       ],
       conflicts: [
         for (final conflict in plan.conflicts)
-          if (_inScope(conflict.path, subPath)) conflict,
+          if (_inScopeOrPaths(conflict.path, subPath, subPaths)) conflict,
       ],
     );
   }
@@ -667,6 +691,7 @@ final class SyncEngine {
     SyncPreview preview, {
     required bool toRight,
     required String? subPath,
+    Set<String>? subPaths,
   }) {
     final paths = <String>{
       ...preview.a.entries.keys,
@@ -675,7 +700,7 @@ final class SyncEngine {
 
     final actions = <SyncAction>[];
     for (final path in paths) {
-      if (!_inScope(path, subPath)) continue;
+      if (!_inScopeOrPaths(path, subPath, subPaths)) continue;
       final ae = preview.a.entries[path];
       final be = preview.b.entries[path];
       if (ae == null && be == null) continue;
@@ -780,10 +805,16 @@ final class SyncEngine {
     required SnapshotState current,
     required List<SyncConflict> conflicts,
     required String? scope,
+    Set<String>? subPaths,
     required int updatedAt,
   }) {
     final entries = _copyFolders(previous.entries);
-    if (scope == null || scope.isEmpty) {
+    if (subPaths != null && subPaths.isNotEmpty) {
+      for (final path in subPaths) {
+        _removePath(entries, path);
+        _copyPath(current.entries, entries, path);
+      }
+    } else if (scope == null || scope.isEmpty) {
       entries
         ..clear()
         ..addAll(_copyFolders(current.entries));
@@ -793,7 +824,7 @@ final class SyncEngine {
     }
 
     for (final conflict in conflicts) {
-      if (!_inScope(conflict.path, scope)) continue;
+      if (!_inScopeOrPaths(conflict.path, scope, subPaths)) continue;
       _removePath(entries, conflict.path);
       _restorePath(entries, previous.entries, conflict.path);
     }
@@ -936,6 +967,20 @@ final class SyncEngine {
   static bool _inScope(String path, String? scope) {
     if (scope == null || scope.isEmpty) return true;
     return path == scope || path.startsWith('$scope/');
+  }
+
+  static bool _inScopeOrPaths(
+    String path,
+    String? scope,
+    Set<String>? subPaths,
+  ) {
+    if (subPaths != null && subPaths.isNotEmpty) {
+      for (final candidate in subPaths) {
+        if (path == candidate || path.startsWith('$candidate/')) return true;
+      }
+      return false;
+    }
+    return _inScope(path, scope);
   }
 
   static String _timestamp() {

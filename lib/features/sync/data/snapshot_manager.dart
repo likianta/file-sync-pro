@@ -140,6 +140,80 @@ final class LocalSnapshotManager {
     await store.save(snapshot);
     return snapshot;
   }
+
+  /// Refreshes one file's entry in `current` without walking a folder.
+  Future<SideSnapshot> refreshFile(String relPath) async {
+    final path = normalizeScope(relPath);
+    if (path.isEmpty ||
+        path
+            .split('/')
+            .any(
+              (segment) => segment.isEmpty || segment == '.' || segment == '..',
+            )) {
+      throw SnapshotPathException(path, 'Invalid file path: $path');
+    }
+    final loaded = await store.load();
+    if (loaded.legacy) {
+      throw const SnapshotLegacyException('local');
+    }
+    final existing = loaded.snapshot;
+    if (existing == null) {
+      throw const SnapshotMissingException('local');
+    }
+    final rules = await resolveSnapshotIgnores(existing.ignores, root);
+    final entries = _copyFolders(existing.current.entries);
+    final parent = folderKey(parentScope(path));
+    final folder = entries[parent];
+    if (folder == null) {
+      throw StateError('Snapshot is missing parent folder: $parent');
+    }
+
+    final abs = p.joinAll([root, ...path.split('/')]);
+    final type = await FileSystemEntity.type(abs, followLinks: false);
+    final files = {...folder.files};
+    if (type == FileSystemEntityType.file &&
+        !rules.ignores(path, isDirectory: false)) {
+      final cache = _memoryCacheFrom(existing.current, root);
+      final manifest = await LocalScanner(
+        ignores: rules,
+        hashCache: cache,
+      ).scan(root, subPath: path);
+      final entry = manifest.entries[path];
+      if (entry != null) {
+        files[baseName(path)] = FileSnapshot(
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          hash: entry.hash ?? '',
+          textHash: entry.textHash,
+        );
+      } else {
+        files.remove(baseName(path));
+      }
+    } else {
+      files.remove(baseName(path));
+    }
+    entries[parent] = folder.copyWith(files: files);
+    final snapshot = SideSnapshot(
+      base: existing.base,
+      current: SnapshotState.fromEntries(
+        entries,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+      ignores: existing.ignores,
+    );
+    await store.save(snapshot);
+    return snapshot;
+  }
+}
+
+Map<String, FolderSnapshot> _copyFolders(Map<String, FolderSnapshot> source) {
+  return {
+    for (final entry in source.entries)
+      entry.key: entry.value.copyWith(
+        dirs: [...entry.value.dirs],
+        files: {...entry.value.files},
+      ),
+  };
 }
 
 /// Turns snapshot ignores into scanner rules. Built-in safety patterns always

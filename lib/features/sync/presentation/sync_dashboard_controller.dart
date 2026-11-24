@@ -261,6 +261,99 @@ final class SyncDashboardController extends ChangeNotifier {
     }
   }
 
+  /// Refreshes one file's entry in the local snapshot after an edit.
+  Future<void> refreshFile({required bool left, required String path}) async {
+    if (busy) return;
+    if (_needsInitialScan ||
+        _localSnapshot == null ||
+        _remoteSnapshot == null) {
+      return;
+    }
+    _status = SyncDashboardStatus.scanning;
+    _errorMessage = null;
+    _scanPhase = left ? ScanPhase.local : ScanPhase.remote;
+    _scanned = 0;
+    _appendLog('Refreshing ${left ? 'local' : 'remote'} $path...');
+    _notify();
+
+    final engine = _createEngine();
+    try {
+      final snapshot = await engine.refreshFile(left: left, path: path);
+      if (left) {
+        _localSnapshot = snapshot;
+      } else {
+        _remoteSnapshot = snapshot;
+      }
+      _preview = engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
+      _diffPreview = null;
+      _diffSubPath = null;
+      _status = SyncDashboardStatus.idle;
+      _appendLog('Snapshot updated for $path.');
+    } catch (error) {
+      _fail(error);
+    } finally {
+      await engine.dispose();
+      _notify();
+    }
+  }
+
+  /// Pushes the reviewed local files that the user marked as resolved.
+  Future<bool> syncResolvedPaths(List<String> paths) async {
+    if (paths.isEmpty) return true;
+    if (busy || _localSnapshot == null || _remoteSnapshot == null) {
+      return false;
+    }
+    _status = SyncDashboardStatus.applying;
+    _errorMessage = null;
+    _applied = 0;
+    _currentPath = null;
+    _appendLog('Pushing ${paths.length} resolved conflict file(s)...');
+    _notify();
+
+    final engine = _createEngine();
+    try {
+      final preview =
+          _preview ??
+          engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
+      final report = await engine.execute(
+        preview,
+        aSnapshot: _localSnapshot!,
+        bSnapshot: _remoteSnapshot!,
+        direction: SyncDirection.push,
+        subPaths: paths.toSet(),
+        onAction: (action) {
+          _applied++;
+          _currentPath = action.path;
+          _appendLog(_formatAction(action));
+          _notify();
+        },
+      );
+      _localSnapshot = report.aSnapshot ?? _localSnapshot;
+      _remoteSnapshot = report.bSnapshot ?? _remoteSnapshot;
+      _preview = engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
+      _diffPreview = null;
+      _diffSubPath = null;
+      _status = SyncDashboardStatus.idle;
+      _appendLog('Pushed ${paths.length} resolved conflict file(s).');
+      return true;
+    } catch (error) {
+      _fail(error);
+      return false;
+    } finally {
+      await engine.dispose();
+      _notify();
+    }
+  }
+
+  void clearConflictReview() {
+    if (_lastConflictArchives.isEmpty && _lastConflictArchiveRoot == null) {
+      return;
+    }
+    _lastConflictArchives = const [];
+    _lastConflictArchiveRoot = null;
+    _notify();
+  }
+
   /// Builds a diff from the current snapshots without scanning.
   Future<void> check({String? subPath}) async {
     if (busy) return;

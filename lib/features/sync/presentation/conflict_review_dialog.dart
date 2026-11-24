@@ -51,6 +51,11 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
   String _localBaseline = '';
   String? _remoteText;
   int _remoteBytes = 0;
+  final Set<String> _resolved = {};
+  final Set<String> _changed = {};
+  String _savedText = '';
+  bool _processingAll = false;
+  String? _reviewNote;
 
   static const _monoStyle = TextStyle(
     fontFamily: 'monospace',
@@ -63,8 +68,6 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
     fontSize: 12.5,
     height: 1.45,
   );
-
-  static const _changedLine = Color(0xFFFFF1B8);
 
   ConflictArchiveEntry get _entry => widget.entries[_selected];
 
@@ -149,6 +152,7 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
       _remoteText = remoteText;
       _remoteBytes = remoteBytes;
       _localBaseline = localText;
+      _savedText = localText;
       _editor.text = localText;
     });
   }
@@ -170,20 +174,15 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
       final file = File(_localPath);
       await file.parent.create(recursive: true);
       await file.writeAsString(_editor.text, flush: true);
-      setState(() {
-        _localBaseline = _editor.text;
-        _localMissing = false;
-        _savedNote = 'Saved locally.';
-      });
-      final parent = _parentScope(_entry.path);
-      await widget.controller.refreshSide(
-        left: true,
-        subPath: parent.isEmpty ? null : parent,
-      );
+      _changed.add(_entry.path);
+      await widget.controller.refreshFile(left: true, path: _entry.path);
       if (!mounted) return;
       setState(() {
+        _localBaseline = _editor.text;
+        _savedText = _editor.text;
+        _localMissing = false;
         _savedNote = widget.controller.errorMessage == null
-            ? 'Saved locally and refreshed the local snapshot.'
+            ? 'Saved locally and refreshed this file in the snapshot.'
             : 'Saved locally, but refreshing the snapshot failed.';
         _error = widget.controller.errorMessage;
       });
@@ -196,6 +195,81 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
     }
   }
 
+  Future<void> _resolve() async {
+    if (_resolved.contains(_entry.path)) return;
+    if (_editor.text != _savedText) {
+      await _save();
+      if (_error != null) return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _resolved.add(_entry.path);
+      _savedNote = 'Marked as resolved.';
+    });
+  }
+
+  Future<void> _allResolved() async {
+    if (_processingAll) return;
+    setState(() {
+      _processingAll = true;
+      _error = null;
+      _reviewNote = null;
+    });
+    try {
+      // Never drop the visible editor text without saving it first.
+      if (!_binary && _editor.text != _savedText) {
+        await _save();
+        if (_error != null) return;
+      }
+      if (!mounted) return;
+
+      final toSync = <String>[];
+      final oneSideChanged = <String>[];
+      for (final entry in widget.entries) {
+        final path = entry.path;
+        final resolved = _resolved.contains(path);
+        final changed = _changed.contains(path);
+        if (resolved) {
+          if (changed) toSync.add(path);
+        } else if (changed) {
+          oneSideChanged.add(path);
+        } else {
+          _resolved.add(path);
+        }
+      }
+
+      if (toSync.isNotEmpty) {
+        final ok = await widget.controller.syncResolvedPaths(toSync);
+        if (!ok) {
+          if (mounted) {
+            setState(() => _error = widget.controller.errorMessage);
+          }
+          return;
+        }
+        for (final path in toSync) {
+          _changed.remove(path);
+          _resolved.add(path);
+        }
+      }
+
+      if (oneSideChanged.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            _reviewNote =
+                '${oneSideChanged.length} file(s) have local edits but are '
+                'still unresolved. Resolve them, then run All resolved again.';
+          });
+        }
+        return;
+      }
+
+      widget.controller.clearConflictReview();
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _processingAll = false);
+    }
+  }
+
   Future<void> _copyRemote() async {
     final text = _remoteText;
     if (text == null) return;
@@ -204,11 +278,6 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Remote copy copied to the clipboard.')),
     );
-  }
-
-  static String _parentScope(String path) {
-    final index = path.lastIndexOf('/');
-    return index < 0 ? '' : path.substring(0, index);
   }
 
   static bool _looksBinary(List<int> bytes) {
@@ -309,52 +378,109 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
   }
 
   Widget _sidebar(ThemeData theme) {
-    return ListView.builder(
-      key: const ValueKey<String>('conflicts.sidebar'),
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: widget.entries.length,
-      itemBuilder: (context, index) {
-        final entry = widget.entries[index];
-        final selected = index == _selected;
-        return InkWell(
-          key: ValueKey<String>('conflicts.item.${entry.path}'),
-          onTap: () => _select(index),
-          child: Container(
-            color: selected
-                ? theme.colorScheme.primaryContainer.withValues(alpha: 0.45)
-                : Colors.transparent,
-            padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.path,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontFamily: 'monospace',
-                    fontSize: 11.5,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: ListView.builder(
+            key: const ValueKey<String>('conflicts.sidebar'),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: widget.entries.length,
+            itemBuilder: (context, index) {
+              final entry = widget.entries[index];
+              final selected = index == _selected;
+              final resolved = _resolved.contains(entry.path);
+              return InkWell(
+                key: ValueKey<String>('conflicts.item.${entry.path}'),
+                onTap: () => _select(index),
+                child: Container(
+                  color: selected
+                      ? theme.colorScheme.primaryContainer.withValues(
+                          alpha: 0.45,
+                        )
+                      : Colors.transparent,
+                  padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              entry.path,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontFamily: 'monospace',
+                                fontSize: 11.5,
+                                fontWeight: selected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                          if (resolved) ...[
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.check_circle,
+                              size: 16,
+                              color: Color(0xFF2EA121),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 3,
+                        children: [
+                          if (!entry.localExisted)
+                            _chip('local deleted', theme.colorScheme.error),
+                          if (!entry.remoteExisted)
+                            _chip('remote deleted', theme.colorScheme.tertiary),
+                          if (entry.archivedRemotePath == null &&
+                              entry.remoteExisted)
+                            _chip(
+                              'remote not archived',
+                              theme.colorScheme.outline,
+                            ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 3,
-                  children: [
-                    if (!entry.localExisted)
-                      _chip('local deleted', theme.colorScheme.error),
-                    if (!entry.remoteExisted)
-                      _chip('remote deleted', theme.colorScheme.tertiary),
-                    if (entry.archivedRemotePath == null && entry.remoteExisted)
-                      _chip('remote not archived', theme.colorScheme.outline),
-                  ],
-                ),
-              ],
+              );
+            },
+          ),
+        ),
+        if (_reviewNote != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+            child: Text(
+              _reviewNote!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 10.5,
+                color: theme.colorScheme.tertiary,
+              ),
             ),
           ),
-        );
-      },
+        Divider(height: 1, color: theme.colorScheme.outlineVariant),
+        Padding(
+          padding: const EdgeInsets.all(10),
+          child: FilledButton.icon(
+            key: const ValueKey<String>('conflicts.allResolved'),
+            onPressed: _processingAll ? null : _allResolved,
+            icon: _processingAll
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.done_all, size: 16),
+            label: const Text('All resolved'),
+          ),
+        ),
+      ],
     );
   }
 
@@ -386,17 +512,46 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
           icon: Icons.edit_outlined,
           title: 'Local winner',
           subtitle: _localPath,
-          trailing: FilledButton.icon(
-            key: const ValueKey<String>('conflicts.save'),
-            onPressed: _saving || _binary || _loading ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.save_outlined, size: 15),
-            label: const Text('Save'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FilledButton.icon(
+                key: const ValueKey<String>('conflicts.save'),
+                onPressed: _saving || _binary || _loading || _processingAll
+                    ? null
+                    : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined, size: 15),
+                label: const Text('Save'),
+              ),
+              const SizedBox(width: 6),
+              OutlinedButton.icon(
+                key: const ValueKey<String>('conflicts.resolve'),
+                onPressed:
+                    _saving ||
+                        _loading ||
+                        _processingAll ||
+                        _resolved.contains(entry.path)
+                    ? null
+                    : _resolve,
+                icon: Icon(
+                  _resolved.contains(entry.path) ? Icons.check : Icons.task_alt,
+                  size: 15,
+                ),
+                label: Text(
+                  _resolved.contains(entry.path) ? 'Resolved' : 'Resolve',
+                ),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+              ),
+            ],
           ),
         ),
         if (_localMissing)
@@ -467,6 +622,9 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
   Widget _diffPane(ThemeData theme) {
     final entry = _entry;
     final remote = _remoteText;
+    final dark = theme.brightness == Brightness.dark;
+    final changedBg = dark ? const Color(0xFF4A3A00) : const Color(0xFFFFF1B8);
+    final changedFg = dark ? const Color(0xFFFFE08A) : const Color(0xFF3A2F00);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -504,8 +662,15 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
                   child: SelectableText.rich(
                     TextSpan(
-                      style: _monoStyle,
-                      children: _diffSpans(_localBaseline, remote),
+                      style: _monoStyle.copyWith(
+                        color: theme.colorScheme.onSurface,
+                      ),
+                      children: _diffSpans(
+                        _localBaseline,
+                        remote,
+                        changedBackground: changedBg,
+                        changedForeground: changedFg,
+                      ),
                     ),
                     key: const ValueKey<String>('conflicts.diff'),
                   ),
@@ -515,7 +680,7 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
           child: Row(
             children: [
-              Container(width: 10, height: 10, color: _changedLine),
+              Container(width: 10, height: 10, color: changedBg),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -608,7 +773,12 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
     );
   }
 
-  List<InlineSpan> _diffSpans(String local, String remote) {
+  List<InlineSpan> _diffSpans(
+    String local,
+    String remote, {
+    required Color changedBackground,
+    required Color changedForeground,
+  }) {
     final counts = <String, int>{};
     for (final line in local.split('\n')) {
       counts[line] = (counts[line] ?? 0) + 1;
@@ -626,7 +796,10 @@ class _ConflictReviewDialogState extends State<_ConflictReviewDialog> {
         TextSpan(
           text: line,
           style: changed
-              ? const TextStyle(backgroundColor: _changedLine)
+              ? TextStyle(
+                  backgroundColor: changedBackground,
+                  color: changedForeground,
+                )
               : null,
         ),
       );
