@@ -49,12 +49,14 @@ void main() {
     final snapshot = SideSnapshot(
       base: SnapshotState.empty(),
       current: current,
+      ignores: const SnapshotIgnores.patterns(['/skip/', '*.tmp']),
     );
     await store.save(snapshot);
 
     final loaded = await store.load();
     final result = loaded.snapshot!;
     expect(result.base.isEmpty, isTrue);
+    expect(result.ignores.patterns, ['/skip/', '*.tmp']);
     expect(result.current.updatedAt, 1234);
     expect(result.current.key, current.key);
     expect(result.current.entries.keys, ['.', 'docs']);
@@ -67,6 +69,7 @@ void main() {
         .readAsString();
     expect(text, contains('"base"'));
     expect(text, contains('"current"'));
+    expect(text, contains('"ignores"'));
     expect(text, contains('"text_hash"'));
   });
 

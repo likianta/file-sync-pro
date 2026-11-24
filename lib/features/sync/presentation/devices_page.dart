@@ -233,7 +233,9 @@ class _DeviceCardState extends State<_DeviceCard> {
       token: widget.store.config.token,
     );
     if (result == null || !mounted) return;
-    if (widget.store.pairs.any((pair) => pair.name == result.entry.name)) {
+    if (widget.store.config
+        .pairsForDevice(widget.device.id)
+        .any((pair) => pair.name == result.entry.name)) {
       _toast('A pair named "${result.entry.name}" already exists.');
       return;
     }
@@ -251,7 +253,9 @@ class _DeviceCardState extends State<_DeviceCard> {
     );
     if (result == null || !mounted) return;
     if (result.entry.name != pair.name &&
-        widget.store.pairs.any((entry) => entry.name == result.entry.name)) {
+        widget.store.config
+            .pairsForDevice(widget.device.id)
+            .any((entry) => entry.name == result.entry.name)) {
       _toast('A pair named "${result.entry.name}" already exists.');
       return;
     }
@@ -270,7 +274,7 @@ class _DeviceCardState extends State<_DeviceCard> {
       confirmKey: ValueKey<String>('devices.pair.deleteConfirm.${pair.name}'),
     );
     if (confirmed) {
-      widget.store.removePair(pair.name);
+      widget.store.removePair(widget.device.id, pair.id);
     }
   }
 
@@ -316,11 +320,6 @@ class _DeviceCardState extends State<_DeviceCard> {
                               : 'Remote',
                           color: const Color(0xFF7C3AED),
                           tint: const Color(0xFFEDE9FE),
-                        ),
-                        _CapsuleTag(
-                          label: device.createdMonthLabel,
-                          color: const Color(0xFF059669),
-                          tint: const Color(0xFFD1FAE5),
                         ),
                       ],
                     ),

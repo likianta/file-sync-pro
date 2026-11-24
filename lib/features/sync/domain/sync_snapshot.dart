@@ -245,22 +245,68 @@ final class SnapshotState {
   }
 }
 
+/// Ignore configuration shared by every pair that uses the same root.
+///
+/// The snapshot file is the single source of truth so two pairs pointing at
+/// the same folder cannot disagree about what should be scanned.
+final class SnapshotIgnores {
+  const SnapshotIgnores.patterns(this.patterns) : useGitignore = false;
+
+  const SnapshotIgnores.gitignore() : patterns = const [], useGitignore = true;
+
+  static const empty = SnapshotIgnores.patterns([]);
+
+  final List<String> patterns;
+
+  final bool useGitignore;
+
+  Object toJson() => useGitignore ? r'$gitignore' : patterns;
+
+  factory SnapshotIgnores.fromJson(Object? json) {
+    if (json == null) return empty;
+    if (json is String) {
+      if (json == r'$gitignore') return const SnapshotIgnores.gitignore();
+      throw FormatException('Unsupported ignores value: $json');
+    }
+    if (json is List) {
+      return SnapshotIgnores.patterns(json.whereType<String>().toList());
+    }
+    throw const FormatException('ignores must be a string or a list');
+  }
+}
+
 /// The contents of one `.file_sync_shot.json` file.
 final class SideSnapshot {
-  const SideSnapshot({required this.base, required this.current});
+  const SideSnapshot({
+    required this.base,
+    required this.current,
+    this.ignores = SnapshotIgnores.empty,
+  });
 
   final SnapshotState base;
   final SnapshotState current;
 
-  SideSnapshot copyWith({SnapshotState? base, SnapshotState? current}) {
+  /// Ignore rules used when scanning either side of this root.
+  final SnapshotIgnores ignores;
+
+  SideSnapshot copyWith({
+    SnapshotState? base,
+    SnapshotState? current,
+    SnapshotIgnores? ignores,
+  }) {
     return SideSnapshot(
       base: base ?? this.base,
       current: current ?? this.current,
+      ignores: ignores ?? this.ignores,
     );
   }
 
   Map<String, Object?> toJson() {
-    return {'base': base.toJson(), 'current': current.toJson()};
+    return {
+      'ignores': ignores.toJson(),
+      'base': base.toJson(),
+      'current': current.toJson(),
+    };
   }
 
   factory SideSnapshot.fromJson(Map<String, Object?> json) {
@@ -272,6 +318,7 @@ final class SideSnapshot {
     return SideSnapshot(
       base: SnapshotState.fromJson(base.cast<String, Object?>()),
       current: SnapshotState.fromJson(current.cast<String, Object?>()),
+      ignores: SnapshotIgnores.fromJson(json['ignores']),
     );
   }
 }

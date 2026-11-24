@@ -7,7 +7,6 @@ import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
 import 'package:file_sync_pro/features/sync/application/sync_pair_config.dart';
 import 'package:file_sync_pro/features/sync/application/sync_source.dart';
 import 'package:file_sync_pro/features/sync/data/snapshot_store.dart';
-import 'package:file_sync_pro/features/sync/domain/ignore_rules.dart';
 import 'package:file_sync_pro/features/sync/domain/manifest.dart';
 import 'package:file_sync_pro/features/sync/domain/sync_plan.dart';
 import 'package:file_sync_pro/features/transport/http_transport.dart';
@@ -45,18 +44,15 @@ Future<void> main(List<String> args) async {
     await localDir.create(recursive: true);
   }
 
-  final ignores = IgnoreRules.defaults(extra: config.extraIgnores);
   final backupDir = defaultSnapshotBackupDir();
   final local = LocalSyncSource(
     config.localRoot,
-    ignores: ignores,
     snapshotBackupDir: backupDir,
     snapshotLabel: '${config.pairName}-local',
   );
   final remote = RemoteSyncSource(
     baseUrl: config.remoteUrl,
     token: config.token,
-    ignores: ignores,
     timeout: Duration(seconds: config.timeoutSeconds),
     snapshotBackupDir: backupDir,
     snapshotLabel: '${config.pairName}-remote',
@@ -346,7 +342,9 @@ final class _SyncOptions {
 
     SyncPairEntry? entry;
     for (final candidate in client.pairs) {
-      if (pairArg == null || candidate.name == pairArg) {
+      if (pairArg == null ||
+          candidate.name == pairArg ||
+          candidate.id == pairArg) {
         entry = candidate;
         break;
       }
@@ -355,20 +353,22 @@ final class _SyncOptions {
       throw ArgumentError('Unknown pair: $pairArg');
     }
 
+    final runtime = client.runtimeFor(entry.deviceId, entry.name);
+    if (runtime == null) {
+      throw ArgumentError('Cannot resolve pair: ${entry.name}');
+    }
+
     final config = SyncPairConfig(
       name: entry.name,
       localRoot: localArg == null
           ? entry.localRoot
           : _resolvePath(projectRoot, _expandUser(localArg)),
-      remoteUrl: remoteArg ?? entry.remoteUrl,
+      remoteUrl: remoteArg ?? runtime.remoteUrl,
       token: tokenArg ?? client.token,
       stateDir: stateArg == null
-          ? entry.stateDir
+          ? runtime.stateDir
           : _resolvePath(projectRoot, _expandUser(stateArg)),
       timeoutSeconds: timeoutArg ?? client.timeoutSeconds,
-      extraIgnores: entry.ignores.isNotEmpty
-          ? entry.ignores
-          : client.extraIgnores,
     );
 
     if (config.remoteUrl.trim().isEmpty) {

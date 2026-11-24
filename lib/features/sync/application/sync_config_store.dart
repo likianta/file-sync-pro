@@ -53,12 +53,11 @@ final class SyncConfigStore extends ChangeNotifier {
   }
 
   void addDevice() {
-    final id = 'dev-${DateTime.now().microsecondsSinceEpoch}';
+    final id = SyncClientConfig.newDeviceId();
     _config.devices.add(
       SyncDeviceEntry(
         id: id,
         name: _uniqueDeviceName('New device', excludingId: id),
-        createdAt: DateTime.now(),
       ),
     );
     _scheduleSave();
@@ -75,7 +74,7 @@ final class SyncConfigStore extends ChangeNotifier {
     SyncDeviceType type = SyncDeviceType.windows,
     SyncDeviceModel? model,
   }) {
-    final id = 'dev-${DateTime.now().microsecondsSinceEpoch}';
+    final id = SyncClientConfig.newDeviceId();
     final entry = SyncDeviceEntry(
       id: id,
       name: _uniqueDeviceName(name, excludingId: id),
@@ -84,7 +83,6 @@ final class SyncConfigStore extends ChangeNotifier {
       hostType: hostType,
       host: host,
       port: port,
-      createdAt: DateTime.now(),
     );
     _config.devices.add(entry);
     _scheduleSave();
@@ -101,45 +99,38 @@ final class SyncConfigStore extends ChangeNotifier {
     final index = _config.devices.indexWhere((entry) => entry.id == device.id);
     if (index < 0) return;
 
-    final previous = _config.devices[index];
     final name = _uniqueDeviceName(device.name, excludingId: device.id);
     _config.devices[index] = device.copyWith(name: name);
-
-    if (previous.authority != device.authority) {
-      for (var i = 0; i < _config.pairs.length; i++) {
-        final pair = _config.pairs[i];
-        if (pair.deviceId != device.id) continue;
-        _config.pairs[i] = pair.copyWith(
-          remoteUrl: rebaseUrl(pair.remoteUrl, _config.devices[index].baseUrl),
-        );
-      }
-    }
     _scheduleSave();
     _notify();
   }
 
   void removeDevice(String deviceId) {
     _config.devices.removeWhere((device) => device.id == deviceId);
-    _config.pairs.removeWhere((pair) => pair.deviceId == deviceId);
     _scheduleSave();
     _notify();
   }
 
   void upsertPair(SyncPairEntry pair, {String? previousName}) {
-    final index = previousName == null
-        ? -1
-        : _config.pairs.indexWhere((entry) => entry.name == previousName);
+    final device = _config.deviceById(pair.deviceId);
+    if (device == null) return;
+    var index = device.pairs.indexWhere((entry) => entry.id == pair.id);
+    if (index < 0 && previousName != null) {
+      index = device.pairs.indexWhere((entry) => entry.name == previousName);
+    }
     if (index >= 0) {
-      _config.pairs[index] = pair;
+      device.pairs[index] = pair;
     } else {
-      _config.pairs.add(pair);
+      device.pairs.add(pair);
     }
     _scheduleSave();
     _notify();
   }
 
-  void removePair(String name) {
-    _config.pairs.removeWhere((pair) => pair.name == name);
+  void removePair(String deviceId, String pairId) {
+    final device = _config.deviceById(deviceId);
+    if (device == null) return;
+    device.pairs.removeWhere((pair) => pair.id == pairId);
     _scheduleSave();
     _notify();
   }
@@ -149,13 +140,6 @@ final class SyncConfigStore extends ChangeNotifier {
     _config.token = token;
     _scheduleSave();
     _notify();
-  }
-
-  /// Rewrites the authority of a remote URL while keeping its path.
-  static String rebaseUrl(String remoteUrl, String baseUrl) {
-    final uri = Uri.tryParse(remoteUrl);
-    if (uri == null || uri.host.isEmpty) return remoteUrl;
-    return '$baseUrl${uri.path}';
   }
 
   String _uniqueDeviceName(String base, {required String excludingId}) {

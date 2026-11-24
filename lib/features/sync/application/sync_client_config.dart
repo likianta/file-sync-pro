@@ -1,40 +1,38 @@
 /// Multi-pair client configuration.
 ///
-/// Version 3 layout:
+/// Version 4 layout:
 /// {
-///   "version": 3,
+///   "version": 4,
 ///   "token": "...",
 ///   "timeoutSeconds": 300,
-///   "ignores": [...],
 ///   "devices": [
 ///     {
-///       "id": "dev-192-168-1-10-2160",
-///       "name": "192.168.1.10",
-///       "type": "windows",
-///       "hostType": "remote",
-///       "host": "192.168.1.10",
-///       "port": 2160
-///     }
-///   ],
-///   "pairs": [
-///     {
-///       "name": "gitbook",
-///       "deviceId": "dev-192-168-1-10-2160",
-///       "localRoot": "...",
-///       "remoteUrl": "http://192.168.1.10:2160/gitbook",
-///       "stateDir": "...",
-///       "ignores": [...]
+///       "id": "d-...",
+///       "name": "OnePlus 11",
+///       "type": "android",
+///       "model": "androidPhone",
+///       "host_type": "remote",
+///       "host": "192.168.71.52",
+///       "port": 2160,
+///       "pairs": [
+///         {
+///           "id": "p-...",
+///           "name": "gitbook",
+///           "local_root": "/Users/Likianta/Desktop/documents/gitbook",
+///           "remote_root": "/gitbook"
+///         }
+///       ]
 ///     }
 ///   ]
 /// }
 ///
-/// Version 2 files (a flat "pairs" list without devices) and legacy single-pair
-/// files are migrated in memory: devices are derived from each pair's remote
-/// URL and written back on the next save.
+/// Version 3 files (devices plus a separate top-level "pairs" list) are
+/// migrated in memory and written back in the new shape on the next save.
 library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:path/path.dart' as p;
 
@@ -90,7 +88,6 @@ enum SyncDeviceModel {
     };
   }
 
-  /// Best-guess model from device type.
   static SyncDeviceModel fallbackOf(SyncDeviceType type) {
     return switch (type) {
       SyncDeviceType.windows => SyncDeviceModel.windowsLaptop,
@@ -125,7 +122,7 @@ enum SyncHostType {
 
 /// A peer device that exposes one or more file-server mounts.
 final class SyncDeviceEntry {
-  const SyncDeviceEntry({
+  SyncDeviceEntry({
     required this.id,
     required this.name,
     this.type = SyncDeviceType.windows,
@@ -133,11 +130,12 @@ final class SyncDeviceEntry {
     this.hostType = SyncHostType.remote,
     this.host = '',
     this.port = defaultPort,
-    this.createdAt,
-  });
+    List<SyncPairEntry> pairs = const [],
+  }) : pairs = List.of(pairs);
 
   static const defaultPort = 2160;
 
+  /// Unique and immutable. Format: `d-<[a-z0-9]+>`.
   final String id;
   final String name;
   final SyncDeviceType type;
@@ -145,7 +143,7 @@ final class SyncDeviceEntry {
   final SyncHostType hostType;
   final String host;
   final int port;
-  final DateTime? createdAt;
+  final List<SyncPairEntry> pairs;
 
   SyncDeviceModel get resolvedModel =>
       model ?? SyncDeviceModel.fallbackOf(type);
@@ -160,14 +158,6 @@ final class SyncDeviceEntry {
 
   String get baseUrl => 'http://$authority';
 
-  String get createdMonthLabel {
-    final when = createdAt;
-    if (when == null) return '2026-11';
-    final year = when.year.toString().padLeft(4, '0');
-    final month = when.month.toString().padLeft(2, '0');
-    return '$year-$month';
-  }
-
   SyncDeviceEntry copyWith({
     String? id,
     String? name,
@@ -177,7 +167,7 @@ final class SyncDeviceEntry {
     SyncHostType? hostType,
     String? host,
     int? port,
-    DateTime? createdAt,
+    List<SyncPairEntry>? pairs,
   }) {
     return SyncDeviceEntry(
       id: id ?? this.id,
@@ -187,7 +177,7 @@ final class SyncDeviceEntry {
       hostType: hostType ?? this.hostType,
       host: host ?? this.host,
       port: port ?? this.port,
-      createdAt: createdAt ?? this.createdAt,
+      pairs: pairs ?? this.pairs,
     );
   }
 
@@ -197,108 +187,146 @@ final class SyncDeviceEntry {
       'name': name,
       'type': type.id,
       if (model != null) 'model': model!.id,
-      'hostType': hostType.id,
+      'host_type': hostType.id,
       'host': host,
       'port': port,
-      if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+      'pairs': [for (final pair in pairs) pair.toJson()],
     };
   }
 
-  factory SyncDeviceEntry.fromJson(Map<String, Object?> json) {
+  factory SyncDeviceEntry.fromJson(
+    Map<String, Object?> json, {
+    required String projectRoot,
+  }) {
     final host = json['host'] as String? ?? '';
     final port = (json['port'] as num?)?.toInt() ?? defaultPort;
-    final createdAtRaw = json['createdAt'] as String?;
+    final rawId = json['id'] as String?;
+    final id = SyncClientConfig._validDeviceId(rawId)
+        ? rawId!
+        : SyncClientConfig.newDeviceId(seed: rawId ?? '$host-$port');
+    final rawPairs = json['pairs'];
+    final pairs = <SyncPairEntry>[];
+    if (rawPairs is List) {
+      for (final raw in rawPairs) {
+        if (raw is! Map) continue;
+        pairs.add(
+          SyncPairEntry.fromJson(
+            raw.cast<String, Object?>(),
+            deviceId: id,
+            projectRoot: projectRoot,
+          ),
+        );
+      }
+    }
     return SyncDeviceEntry(
-      id: (json['id'] as String?)?.trim().isNotEmpty == true
-          ? (json['id'] as String).trim()
-          : legacyDeviceId(host, port),
+      id: id,
       name: (json['name'] as String?)?.trim().isNotEmpty == true
           ? (json['name'] as String).trim()
-          : host,
+          : (host.isEmpty ? 'Device' : host),
       type: SyncDeviceType.parse(json['type']),
       model: json['model'] == null
           ? null
           : SyncDeviceModel.parse(json['model']),
-      hostType: SyncHostType.parse(json['hostType']),
+      hostType: SyncHostType.parse(json['host_type'] ?? json['hostType']),
       host: host,
       port: port,
-      createdAt: createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw),
+      pairs: pairs,
     );
-  }
-
-  /// A deterministic id used when a device is derived from a remote URL.
-  static String legacyDeviceId(String host, int port) {
-    final slug = '$host-$port'.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '-');
-    return 'dev-$slug';
   }
 }
 
 final class SyncPairEntry {
-  const SyncPairEntry({
+  SyncPairEntry({
+    required this.id,
     required this.name,
     required this.localRoot,
-    required this.remoteUrl,
-    required this.stateDir,
+    required this.remoteRoot,
     this.deviceId = '',
-    this.ignores = const [],
-  });
+    String? stateDir,
+  }) : stateDir = stateDir ?? '';
 
+  /// Unique and immutable. Format: `p-<[a-z0-9]+>`.
+  final String id;
   final String name;
   final String localRoot;
-  final String remoteUrl;
-  final String stateDir;
 
-  /// The [SyncDeviceEntry.id] this pair syncs with.
+  /// Mount path on the peer, for example `/gitbook`.
+  final String remoteRoot;
+
+  /// The [SyncDeviceEntry.id] this pair belongs to.
   final String deviceId;
 
-  /// Pair-specific ignore patterns.
-  ///
-  /// When non-empty, these replace the config-level [SyncClientConfig.extraIgnores]
-  /// for this pair.
-  final List<String> ignores;
+  /// Runtime-only state folder; never serialized.
+  final String stateDir;
 
   SyncPairEntry copyWith({
+    String? id,
     String? name,
     String? localRoot,
-    String? remoteUrl,
-    String? stateDir,
+    String? remoteRoot,
     String? deviceId,
-    List<String>? ignores,
+    String? stateDir,
   }) {
     return SyncPairEntry(
+      id: id ?? this.id,
       name: name ?? this.name,
       localRoot: localRoot ?? this.localRoot,
-      remoteUrl: remoteUrl ?? this.remoteUrl,
-      stateDir: stateDir ?? this.stateDir,
+      remoteRoot: remoteRoot ?? this.remoteRoot,
       deviceId: deviceId ?? this.deviceId,
-      ignores: ignores ?? this.ignores,
+      stateDir: stateDir ?? this.stateDir,
     );
+  }
+
+  String remoteUrlFor(SyncDeviceEntry device) {
+    final root = remoteRoot.startsWith('/') ? remoteRoot : '/$remoteRoot';
+    return '${device.baseUrl}$root';
   }
 
   Map<String, Object?> toJson() {
     return {
+      'id': id,
       'name': name,
-      'deviceId': deviceId,
-      'localRoot': localRoot,
-      'remoteUrl': remoteUrl,
-      'stateDir': stateDir,
-      'ignores': ignores,
+      'local_root': localRoot,
+      'remote_root': remoteRoot,
     };
   }
 
-  SyncPairConfig toRuntime({
-    required String token,
-    required int timeoutSeconds,
-    required List<String> extraIgnores,
+  factory SyncPairEntry.fromJson(
+    Map<String, Object?> json, {
+    required String deviceId,
+    required String projectRoot,
   }) {
-    return SyncPairConfig(
+    final rawId = json['id'] as String?;
+    final name = (json['name'] as String?)?.trim().isNotEmpty == true
+        ? (json['name'] as String).trim()
+        : 'pair';
+    final id = SyncClientConfig._validPairId(rawId)
+        ? rawId!
+        : SyncClientConfig.newPairId(seed: name);
+    final remoteRoot = SyncClientConfig._normalizeRemoteRoot(
+      json['remote_root'] as String? ?? json['remoteRoot'] as String? ?? '/',
+    );
+    final localRoot = SyncClientConfig._resolve(
+      projectRoot,
+      SyncClientConfig._expandUser(
+        json['local_root'] as String? ??
+            json['localRoot'] as String? ??
+            p.join(projectRoot, '..', 'photolens'),
+      ),
+    );
+    final rawState = json['stateDir'] as String?;
+    return SyncPairEntry(
+      id: id,
       name: name,
       localRoot: localRoot,
-      remoteUrl: remoteUrl,
-      token: token,
-      stateDir: stateDir,
-      timeoutSeconds: timeoutSeconds,
-      extraIgnores: ignores.isNotEmpty ? ignores : extraIgnores,
+      remoteRoot: remoteRoot,
+      deviceId: deviceId,
+      stateDir: rawState == null || rawState.trim().isEmpty
+          ? p.join(projectRoot, 'data', 'sync_pairs', id)
+          : SyncClientConfig._resolve(
+              projectRoot,
+              SyncClientConfig._expandUser(rawState),
+            ),
     );
   }
 }
@@ -307,33 +335,24 @@ final class SyncClientConfig {
   SyncClientConfig({
     required this.token,
     required this.timeoutSeconds,
-    required this.extraIgnores,
-    required List<SyncPairEntry> pairs,
-    List<SyncDeviceEntry> devices = const [],
-  }) : pairs = List.of(pairs),
-       devices = List.of(devices);
+    required List<SyncDeviceEntry> devices,
+  }) : devices = List.of(devices);
 
   String token;
   int timeoutSeconds;
-  final List<String> extraIgnores;
-  final List<SyncPairEntry> pairs;
   final List<SyncDeviceEntry> devices;
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   static SyncClientConfig load({
     required String path,
     required String projectRoot,
   }) {
     final file = File(path);
-    if (!file.existsSync()) {
-      return empty();
-    }
+    if (!file.existsSync()) return empty();
 
     final text = file.readAsStringSync();
-    if (text.trim().isEmpty) {
-      return empty();
-    }
+    if (text.trim().isEmpty) return empty();
 
     final decoded = jsonDecode(text);
     if (decoded is! Map) {
@@ -345,67 +364,52 @@ final class SyncClientConfig {
         json['token'] as String? ??
         '';
     final timeoutSeconds = (json['timeoutSeconds'] as num?)?.toInt() ?? 300;
-    final ignores = json['ignores'] is List
-        ? (json['ignores'] as List).whereType<String>().toList(growable: false)
-        : const <String>[];
 
     final devices = <SyncDeviceEntry>[];
     final seenDeviceIds = <String>{};
+    final legacyDevicesById = <String, SyncDeviceEntry>{};
     final rawDevices = json['devices'];
     if (rawDevices is List) {
       for (final raw in rawDevices) {
         if (raw is! Map) continue;
-        final device = SyncDeviceEntry.fromJson(raw.cast<String, Object?>());
+        final map = raw.cast<String, Object?>();
+        final oldId = map['id'] as String?;
+        final device = SyncDeviceEntry.fromJson(map, projectRoot: projectRoot);
+        if (oldId != null && oldId.isNotEmpty) {
+          legacyDevicesById[oldId] = device;
+        }
         if (seenDeviceIds.add(device.id)) {
           devices.add(device);
         }
       }
     }
 
-    final pairs = <SyncPairEntry>[];
+    // Version 3 kept pairs in a separate top-level list. Move them under their
+    // devices and drop the old list on the next save.
     final rawPairs = json['pairs'];
-    if (rawPairs is List && rawPairs.isNotEmpty) {
+    if (rawPairs is List) {
       for (final raw in rawPairs) {
         if (raw is! Map) continue;
-        pairs.add(
-          _entryFromJson(raw.cast<String, Object?>(), projectRoot: projectRoot),
+        final pairJson = raw.cast<String, Object?>();
+        final oldDeviceId = pairJson['deviceId'] as String? ?? '';
+        var device = legacyDevicesById[oldDeviceId];
+        device ??= _deviceFromLegacyPair(pairJson);
+        if (device == null) continue;
+        if (!devices.contains(device)) devices.add(device);
+        final pair = _pairFromLegacy(pairJson, device, projectRoot);
+        if (pair == null) continue;
+        device.pairs.removeWhere(
+          (item) => item.id == pair.id || item.name == pair.name,
         );
-      }
-    } else {
-      // Legacy single-pair layout.
-      final remoteUrl = json['remoteUrl'] as String? ?? '';
-      if (remoteUrl.isNotEmpty) {
-        final name = _defaultPairName(remoteUrl);
-        pairs.add(
-          SyncPairEntry(
-            name: name,
-            localRoot: _resolve(
-              projectRoot,
-              _expandUser(
-                json['localRoot'] as String? ??
-                    p.join(projectRoot, '..', 'photolens'),
-              ),
-            ),
-            remoteUrl: remoteUrl,
-            stateDir: _resolve(
-              projectRoot,
-              _expandUser(
-                json['stateDir'] as String? ??
-                    p.join(projectRoot, 'data', 'sync_pairs', name),
-              ),
-            ),
-          ),
-        );
+        device.pairs.add(pair);
       }
     }
 
-    final normalized = _ensureDevices(devices: devices, pairs: pairs);
+    _ensurePairState(devices, projectRoot);
     return SyncClientConfig(
       token: token,
       timeoutSeconds: timeoutSeconds,
-      extraIgnores: ignores,
-      devices: normalized.devices,
-      pairs: normalized.pairs,
+      devices: devices,
     );
   }
 
@@ -413,11 +417,14 @@ final class SyncClientConfig {
     return SyncClientConfig(
       token: Platform.environment['FILE_SYNC_TOKEN'] ?? '',
       timeoutSeconds: 300,
-      extraIgnores: const [],
-      pairs: const [],
       devices: const [],
     );
   }
+
+  /// Every pair across all devices, flattened for runtime lookups.
+  List<SyncPairEntry> get pairs => [
+    for (final device in devices) ...device.pairs,
+  ];
 
   SyncDeviceEntry? deviceById(String id) {
     for (final device in devices) {
@@ -431,10 +438,7 @@ final class SyncClientConfig {
   }
 
   List<SyncPairEntry> pairsForDevice(String deviceId) {
-    return [
-      for (final pair in pairs)
-        if (pair.deviceId == deviceId) pair,
-    ];
+    return deviceById(deviceId)?.pairs ?? const [];
   }
 
   Future<void> save({required String path}) async {
@@ -444,14 +448,11 @@ final class SyncClientConfig {
       await parent.create(recursive: true);
     }
 
-    final normalized = _ensureDevices(devices: devices, pairs: pairs);
     final data = <String, Object?>{
       'version': schemaVersion,
       'token': token,
       'timeoutSeconds': timeoutSeconds,
-      'ignores': extraIgnores,
-      'devices': [for (final device in normalized.devices) device.toJson()],
-      'pairs': [for (final pair in normalized.pairs) pair.toJson()],
+      'devices': [for (final device in devices) device.toJson()],
     };
 
     final temp = File(
@@ -477,31 +478,48 @@ final class SyncClientConfig {
     }
   }
 
-  SyncPairConfig? runtimeFor(String name) {
+  SyncPairConfig? runtimeFor(String deviceId, String pairName) {
+    final device = deviceById(deviceId);
+    if (device == null) return null;
     SyncPairEntry? pair;
-    for (final entry in pairs) {
-      if (entry.name == name) {
+    for (final entry in device.pairs) {
+      if (entry.name == pairName) {
         pair = entry;
         break;
       }
     }
-    return pair?.toRuntime(
-      token: token,
-      timeoutSeconds: timeoutSeconds,
-      extraIgnores: extraIgnores,
-    );
+    return pair == null ? null : _runtimeFor(device, pair);
+  }
+
+  SyncPairConfig? runtimeForPairId(String pairId) {
+    for (final device in devices) {
+      for (final pair in device.pairs) {
+        if (pair.id == pairId) return _runtimeFor(device, pair);
+      }
+    }
+    return null;
   }
 
   SyncPairConfig? get firstRuntime {
-    if (pairs.isEmpty) return null;
-    return pairs.first.toRuntime(
+    for (final device in devices) {
+      if (device.pairs.isNotEmpty) {
+        return _runtimeFor(device, device.pairs.first);
+      }
+    }
+    return null;
+  }
+
+  SyncPairConfig _runtimeFor(SyncDeviceEntry device, SyncPairEntry pair) {
+    return SyncPairConfig(
+      name: pair.name,
+      localRoot: pair.localRoot,
+      remoteUrl: pair.remoteUrlFor(device),
       token: token,
+      stateDir: pair.stateDir,
       timeoutSeconds: timeoutSeconds,
-      extraIgnores: extraIgnores,
     );
   }
 
-  /// Returns a device name that does not collide with an existing one.
   String uniqueDeviceName(String base) {
     final trimmed = base.trim().isEmpty ? 'Device' : base.trim();
     if (!devices.any((device) => device.name == trimmed)) return trimmed;
@@ -512,29 +530,108 @@ final class SyncClientConfig {
     return '$trimmed $index';
   }
 
-  /// Returns a pair name that does not collide with an existing one.
-  String uniquePairName(String base) {
+  String uniquePairName(String deviceId, String base) {
     final trimmed = base.trim().isEmpty ? 'pair' : base.trim();
-    if (!pairs.any((pair) => pair.name == trimmed)) return trimmed;
+    final names = pairsForDevice(deviceId).map((pair) => pair.name).toSet();
+    if (!names.contains(trimmed)) return trimmed;
     var index = 2;
-    while (pairs.any((pair) => pair.name == '$trimmed $index')) {
+    while (names.contains('$trimmed $index')) {
       index++;
     }
     return '$trimmed $index';
   }
 
-  static SyncPairEntry _entryFromJson(
-    Map<String, Object?> json, {
-    required String projectRoot,
-  }) {
+  static String newDeviceId({String? seed}) {
+    return 'd-${_uniqueSuffix(seed)}';
+  }
+
+  static String newPairId({String? seed}) {
+    return 'p-${_uniqueSuffix(seed)}';
+  }
+
+  static String _uniqueSuffix(String? seed) {
+    final base = seed == null ? '' : _slug(seed);
+    final stamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    final salt = Random().nextInt(1296).toRadixString(36).padLeft(2, '0');
+    final prefix = base.isEmpty
+        ? ''
+        : '${base.substring(0, min(base.length, 8))}-';
+    return '$prefix$stamp$salt';
+  }
+
+  static String _slug(String value) {
+    final slug = value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    return slug.isEmpty ? 'x' : slug;
+  }
+
+  static bool _validDeviceId(String? id) {
+    return id != null && RegExp(r'^d-[a-z0-9]+$').hasMatch(id);
+  }
+
+  static bool _validPairId(String? id) {
+    return id != null && RegExp(r'^p-[a-z0-9]+$').hasMatch(id);
+  }
+
+  static void _ensurePairState(
+    List<SyncDeviceEntry> devices,
+    String projectRoot,
+  ) {
+    final seenPairIds = <String>{};
+    for (final device in devices) {
+      final nextPairs = <SyncPairEntry>[];
+      for (final pair in device.pairs) {
+        var id = pair.id;
+        if (!seenPairIds.add(id)) {
+          id = newPairId(seed: pair.name);
+          seenPairIds.add(id);
+        }
+        nextPairs.add(
+          pair.copyWith(
+            id: id,
+            deviceId: device.id,
+            stateDir: pair.stateDir.isEmpty
+                ? p.join(projectRoot, 'data', 'sync_pairs', id)
+                : pair.stateDir,
+          ),
+        );
+      }
+      device.pairs
+        ..clear()
+        ..addAll(nextPairs);
+    }
+  }
+
+  static SyncDeviceEntry? _deviceFromLegacyPair(Map<String, Object?> json) {
     final remoteUrl = json['remoteUrl'] as String? ?? '';
+    final uri = Uri.tryParse(remoteUrl);
+    if (uri == null || uri.host.isEmpty) return null;
+    return SyncDeviceEntry(
+      id: newDeviceId(seed: '${uri.host}-${uri.port}'),
+      name: uri.host,
+      hostType: uri.host == '127.0.0.1' || uri.host == 'localhost'
+          ? SyncHostType.local
+          : SyncHostType.remote,
+      host: uri.host,
+      port: uri.hasPort ? uri.port : SyncDeviceEntry.defaultPort,
+    );
+  }
+
+  static SyncPairEntry? _pairFromLegacy(
+    Map<String, Object?> json,
+    SyncDeviceEntry device,
+    String projectRoot,
+  ) {
+    final remoteUrl = json['remoteUrl'] as String? ?? '';
+    final uri = Uri.tryParse(remoteUrl);
+    if (uri == null) return null;
+    final path = uri.path.isEmpty ? '/' : uri.path;
     final name = (json['name'] as String?)?.trim().isNotEmpty == true
         ? (json['name'] as String).trim()
-        : _defaultPairName(remoteUrl);
-    final rawIgnores = json['ignores'];
+        : (path == '/' ? 'pair' : p.posix.basename(path));
+    final rawState = json['stateDir'] as String?;
     return SyncPairEntry(
+      id: newPairId(seed: name),
       name: name,
-      deviceId: json['deviceId'] as String? ?? '',
       localRoot: _resolve(
         projectRoot,
         _expandUser(
@@ -542,95 +639,21 @@ final class SyncClientConfig {
               p.join(projectRoot, '..', 'photolens'),
         ),
       ),
-      remoteUrl: remoteUrl,
-      stateDir: _resolve(
-        projectRoot,
-        _expandUser(
-          json['stateDir'] as String? ??
-              p.join(projectRoot, 'data', 'sync_pairs', name),
-        ),
-      ),
-      ignores: rawIgnores is List
-          ? rawIgnores.whereType<String>().toList(growable: false)
-          : const [],
+      remoteRoot: _normalizeRemoteRoot(path),
+      deviceId: device.id,
+      stateDir: rawState == null || rawState.trim().isEmpty
+          ? ''
+          : _resolve(projectRoot, _expandUser(rawState)),
     );
   }
 
-  /// Attaches every pair to a device, deriving devices for legacy pairs.
-  static ({List<SyncDeviceEntry> devices, List<SyncPairEntry> pairs})
-  _ensureDevices({
-    required List<SyncDeviceEntry> devices,
-    required List<SyncPairEntry> pairs,
-  }) {
-    final result = List<SyncDeviceEntry>.of(devices);
-    final normalizedPairs = <SyncPairEntry>[];
-    for (final pair in pairs) {
-      if (pair.deviceId.isNotEmpty &&
-          result.any((device) => device.id == pair.deviceId)) {
-        normalizedPairs.add(pair);
-        continue;
-      }
-      final derived = _deviceFromUrl(pair.remoteUrl, result);
-      var target = _matchDevice(derived, result);
-      if (target == null) {
-        final name = _uniqueName(derived.name, result);
-        target = derived.copyWith(name: name);
-        result.add(target);
-      }
-      normalizedPairs.add(pair.copyWith(deviceId: target.id, name: pair.name));
+  static String _normalizeRemoteRoot(String value) {
+    var root = value.trim().replaceAll('\\', '/');
+    if (!root.startsWith('/')) root = '/$root';
+    while (root.length > 1 && root.endsWith('/')) {
+      root = root.substring(0, root.length - 1);
     }
-    return (devices: result, pairs: normalizedPairs);
-  }
-
-  static SyncDeviceEntry _deviceFromUrl(
-    String remoteUrl,
-    List<SyncDeviceEntry> existing,
-  ) {
-    final uri = Uri.tryParse(remoteUrl);
-    final host = uri?.host ?? '';
-    final port = uri == null || !uri.hasPort
-        ? SyncDeviceEntry.defaultPort
-        : uri.port;
-    final isLoopback =
-        host == '127.0.0.1' || host == 'localhost' || host == '::1';
-    return SyncDeviceEntry(
-      id: SyncDeviceEntry.legacyDeviceId(host, port),
-      name: host.isEmpty ? 'Unknown device' : host,
-      hostType: isLoopback ? SyncHostType.local : SyncHostType.remote,
-      host: host,
-      port: port,
-    );
-  }
-
-  static SyncDeviceEntry? _matchDevice(
-    SyncDeviceEntry candidate,
-    List<SyncDeviceEntry> devices,
-  ) {
-    for (final device in devices) {
-      if (device.id == candidate.id) return device;
-      if (device.port == candidate.port &&
-          device.resolvedHost == candidate.resolvedHost) {
-        return device;
-      }
-    }
-    return null;
-  }
-
-  static String _uniqueName(String base, List<SyncDeviceEntry> devices) {
-    if (!devices.any((device) => device.name == base)) return base;
-    var index = 2;
-    while (devices.any((device) => device.name == '$base $index')) {
-      index++;
-    }
-    return '$base $index';
-  }
-
-  static String _defaultPairName(String remoteUrl) {
-    final uri = Uri.tryParse(remoteUrl);
-    final segments =
-        uri?.pathSegments.where((segment) => segment.isNotEmpty).toList() ??
-        const <String>[];
-    return segments.isEmpty ? 'sync' : segments.last;
+    return root;
   }
 
   static String _resolve(String projectRoot, String path) {

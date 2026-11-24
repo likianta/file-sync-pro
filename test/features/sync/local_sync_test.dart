@@ -442,6 +442,42 @@ void main() {
     expect(await _read(bob, 'doc.txt'), 'v2\n');
   });
 
+  test('uses the ignores stored in the snapshot', () async {
+    await _file(alice, '.file_sync_shot.json').writeAsString(
+      jsonEncode({
+        'ignores': ['/skip/'],
+        'base': {'key': '', 'updated_at': 0, 'entries': {}},
+        'current': {'key': '', 'updated_at': 0, 'entries': {}},
+      }),
+    );
+    await _file(alice, 'skip/hidden.txt').writeAsString('hidden\n');
+    await _file(alice, 'keep.txt').writeAsString('keep\n');
+
+    final snapshot = await withEngine((engine) => engine.scanSide(left: true));
+
+    expect(snapshot.current.entries.containsKey('skip'), isFalse);
+    expect(snapshot.current.entries['.']!.files.keys, contains('keep.txt'));
+    expect(snapshot.ignores.patterns, ['/skip/']);
+  });
+
+  test('supports \$gitignore snapshot ignores', () async {
+    await _file(alice, '.gitignore').writeAsString('/skip/\n');
+    await _file(alice, '.file_sync_shot.json').writeAsString(
+      jsonEncode({
+        'ignores': r'$gitignore',
+        'base': {'key': '', 'updated_at': 0, 'entries': {}},
+        'current': {'key': '', 'updated_at': 0, 'entries': {}},
+      }),
+    );
+    await _file(alice, 'skip/hidden.txt').writeAsString('hidden\n');
+    await _file(alice, 'keep.txt').writeAsString('keep\n');
+
+    final snapshot = await withEngine((engine) => engine.scanSide(left: true));
+
+    expect(snapshot.current.entries.containsKey('skip'), isFalse);
+    expect(snapshot.ignores.useGitignore, isTrue);
+  });
+
   test('silently ignores snapshot files during a scan', () async {
     await _file(alice, 'doc.txt').writeAsString('v1\n');
     await withEngine((engine) async {

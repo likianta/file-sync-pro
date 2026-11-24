@@ -1,16 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
 import '../../transport/http_transport.dart';
 import '../application/sync_engine.dart';
 import '../application/sync_pair_config.dart';
 import '../application/sync_source.dart';
-import '../data/file_hash_cache.dart';
 import '../data/snapshot_manager.dart';
 import '../data/snapshot_store.dart';
-import '../domain/ignore_rules.dart';
 import '../domain/sync_plan.dart';
 import '../domain/sync_snapshot.dart';
 
@@ -38,7 +35,6 @@ final class SyncDashboardController extends ChangeNotifier {
   ScanPhase? _scanPhase;
   int _scanned = 0;
   bool _needsInitialScan = false;
-  FileHashCache? _hashCache;
   final List<String> _log = [];
   final Stopwatch _scanWatch = Stopwatch();
   final Stopwatch _phaseWatch = Stopwatch();
@@ -146,7 +142,7 @@ final class SyncDashboardController extends ChangeNotifier {
       _logSnapshotResult('local', loaded.a);
       _logSnapshotResult('remote', loaded.b);
 
-      if (loaded.a.snapshot == null || loaded.b.snapshot == null) {
+      if (!_hasScan(loaded.a.snapshot) || !_hasScan(loaded.b.snapshot)) {
         _localSnapshot = loaded.a.snapshot;
         _remoteSnapshot = loaded.b.snapshot;
         _needsInitialScan = true;
@@ -495,6 +491,10 @@ final class SyncDashboardController extends ChangeNotifier {
     _appendLog('No $side snapshot found.');
   }
 
+  static bool _hasScan(SideSnapshot? snapshot) {
+    return snapshot != null && snapshot.current.entries.isNotEmpty;
+  }
+
   String _shortKey(SideSnapshot snapshot) {
     final key = snapshot.current.key;
     return key.length <= 8 ? key : key.substring(0, 8);
@@ -508,27 +508,17 @@ final class SyncDashboardController extends ChangeNotifier {
 
   static String _two(int value) => value.toString().padLeft(2, '0');
 
-  FileHashCache _cache() {
-    return _hashCache ??= FileHashCache(
-      p.normalize(p.absolute(p.join(config.stateDir, 'hash_cache.json'))),
-    );
-  }
-
   SyncEngine _createEngine() {
-    final ignores = IgnoreRules.defaults(extra: config.extraIgnores);
     final backupDir = defaultSnapshotBackupDir();
     return SyncEngine(
       a: LocalSyncSource(
         config.localRoot,
-        ignores: ignores,
-        hashCache: _cache(),
         snapshotBackupDir: backupDir,
         snapshotLabel: '${config.pairName}-local',
       ),
       b: RemoteSyncSource(
         baseUrl: config.remoteUrl,
         token: config.token,
-        ignores: ignores,
         timeout: Duration(seconds: config.timeoutSeconds),
         snapshotBackupDir: backupDir,
         snapshotLabel: '${config.pairName}-remote',

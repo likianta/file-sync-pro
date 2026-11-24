@@ -4,7 +4,6 @@ library;
 import 'package:path/path.dart' as p;
 
 import '../data/snapshot_store.dart';
-import '../domain/ignore_rules.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
 import '../domain/sync_snapshot.dart';
@@ -106,27 +105,24 @@ final class SyncEngine {
     required String rootA,
     required String rootB,
     required String stateDir,
-    IgnoreRules? ignores,
-    bool computeHashes = true,
     String? snapshotBackupDir,
     String labelA = 'a',
     String labelB = 'b',
+    SnapshotIgnores defaultIgnores = SnapshotIgnores.empty,
     ActionCallback? onAction,
   }) {
     return SyncEngine(
       a: LocalSyncSource(
         rootA,
-        ignores: ignores,
-        computeHashes: computeHashes,
         snapshotBackupDir: snapshotBackupDir,
         snapshotLabel: labelA,
+        defaultIgnores: defaultIgnores,
       ),
       b: LocalSyncSource(
         rootB,
-        ignores: ignores,
-        computeHashes: computeHashes,
         snapshotBackupDir: snapshotBackupDir,
         snapshotLabel: labelB,
+        defaultIgnores: defaultIgnores,
       ),
       stateDir: stateDir,
       onAction: onAction,
@@ -155,29 +151,37 @@ final class SyncEngine {
     required bool left,
     String? subPath,
     bool createIfMissing = false,
+    SnapshotIgnores? ignores,
     void Function(int scanned)? onProgress,
   }) {
     final source = left ? a : b;
     return source.scanSnapshot(
       subPath: subPath,
       createIfMissing: createIfMissing,
+      ignores: ignores,
       onProgress: onProgress,
     );
   }
 
   /// Scans both roots, used when the pair has no usable snapshot yet.
+  ///
+  /// The remote side reuses the local snapshot's ignores when it has to create
+  /// a new snapshot, so both sides agree on what is scanned.
   Future<({SideSnapshot a, SideSnapshot b})> scanBoth({
     bool createIfMissing = false,
+    SnapshotIgnores defaultIgnores = SnapshotIgnores.empty,
     void Function(ScanPhase phase, int scanned)? onProgress,
   }) async {
     final aSnapshot = await scanSide(
       left: true,
       createIfMissing: createIfMissing,
+      ignores: defaultIgnores,
       onProgress: (scanned) => onProgress?.call(ScanPhase.local, scanned),
     );
     final bSnapshot = await scanSide(
       left: false,
       createIfMissing: createIfMissing,
+      ignores: aSnapshot.ignores,
       onProgress: (scanned) => onProgress?.call(ScanPhase.remote, scanned),
     );
     return (a: aSnapshot, b: bSnapshot);
@@ -281,8 +285,16 @@ final class SyncEngine {
         updatedAt: now,
       );
 
-      final aAfter = SideSnapshot(base: aBase, current: aCurrent);
-      final bAfter = SideSnapshot(base: bBase, current: bCurrent);
+      final aAfter = SideSnapshot(
+        base: aBase,
+        current: aCurrent,
+        ignores: aSnapshot.ignores,
+      );
+      final bAfter = SideSnapshot(
+        base: bBase,
+        current: bCurrent,
+        ignores: bSnapshot.ignores,
+      );
       await a.saveSnapshot(aAfter);
       await b.saveSnapshot(bAfter);
 
@@ -428,10 +440,12 @@ final class SyncEngine {
     final aAfter = SideSnapshot(
       base: SnapshotState.fromEntries(aBaseEntries, updatedAt: now),
       current: aCurrent,
+      ignores: aSnapshot.ignores,
     );
     final bAfter = SideSnapshot(
       base: SnapshotState.fromEntries(bBaseEntries, updatedAt: now),
       current: bCurrent,
+      ignores: bSnapshot.ignores,
     );
     await a.saveSnapshot(aAfter);
     await b.saveSnapshot(bAfter);

@@ -19,6 +19,7 @@ import '../../sync/data/local_scanner.dart';
 import '../../sync/data/snapshot_manager.dart';
 import '../../sync/data/snapshot_store.dart';
 import '../../sync/domain/ignore_rules.dart';
+import '../../sync/domain/sync_snapshot.dart';
 import '../protocol.dart';
 
 final class FileServerMount {
@@ -177,11 +178,14 @@ final class FileServer {
   ) async {
     await _resolve(mount, relPath, rejectLinks: true);
     final mode = request.uri.queryParameters['mode'] ?? 'refresh';
+    final rawIgnores = request.uri.queryParameters['ignores'];
+    final defaultIgnores = rawIgnores == null
+        ? SnapshotIgnores.empty
+        : SnapshotIgnores.fromJson(jsonDecode(rawIgnores));
     final manager = LocalSnapshotManager(
       root: mount.root,
       store: SnapshotStore(LocalFileStore(mount.root)),
-      ignores: mount.ignores,
-      hashCache: _hashCache,
+      defaultIgnores: defaultIgnores,
     );
     try {
       final snapshot = await manager.scan(
@@ -196,6 +200,8 @@ final class FileServer {
       );
     } on SnapshotMissingException {
       throw const _HttpError(409, 'Snapshot missing');
+    } on SnapshotIgnoresException catch (error) {
+      throw _HttpError(400, error.message);
     } on SnapshotPathException catch (error) {
       throw _HttpError(404, error.message);
     }

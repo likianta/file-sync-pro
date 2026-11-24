@@ -71,9 +71,9 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
       pairName = pairs.isEmpty ? null : pairs.first.name;
     }
 
-    final runtime = pairName == null
+    final runtime = pairName == null || deviceId == null
         ? null
-        : widget.store.config.runtimeFor(pairName);
+        : widget.store.config.runtimeFor(deviceId, pairName);
     final key = runtime == null ? null : _keyOf(runtime);
 
     var changed = deviceId != _deviceId || pairName != _pairName;
@@ -181,7 +181,6 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
       config.token,
       config.timeoutSeconds,
       config.stateDir,
-      config.extraIgnores.join('\u0000'),
     ].join('\u0001');
   }
 
@@ -228,8 +227,9 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
 
   SyncPairEntry? get _currentPair {
     final name = _pairName;
-    if (name == null) return null;
-    for (final pair in widget.store.config.pairs) {
+    final deviceId = _deviceId;
+    if (name == null || deviceId == null) return null;
+    for (final pair in widget.store.config.pairsForDevice(deviceId)) {
       if (pair.name == name) return pair;
     }
     return null;
@@ -426,7 +426,8 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
                         idPrefix: 'right',
                         title: _currentDevice?.name ?? 'Peer device',
                         subtitle:
-                            _currentPair?.remoteUrl ?? 'Choose a sync pair.',
+                            controller?.config.remoteUrl ??
+                            'Choose a sync pair.',
                         icon: Icons.cloud_outlined,
                         rootLabel: _currentPair?.name ?? 'root',
                         tree: _rightTree,

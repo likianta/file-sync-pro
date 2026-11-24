@@ -1,18 +1,16 @@
 /// A sync participant: a local folder or a remote mount.
 library;
 
+import 'dart:convert';
+
 import 'package:path/path.dart' as p;
 
 import '../../transport/http_file_store.dart';
 import '../../transport/http_transport.dart';
 import '../../transport/protocol.dart';
-import '../../transport/remote_scanner.dart';
 import '../data/file_store.dart';
-import '../data/local_scanner.dart';
 import '../data/snapshot_manager.dart';
 import '../data/snapshot_store.dart';
-import '../domain/ignore_rules.dart';
-import '../domain/manifest.dart';
 import '../domain/sync_snapshot.dart';
 
 abstract interface class SyncSource {
@@ -21,19 +19,16 @@ abstract interface class SyncSource {
 
   FileStore get store;
 
-  /// Scans the whole source, or only [subPath] and its subtree.
-  Future<Manifest> scan({
-    String? subPath,
-    void Function(int scanned)? onProgress,
-  });
-
   /// Reads this side's `.file_sync_shot.json`.
   Future<SnapshotLoadResult> loadSnapshot();
 
   /// Scans one folder and merges it into this side's `current` snapshot.
+  ///
+  /// [ignores] is only used when the snapshot is created for the first time.
   Future<SideSnapshot> scanSnapshot({
     String? subPath,
     bool createIfMissing = false,
+    SnapshotIgnores? ignores,
     void Function(int scanned)? onProgress,
   });
 
@@ -46,19 +41,11 @@ abstract interface class SyncSource {
 final class LocalSyncSource implements SyncSource {
   LocalSyncSource(
     String root, {
-    IgnoreRules? ignores,
-    bool computeHashes = true,
-    HashCache? hashCache,
     String? snapshotBackupDir,
     String snapshotLabel = 'local',
+    SnapshotIgnores defaultIgnores = SnapshotIgnores.empty,
   }) : id = p.normalize(p.absolute(root)),
-       _store = LocalFileStore(root),
-       _ignores = ignores ?? IgnoreRules.defaults(),
-       _scanner = LocalScanner(
-         ignores: ignores,
-         computeHashes: computeHashes,
-         hashCache: hashCache,
-       ) {
+       _store = LocalFileStore(root) {
     _snapshotStore = SnapshotStore(
       _store,
       backupDir: snapshotBackupDir,
@@ -67,8 +54,7 @@ final class LocalSyncSource implements SyncSource {
     _snapshots = LocalSnapshotManager(
       root: id,
       store: _snapshotStore,
-      ignores: _ignores,
-      hashCache: hashCache,
+      defaultIgnores: defaultIgnores,
     );
   }
 
@@ -76,8 +62,6 @@ final class LocalSyncSource implements SyncSource {
   final String id;
 
   final LocalFileStore _store;
-  final IgnoreRules _ignores;
-  final LocalScanner _scanner;
   late final SnapshotStore _snapshotStore;
   late final LocalSnapshotManager _snapshots;
 
@@ -85,28 +69,19 @@ final class LocalSyncSource implements SyncSource {
   FileStore get store => _store;
 
   @override
-  Future<Manifest> scan({
-    String? subPath,
-    void Function(int scanned)? onProgress,
-  }) => _scanner.scan(id, subPath: subPath, onProgress: onProgress);
-
-  @override
-  Future<SnapshotLoadResult> loadSnapshot() async {
-    final result = await _snapshots.load();
-    final snapshot = result.snapshot;
-    if (snapshot == null) return result;
-    return SnapshotLoadResult(snapshot: filterSideSnapshot(snapshot, _ignores));
-  }
+  Future<SnapshotLoadResult> loadSnapshot() => _snapshots.load();
 
   @override
   Future<SideSnapshot> scanSnapshot({
     String? subPath,
     bool createIfMissing = false,
+    SnapshotIgnores? ignores,
     void Function(int scanned)? onProgress,
   }) {
     return _snapshots.scan(
       subPath: subPath,
       createIfMissing: createIfMissing,
+      ignores: ignores,
       onProgress: onProgress,
     );
   }
@@ -122,7 +97,6 @@ final class RemoteSyncSource implements SyncSource {
   RemoteSyncSource({
     required String baseUrl,
     String token = '',
-    IgnoreRules? ignores,
     Duration timeout = const Duration(minutes: 5),
     String? snapshotBackupDir,
     String snapshotLabel = 'remote',
@@ -130,10 +104,8 @@ final class RemoteSyncSource implements SyncSource {
          baseUrl: baseUrl,
          token: token,
          timeout: timeout,
-       ),
-       _ignores = ignores ?? IgnoreRules.defaults() {
+       ) {
     _store = HttpFileStore(_transport);
-    _scanner = RemoteScanner(transport: _transport, ignores: _ignores);
     _snapshotStore = SnapshotStore(
       _store,
       backupDir: snapshotBackupDir,
@@ -142,9 +114,7 @@ final class RemoteSyncSource implements SyncSource {
   }
 
   final HttpTransport _transport;
-  final IgnoreRules _ignores;
   late final HttpFileStore _store;
-  late final RemoteScanner _scanner;
   late final SnapshotStore _snapshotStore;
 
   @override
@@ -156,28 +126,13 @@ final class RemoteSyncSource implements SyncSource {
   HttpTransport get transport => _transport;
 
   @override
-  Future<Manifest> scan({
-    String? subPath,
-    void Function(int scanned)? onProgress,
-  }) async {
-    onProgress?.call(0);
-    final manifest = await _scanner.scan(relPath: subPath ?? '');
-    onProgress?.call(manifest.entries.length);
-    return manifest;
-  }
-
-  @override
-  Future<SnapshotLoadResult> loadSnapshot() async {
-    final result = await _snapshotStore.load();
-    final snapshot = result.snapshot;
-    if (snapshot == null) return result;
-    return SnapshotLoadResult(snapshot: filterSideSnapshot(snapshot, _ignores));
-  }
+  Future<SnapshotLoadResult> loadSnapshot() => _snapshotStore.load();
 
   @override
   Future<SideSnapshot> scanSnapshot({
     String? subPath,
     bool createIfMissing = false,
+    SnapshotIgnores? ignores,
     void Function(int scanned)? onProgress,
   }) async {
     final scope = normalizeScope(subPath);
@@ -187,9 +142,11 @@ final class RemoteSyncSource implements SyncSource {
       query: {
         if (scope.isNotEmpty) 'path': scope,
         'mode': createIfMissing ? 'init' : 'refresh',
+        if (createIfMissing && ignores != null)
+          'ignores': jsonEncode(ignores.toJson()),
       },
     );
-    final snapshot = filterSideSnapshot(SideSnapshot.fromJson(json), _ignores);
+    final snapshot = SideSnapshot.fromJson(json);
     final fileCount = snapshot.current.entries.values.fold<int>(
       0,
       (sum, folder) => sum + folder.files.length,

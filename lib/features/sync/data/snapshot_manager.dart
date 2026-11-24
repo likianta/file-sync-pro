@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../domain/ignore_rules.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_snapshot.dart';
+import 'file_hash_cache.dart';
 import 'local_scanner.dart';
 import 'snapshot_store.dart';
 
@@ -39,19 +40,30 @@ final class SnapshotLegacyException implements Exception {
   String toString() => 'Snapshot on $side uses an old format.';
 }
 
+final class SnapshotIgnoresException implements Exception {
+  const SnapshotIgnoresException(this.root, this.message);
+
+  final String root;
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Owns the local filesystem side of snapshot scanning.
 final class LocalSnapshotManager {
   LocalSnapshotManager({
     required this.root,
     required this.store,
-    required this.ignores,
-    this.hashCache,
+    this.defaultIgnores = SnapshotIgnores.empty,
   });
 
   final String root;
   final SnapshotStore store;
-  final IgnoreRules ignores;
-  final HashCache? hashCache;
+
+  /// Used only when creating a new snapshot. An existing snapshot keeps its
+  /// own [SnapshotIgnores].
+  final SnapshotIgnores defaultIgnores;
 
   Future<SnapshotLoadResult> load() => store.load();
 
@@ -65,6 +77,7 @@ final class LocalSnapshotManager {
   Future<SideSnapshot> scan({
     String? subPath,
     bool createIfMissing = false,
+    SnapshotIgnores? ignores,
     void Function(int scanned)? onProgress,
   }) async {
     final scope = normalizeScope(subPath);
@@ -96,16 +109,18 @@ final class LocalSnapshotManager {
     if (loaded.legacy) {
       throw const SnapshotLegacyException('local');
     }
-    final existing = loaded.snapshot == null
-        ? null
-        : filterSideSnapshot(loaded.snapshot!, ignores);
+    final existing = loaded.snapshot;
     if (existing == null && !createIfMissing) {
       throw const SnapshotMissingException('local');
     }
 
+    final effectiveIgnores = existing?.ignores ?? ignores ?? defaultIgnores;
+    final rules = await resolveSnapshotIgnores(effectiveIgnores, root);
+    final cache = _memoryCacheFrom(existing?.current, root);
+
     final manifest = await LocalScanner(
-      ignores: ignores,
-      hashCache: hashCache,
+      ignores: rules,
+      hashCache: cache,
     ).scan(root, subPath: scope.isEmpty ? null : scope, onProgress: onProgress);
 
     final scanned = buildFolderSnapshots(manifest, root: root, scope: scope);
@@ -120,10 +135,58 @@ final class LocalSnapshotManager {
     final snapshot = SideSnapshot(
       base: existing?.base ?? SnapshotState.empty(),
       current: current,
+      ignores: effectiveIgnores,
     );
     await store.save(snapshot);
     return snapshot;
   }
+}
+
+/// Turns snapshot ignores into scanner rules. Built-in safety patterns always
+/// apply, including the snapshot file itself and the `.git` directory.
+Future<IgnoreRules> resolveSnapshotIgnores(
+  SnapshotIgnores ignores,
+  String root,
+) async {
+  final patterns = <String>[];
+  if (ignores.useGitignore) {
+    final file = File(p.join(root, '.gitignore'));
+    if (!await file.exists()) {
+      throw SnapshotIgnoresException(
+        root,
+        'Snapshot ignores is \$gitignore but .gitignore was not found in $root',
+      );
+    }
+    patterns.addAll(
+      (await file.readAsLines())
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty),
+    );
+  } else {
+    patterns.addAll(ignores.patterns);
+  }
+  return IgnoreRules.defaults(extra: patterns);
+}
+
+MemoryHashCache _memoryCacheFrom(SnapshotState? current, String root) {
+  final cache = MemoryHashCache();
+  if (current == null) return cache;
+  for (final folder in current.entries.entries) {
+    final scope = scopeOfFolderKey(folder.key);
+    final directory = scope.isEmpty
+        ? root
+        : p.joinAll([root, ...scope.split('/')]);
+    for (final file in folder.value.files.entries) {
+      cache.store(
+        p.join(directory, file.key),
+        file.value.size,
+        file.value.mtimeMs,
+        file.value.hash,
+        file.value.textHash,
+      );
+    }
+  }
+  return cache;
 }
 
 /// Builds folder snapshots for [scope] from a flat scanner manifest.
@@ -195,45 +258,6 @@ String normalizeScope(String? subPath) {
   }
   if (result == '.') return '';
   return result;
-}
-
-/// Removes entries that the current ignore rules exclude.
-///
-/// Snapshots travel between devices, so a file may have been scanned when a
-/// pattern was not configured. Filtering keeps the plan and tree consistent
-/// with the pair's current rules.
-SideSnapshot filterSideSnapshot(SideSnapshot snapshot, IgnoreRules ignores) {
-  return SideSnapshot(
-    base: filterSnapshotState(snapshot.base, ignores),
-    current: filterSnapshotState(snapshot.current, ignores),
-  );
-}
-
-SnapshotState filterSnapshotState(SnapshotState state, IgnoreRules ignores) {
-  final entries = <String, FolderSnapshot>{};
-  for (final entry in state.entries.entries) {
-    final scope = scopeOfFolderKey(entry.key);
-    if (scope.isNotEmpty && ignores.ignores(scope, isDirectory: true)) {
-      continue;
-    }
-    final folder = entry.value;
-    final files = <String, FileSnapshot>{};
-    for (final file in folder.files.entries) {
-      final path = scope.isEmpty ? file.key : '$scope/${file.key}';
-      if (ignores.ignores(path, isDirectory: false)) continue;
-      files[file.key] = file.value;
-    }
-    final dirs = folder.dirs.where((name) {
-      final path = scope.isEmpty ? name : '$scope/$name';
-      return !ignores.ignores(path, isDirectory: true);
-    }).toList();
-    entries[entry.key] = FolderSnapshot(
-      mtimeMs: folder.mtimeMs,
-      dirs: dirs,
-      files: files,
-    );
-  }
-  return SnapshotState.fromEntries(entries, updatedAt: state.updatedAt);
 }
 
 final class _FolderBuilder {

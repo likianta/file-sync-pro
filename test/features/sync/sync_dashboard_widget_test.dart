@@ -46,14 +46,24 @@ void main() {
     final configPath = p.join(toolDir, 'sync.config.json');
     File(configPath).writeAsStringSync(
       jsonEncode({
-        'version': 2,
+        'version': 4,
         'token': 'test-token',
-        'pairs': [
+        'devices': [
           {
-            'name': 'demo',
-            'localRoot': local.path,
-            'remoteUrl': 'http://127.0.0.1:1/demo',
-            'stateDir': 'data/sync_pairs/demo',
+            'id': 'd-test',
+            'name': 'Test device',
+            'type': 'windows',
+            'host_type': 'remote',
+            'host': '127.0.0.1',
+            'port': 1,
+            'pairs': [
+              {
+                'id': 'p-demo',
+                'name': 'demo',
+                'local_root': local.path,
+                'remote_root': '/demo',
+              },
+            ],
           },
         ],
       }),
@@ -108,9 +118,7 @@ void main() {
     );
   });
 
-  testWidgets('device pair list exposes the pair editor with ignores', (
-    tester,
-  ) async {
+  testWidgets('device pair list exposes the pair editor', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 860));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -118,27 +126,24 @@ void main() {
     final configPath = p.join(toolDir, 'sync.config.json');
     File(configPath).writeAsStringSync(
       jsonEncode({
-        'version': 3,
+        'version': 4,
         'token': 'test-token',
-        'ignores': ['.venv/'],
         'devices': [
           {
-            'id': 'dev-test',
+            'id': 'd-test',
             'name': 'Windows box',
             'type': 'windows',
-            'hostType': 'remote',
+            'host_type': 'remote',
             'host': '127.0.0.1',
             'port': 1,
-          },
-        ],
-        'pairs': [
-          {
-            'name': 'demo',
-            'deviceId': 'dev-test',
-            'localRoot': local.path,
-            'remoteUrl': 'http://127.0.0.1:1/demo',
-            'stateDir': 'data/sync_pairs/demo',
-            'ignores': ['/blog/', '**.b64.html'],
+            'pairs': [
+              {
+                'id': 'p-demo',
+                'name': 'demo',
+                'local_root': local.path,
+                'remote_root': '/demo',
+              },
+            ],
           },
         ],
       }),
@@ -149,7 +154,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final edit = find.byKey(
-      const ValueKey<String>('devices.pair.edit.dev-test.demo'),
+      const ValueKey<String>('devices.pair.edit.d-test.demo'),
     );
     await tester.ensureVisible(edit);
     await tester.pumpAndSettle();
@@ -159,9 +164,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.byKey(const ValueKey<String>('sync.pair.ignores')),
+      find.byKey(const ValueKey<String>('sync.pair.mount')),
       findsOneWidget,
     );
-    expect(find.textContaining('/blog/'), findsWidgets);
+    expect(find.textContaining('/demo'), findsWidgets);
   });
 }

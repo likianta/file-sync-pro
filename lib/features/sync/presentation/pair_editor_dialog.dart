@@ -54,7 +54,6 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
   final TextEditingController _token = TextEditingController();
   final TextEditingController _mount = TextEditingController();
   final TextEditingController _subpath = TextEditingController();
-  final TextEditingController _ignores = TextEditingController();
 
   List<String> _mounts = const [];
   bool _loadingMounts = false;
@@ -67,12 +66,11 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     if (entry != null) {
       _name.text = entry.name;
       _localRoot.text = entry.localRoot;
-      _ignores.text = entry.ignores.join('\n');
-      final uri = Uri.tryParse(entry.remoteUrl);
-      final segments = uri?.pathSegments
+      final segments = entry.remoteRoot
+          .split('/')
           .where((segment) => segment.isNotEmpty)
           .toList();
-      if (segments != null && segments.isNotEmpty) {
+      if (segments.isNotEmpty) {
         _mount.text = segments.first;
         _subpath.text = segments.skip(1).join('/');
       }
@@ -94,7 +92,6 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     _token.dispose();
     _mount.dispose();
     _subpath.dispose();
-    _ignores.dispose();
     super.dispose();
   }
 
@@ -144,32 +141,20 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     });
   }
 
-  String get _sanitizedName {
-    final value = _name.text.trim().isEmpty ? 'pair' : _name.text.trim();
-    return value.replaceAll(RegExp(r'[<>:"/\\|?*]'), '-');
-  }
-
   void _save() {
     final mount = _mount.text.trim().replaceAll(RegExp(r'^/+|/+$'), '');
     final subpath = _subpath.text.trim().replaceAll(RegExp(r'^/+|/+$'), '');
-    final remoteUrl = subpath.isEmpty
-        ? '${widget.device.baseUrl}/$mount'
-        : '${widget.device.baseUrl}/$mount/$subpath';
+    final remoteRoot = subpath.isEmpty ? '/$mount' : '/$mount/$subpath';
+    final id = widget.entry?.id ?? SyncClientConfig.newPairId();
     final entry = SyncPairEntry(
+      id: id,
       name: _name.text.trim(),
       deviceId: widget.device.id,
       localRoot: p.normalize(_localRoot.text.trim()),
-      remoteUrl: remoteUrl,
+      remoteRoot: remoteRoot,
       stateDir: widget.entry?.stateDir.isNotEmpty == true
           ? widget.entry!.stateDir
-          : p.normalize(
-              p.join(widget.projectRoot, 'data', 'sync_pairs', _sanitizedName),
-            ),
-      ignores: [
-        for (final line in _ignores.text.split('\n'))
-          if (line.trim().isNotEmpty && !line.trim().startsWith('#'))
-            line.trim(),
-      ],
+          : p.normalize(p.join(widget.projectRoot, 'data', 'sync_pairs', id)),
     );
     Navigator.of(context)
         .pop(PairEditorResult(entry: entry, token: _token.text.trim()));
@@ -339,44 +324,12 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                   labelText: 'Remote subfolder (optional)',
                 ),
               ),
-              const SizedBox(height: 20),
-              Divider(height: 1, color: theme.colorScheme.outlineVariant),
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Icon(
-                    Icons.tune,
-                    size: 16,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 7),
-                  Text(
-                    'Ignores',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
               Text(
-                'One pattern per line. This pair uses its own list instead of '
-                'the global ignores.',
+                'Ignore rules live in <root>/.file_sync_shot.json and are '
+                'shared by every pair that uses the same folder.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey<String>('sync.pair.ignores'),
-                controller: _ignores,
-                minLines: 5,
-                maxLines: 9,
-                decoration: const InputDecoration(
-                  hintText: '/.git/\n/blog/\n*.b64.html',
-                  helperText:
-                      'Gitignore-like syntax: /path anchors at the sync root, '
-                      'dir/ matches a directory, * and ** match names.',
                 ),
               ),
               const SizedBox(height: 8),
