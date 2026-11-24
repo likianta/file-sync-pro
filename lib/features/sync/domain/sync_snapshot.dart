@@ -12,7 +12,11 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import 'file_fingerprint.dart';
 import 'manifest.dart';
+
+/// Fingerprint algorithm this build writes and requires.
+const String snapshotHashAlgorithm = fingerprintAlgorithm;
 
 /// Metadata for one file inside a folder snapshot.
 final class FileSnapshot {
@@ -303,6 +307,7 @@ final class SideSnapshot {
 
   Map<String, Object?> toJson() {
     return {
+      'hash_algo': snapshotHashAlgorithm,
       'ignores': ignores.toJson(),
       'base': base.toJson(),
       'current': current.toJson(),

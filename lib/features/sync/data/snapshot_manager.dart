@@ -78,7 +78,7 @@ final class LocalSnapshotManager {
     String? subPath,
     bool createIfMissing = false,
     SnapshotIgnores? ignores,
-    void Function(int scanned)? onProgress,
+    void Function(int scanned, int? total)? onProgress,
   }) async {
     final scope = normalizeScope(subPath);
     if (scope.isNotEmpty &&
@@ -106,12 +106,10 @@ final class LocalSnapshotManager {
     }
 
     final loaded = await store.load();
-    if (loaded.legacy) {
-      throw const SnapshotLegacyException('local');
-    }
     final existing = loaded.snapshot;
-    if (existing == null && !createIfMissing) {
-      throw const SnapshotMissingException('local');
+    if (existing == null) {
+      if (loaded.legacy) throw const SnapshotLegacyException('local');
+      if (!createIfMissing) throw const SnapshotMissingException('local');
     }
 
     final effectiveIgnores = existing?.ignores ?? ignores ?? defaultIgnores;
@@ -153,11 +151,9 @@ final class LocalSnapshotManager {
       throw SnapshotPathException(path, 'Invalid file path: $path');
     }
     final loaded = await store.load();
-    if (loaded.legacy) {
-      throw const SnapshotLegacyException('local');
-    }
     final existing = loaded.snapshot;
     if (existing == null) {
+      if (loaded.legacy) throw const SnapshotLegacyException('local');
       throw const SnapshotMissingException('local');
     }
     final rules = await resolveSnapshotIgnores(existing.ignores, root);

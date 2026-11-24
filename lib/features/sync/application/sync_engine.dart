@@ -183,7 +183,7 @@ final class SyncEngine {
     String? subPath,
     bool createIfMissing = false,
     SnapshotIgnores? ignores,
-    void Function(int scanned)? onProgress,
+    void Function(int scanned, int? total)? onProgress,
   }) {
     final source = left ? a : b;
     return source.scanSnapshot(
@@ -200,28 +200,51 @@ final class SyncEngine {
     return source.refreshFile(path);
   }
 
-  /// Scans both roots, used when the pair has no usable snapshot yet.
+  /// Scans both roots concurrently, used when the pair has no usable snapshot.
   ///
-  /// The remote side reuses the local snapshot's ignores when it has to create
-  /// a new snapshot, so both sides agree on what is scanned.
+  /// Both sides read the peer snapshot first so a new remote snapshot can use
+  /// the same ignores as the local one. Local progress is forwarded while it
+  /// runs; the remote scan is reported once the local side is done.
   Future<({SideSnapshot a, SideSnapshot b})> scanBoth({
     bool createIfMissing = false,
     SnapshotIgnores defaultIgnores = SnapshotIgnores.empty,
-    void Function(ScanPhase phase, int scanned)? onProgress,
+    void Function(ScanPhase phase, int scanned, int? total)? onProgress,
   }) async {
-    final aSnapshot = await scanSide(
+    final loaded = await Future.wait([a.loadSnapshot(), b.loadSnapshot()]);
+    final localIgnores = loaded[0].snapshot?.ignores ?? defaultIgnores;
+    final remoteIgnores = loaded[1].snapshot?.ignores ?? localIgnores;
+
+    final localFuture = scanSide(
       left: true,
       createIfMissing: createIfMissing,
-      ignores: defaultIgnores,
-      onProgress: (scanned) => onProgress?.call(ScanPhase.local, scanned),
+      ignores: localIgnores,
+      onProgress: (scanned, total) {
+        onProgress?.call(ScanPhase.local, scanned, total);
+      },
     );
-    final bSnapshot = await scanSide(
+    final remoteFuture = scanSide(
       left: false,
       createIfMissing: createIfMissing,
-      ignores: aSnapshot.ignores,
-      onProgress: (scanned) => onProgress?.call(ScanPhase.remote, scanned),
+      ignores: remoteIgnores,
     );
-    return (a: aSnapshot, b: bSnapshot);
+
+    SideSnapshot? local;
+    SideSnapshot? remote;
+    await Future.wait<void>([
+      localFuture.then((snapshot) {
+        local = snapshot;
+        onProgress?.call(ScanPhase.remote, 0, null);
+      }),
+      remoteFuture.then((snapshot) {
+        remote = snapshot;
+      }),
+    ]);
+    final remoteCount = remote!.current.entries.values.fold<int>(
+      0,
+      (sum, folder) => sum + folder.files.length,
+    );
+    onProgress?.call(ScanPhase.remote, remoteCount, remoteCount);
+    return (a: local!, b: remote!);
   }
 
   /// Plans from snapshots only. Nothing is read from the filesystem here.

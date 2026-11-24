@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:file_sync_pro/features/sync/data/file_hash_cache.dart';
 import 'package:file_sync_pro/features/sync/data/local_scanner.dart';
@@ -130,19 +131,43 @@ void main() {
   });
 
   test('reports progress and finishes with the entry count', () async {
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 60; i++) {
       await File(p.join(temp.path, 'f$i.txt')).writeAsString('$i');
     }
 
-    final reports = <int>[];
+    final reports = <(int, int?)>[];
     final manifest = await LocalScanner().scan(
       temp.path,
-      onProgress: reports.add,
+      onProgress: (scanned, total) => reports.add((scanned, total)),
     );
 
     expect(reports, isNotEmpty);
-    expect(reports.last, manifest.entries.length);
-    expect(reports.last, 5);
+    expect(reports.first, (0, null));
+    expect(reports.last, (60, 60));
+    expect(manifest.entries.length, 60);
+    expect(
+      manifest.entries.values.every((entry) => entry.hash!.startsWith('x64')),
+      isTrue,
+    );
+  });
+
+  test('does not send progress callbacks into hash isolates', () async {
+    for (var i = 0; i < 40; i++) {
+      await File(p.join(temp.path, 'f$i.txt')).writeAsString('$i');
+    }
+
+    // ReceivePort cannot cross isolates. Capturing it in onProgress used to
+    // leak into the worker isolate message and fail the whole scan.
+    final port = ReceivePort();
+    try {
+      final manifest = await LocalScanner().scan(
+        temp.path,
+        onProgress: (scanned, total) => port.sendPort.send((scanned, total)),
+      );
+      expect(manifest.entries.length, 40);
+    } finally {
+      port.close();
+    }
   });
 
   test('throws when the root does not exist', () async {

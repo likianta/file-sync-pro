@@ -387,12 +387,28 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
               onPush: () => _run(SyncDirection.push),
               onSync: () => _run(SyncDirection.both),
             ),
+            if (controller != null &&
+                controller.status == SyncDashboardStatus.scanning)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: LinearProgressIndicator(
+                  key: const ValueKey<String>('sync.scan.progress'),
+                  minHeight: 3,
+                  value: controller.scanProgress,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
             if (controller?.errorMessage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: AppErrorBanner(
-                  message: controller!.errorMessage!,
-                  onDismiss: controller.clearError,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 160),
+                  child: SingleChildScrollView(
+                    child: AppErrorBanner(
+                      message: controller!.errorMessage!,
+                      onDismiss: controller.clearError,
+                    ),
+                  ),
                 ),
               ),
             Expanded(

@@ -34,6 +34,7 @@ final class SyncDashboardController extends ChangeNotifier {
   String? _currentPath;
   ScanPhase? _scanPhase;
   int _scanned = 0;
+  int? _scanTotal;
   bool _needsInitialScan = false;
   List<ConflictArchiveEntry> _lastConflictArchives = const [];
   String? _lastConflictArchiveRoot;
@@ -112,16 +113,25 @@ final class SyncDashboardController extends ChangeNotifier {
         '${report.conflictCount} conflicts resolved';
   }
 
+  /// Fractional scan progress, or null when the total is not known yet.
+  double? get scanProgress {
+    final total = _scanTotal;
+    if (total == null || total <= 0) return null;
+    return (_scanned / total).clamp(0.0, 1.0);
+  }
+
   String get _scanLabel {
+    final total = _scanTotal;
+    final count = total == null ? '$_scanned' : '$_scanned / $total';
     return switch (_scanPhase) {
       ScanPhase.local =>
         _scanned == 0
-            ? 'Scanning local files...'
-            : 'Scanning local files... $_scanned',
+            ? 'Scanning local and remote files...'
+            : 'Scanning local files... $count',
       ScanPhase.remote =>
         _scanned == 0
-            ? 'Scanning remote files...'
-            : 'Scanning remote files... $_scanned',
+            ? 'Waiting for remote scan...'
+            : 'Scanning remote files... $count',
       null => 'Starting scan...',
     };
   }
@@ -143,6 +153,7 @@ final class SyncDashboardController extends ChangeNotifier {
     _errorMessage = null;
     _scanPhase = null;
     _scanned = 0;
+    _scanTotal = null;
     _appendLog('Loading snapshots...');
     _notify();
 
@@ -180,6 +191,7 @@ final class SyncDashboardController extends ChangeNotifier {
     _errorMessage = null;
     _scanPhase = null;
     _scanned = 0;
+    _scanTotal = null;
     _appendLog('Scanning both roots to create snapshots...');
     _startScanTiming();
     _notify();
@@ -225,6 +237,7 @@ final class SyncDashboardController extends ChangeNotifier {
     _errorMessage = null;
     _scanPhase = left ? ScanPhase.local : ScanPhase.remote;
     _scanned = 0;
+    _scanTotal = null;
     _appendLog('Scanning $side $scope...');
     final watch = Stopwatch()..start();
     _notify();
@@ -234,8 +247,9 @@ final class SyncDashboardController extends ChangeNotifier {
       final snapshot = await engine.scanSide(
         left: left,
         subPath: subPath,
-        onProgress: (scanned) {
+        onProgress: (scanned, total) {
           _scanned = scanned;
+          _scanTotal = total;
           _notify();
         },
       );
@@ -273,6 +287,7 @@ final class SyncDashboardController extends ChangeNotifier {
     _errorMessage = null;
     _scanPhase = left ? ScanPhase.local : ScanPhase.remote;
     _scanned = 0;
+    _scanTotal = null;
     _appendLog('Refreshing ${left ? 'local' : 'remote'} $path...');
     _notify();
 
@@ -541,25 +556,25 @@ final class SyncDashboardController extends ChangeNotifier {
     _notify();
   }
 
-  void _onInitialScanProgress(ScanPhase phase, int scanned) {
+  void _onInitialScanProgress(ScanPhase phase, int scanned, int? total) {
     final phaseChanged = _scanPhase != phase;
-    if (!phaseChanged && scanned == _scanned) return;
+    if (!phaseChanged && scanned == _scanned && total == _scanTotal) return;
     if (phaseChanged) {
       if (phase == ScanPhase.local) {
         _phaseWatch
           ..reset()
           ..start();
-        _appendLog('Scanning local files...');
+        _appendLog('Scanning local and remote files...');
       } else {
         final localMs = _phaseWatch.elapsedMilliseconds;
         _phaseWatch
           ..reset()
           ..start();
         _appendLog(
-          'Local scan finished in $localMs ms. Scanning remote files...',
+          'Local scan finished in $localMs ms. Waiting for remote scan...',
         );
       }
-    } else if (phase == ScanPhase.remote && scanned > 0) {
+    } else if (phase == ScanPhase.remote && total != null) {
       _phaseWatch.stop();
       _appendLog(
         'Remote scan finished in ${_phaseWatch.elapsedMilliseconds} ms.',
@@ -567,6 +582,7 @@ final class SyncDashboardController extends ChangeNotifier {
     }
     _scanPhase = phase;
     _scanned = scanned;
+    _scanTotal = total;
     _notify();
   }
 
@@ -583,16 +599,21 @@ final class SyncDashboardController extends ChangeNotifier {
   }
 
   void _logSnapshotResult(String side, SnapshotLoadResult result) {
+    if (result.legacy) {
+      final backup = result.backupPath;
+      _appendLog(
+        backup == null
+            ? 'The $side snapshot is not usable. Rescan required.'
+            : 'Legacy $side snapshot backed up to $backup. Rescan required.',
+      );
+      return;
+    }
     if (result.snapshot != null) {
       final current = result.snapshot!.current;
       _appendLog(
         'Loaded $side snapshot: current ${_shortKey(result.snapshot!)} '
         '(${_formatTime(current.updatedAt)}).',
       );
-      return;
-    }
-    if (result.backupPath != null) {
-      _appendLog('Legacy $side snapshot moved to ${result.backupPath}.');
       return;
     }
     _appendLog('No $side snapshot found.');

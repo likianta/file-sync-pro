@@ -2,16 +2,20 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
+import 'dart:math';
 
-import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../domain/file_fingerprint.dart';
 import '../domain/ignore_rules.dart';
-import '../domain/line_endings.dart';
 import '../domain/manifest.dart';
 
 /// Cached content hashes for one file.
 typedef CachedHashes = ({String hash, String? textHash});
+
+/// Progress callback: entries completed and total entries when known.
+typedef ScanProgressCallback = void Function(int scanned, int? total);
 
 /// Optional cache for content hashes. The server uses it to avoid re-hashing
 /// unchanged files on every manifest request.
@@ -33,11 +37,12 @@ final class LocalScanner {
     this.computeHashes = true,
     this.maxHashSize,
     this.hashCache,
+    this.maxWorkers,
   }) : ignores = ignores ?? IgnoreRules.defaults();
 
   final IgnoreRules ignores;
 
-  /// Whether to compute SHA-256 for file entries.
+  /// Whether to compute content fingerprints for file entries.
   final bool computeHashes;
 
   /// Files larger than this size are recorded without a hash. Null means no
@@ -46,14 +51,16 @@ final class LocalScanner {
 
   final HashCache? hashCache;
 
+  /// Overrides the isolate worker count. Defaults to
+  /// `min(Platform.numberOfProcessors, 8)` for non-trivial scans.
+  final int? maxWorkers;
+
   Future<Manifest> scan(
     String root, {
     String? subPath,
-    void Function(int scanned)? onProgress,
+    ScanProgressCallback? onProgress,
   }) async {
-    // Report the phase immediately so callers can time the scan from its
-    // actual start instead of the first progress batch.
-    onProgress?.call(0);
+    onProgress?.call(0, null);
 
     final rootDirectory = Directory(root);
     if (!await rootDirectory.exists()) {
@@ -79,20 +86,29 @@ final class LocalScanner {
     }
 
     final entries = <String, ManifestEntry>{};
-    var lastReported = 0;
-    void reportProgress() {
-      if (entries.length - lastReported < 200) return;
-      lastReported = entries.length;
-      onProgress?.call(entries.length);
+    final pending = <_HashJob>[];
+    var processed = 0;
+    var lastReported = -1;
+
+    void reportProgress({int? total, bool force = false}) {
+      if (!force && processed - lastReported < 50) return;
+      lastReported = processed;
+      onProgress?.call(processed, total);
     }
 
     String fullPathOf(String relPath) =>
         normalized.isEmpty ? relPath : '$normalized/$relPath';
 
+    bool shouldHash(int size) {
+      return computeHashes && (maxHashSize == null || size <= maxHashSize!);
+    }
+
     if (type == FileSystemEntityType.file) {
       final file = File(scanRoot);
-      entries[normalized] = await _fileEntry(file.path, await file.stat());
-      onProgress?.call(entries.length);
+      final stat = await file.stat();
+      final entry = await _fileEntry(file.path, stat);
+      entries[normalized] = entry;
+      onProgress?.call(1, 1);
       await hashCache?.flush();
       return Manifest(
         root: p.normalize(p.absolute(root)),
@@ -107,6 +123,7 @@ final class LocalScanner {
       entries[normalized] = ManifestEntry.directory(
         mtimeMs: stat.modified.millisecondsSinceEpoch,
       );
+      processed++;
     }
 
     await for (final entity in directory.list(
@@ -140,15 +157,85 @@ final class LocalScanner {
         entries[fullPath] = ManifestEntry.directory(
           mtimeMs: stat.modified.millisecondsSinceEpoch,
         );
+        processed++;
         reportProgress();
         continue;
       }
 
-      entries[fullPath] = await _fileEntry(entity.path, stat);
-      reportProgress();
+      final size = stat.size;
+      final mtimeMs = stat.modified.millisecondsSinceEpoch;
+      if (!shouldHash(size)) {
+        entries[fullPath] = ManifestEntry.file(size: size, mtimeMs: mtimeMs);
+        processed++;
+        reportProgress();
+        continue;
+      }
+
+      final cached = hashCache?.lookup(entity.path, size, mtimeMs);
+      if (cached != null) {
+        entries[fullPath] = ManifestEntry.file(
+          size: size,
+          mtimeMs: mtimeMs,
+          hash: cached.hash,
+          textHash: cached.textHash,
+        );
+        processed++;
+        reportProgress();
+        continue;
+      }
+
+      pending.add((
+        path: entity.path,
+        relPath: fullPath,
+        size: size,
+        mtimeMs: mtimeMs,
+      ));
     }
 
-    onProgress?.call(entries.length);
+    final total = processed + pending.length;
+    onProgress?.call(processed, total);
+
+    if (pending.isNotEmpty) {
+      // Largest files first keeps the isolate workers balanced when a folder
+      // mixes small photos with large videos.
+      pending.sort((a, b) => b.size.compareTo(a.size));
+      final workers = _workerCount(pending.length, maxWorkers);
+      if (workers <= 1) {
+        for (final job in pending) {
+          final result = await _hashJob(job);
+          _applyResult(entries, result);
+          processed++;
+          reportProgress(total: total);
+        }
+      } else {
+        final chunks = _splitJobs(pending, 100);
+        var nextChunk = 0;
+        Future<void> worker() async {
+          while (true) {
+            final index = nextChunk++;
+            if (index >= chunks.length) break;
+            final chunk = chunks[index];
+            final results = await _runHashChunk(chunk);
+            for (final result in results) {
+              _applyResult(entries, result);
+              hashCache?.store(
+                result.path,
+                result.size,
+                result.mtimeMs,
+                result.hash,
+                result.textHash,
+              );
+              processed++;
+            }
+            reportProgress(total: total);
+          }
+        }
+
+        await Future.wait(List.generate(workers, (_) => worker()));
+      }
+    }
+
+    onProgress?.call(total, total);
     await hashCache?.flush();
     return Manifest(
       root: p.normalize(p.absolute(root)),
@@ -159,28 +246,76 @@ final class LocalScanner {
 
   Future<ManifestEntry> _fileEntry(String path, FileStat stat) async {
     final mtimeMs = stat.modified.millisecondsSinceEpoch;
-    final shouldHash =
-        computeHashes && (maxHashSize == null || stat.size <= maxHashSize!);
-    String? hash;
-    String? textHash;
-    if (shouldHash) {
-      final cached = hashCache?.lookup(path, stat.size, mtimeMs);
-      if (cached != null) {
-        hash = cached.hash;
-        textHash = cached.textHash;
-      } else {
-        final result = await _hashFile(path);
-        hash = result.hash;
-        textHash = result.textHash;
-        hashCache?.store(path, stat.size, mtimeMs, hash, textHash);
-      }
+    final size = stat.size;
+    if (!computeHashes || (maxHashSize != null && size > maxHashSize!)) {
+      return ManifestEntry.file(size: size, mtimeMs: mtimeMs);
     }
-    return ManifestEntry.file(
-      size: stat.size,
+    final cached = hashCache?.lookup(path, size, mtimeMs);
+    if (cached != null) {
+      return ManifestEntry.file(
+        size: size,
+        mtimeMs: mtimeMs,
+        hash: cached.hash,
+        textHash: cached.textHash,
+      );
+    }
+    final result = await _hashJob((
+      path: path,
+      relPath: '',
+      size: size,
       mtimeMs: mtimeMs,
-      hash: hash,
-      textHash: textHash,
+    ));
+    return ManifestEntry.file(
+      size: size,
+      mtimeMs: mtimeMs,
+      hash: result.hash,
+      textHash: result.textHash,
     );
+  }
+
+  Future<_HashResult> _hashJob(_HashJob job) async {
+    final fingerprint = await fingerprintFile(job.path, size: job.size);
+    hashCache?.store(
+      job.path,
+      job.size,
+      job.mtimeMs,
+      fingerprint.hash,
+      fingerprint.textHash,
+    );
+    return (
+      path: job.path,
+      relPath: job.relPath,
+      size: job.size,
+      mtimeMs: job.mtimeMs,
+      hash: fingerprint.hash,
+      textHash: fingerprint.textHash,
+    );
+  }
+
+  static void _applyResult(
+    Map<String, ManifestEntry> entries,
+    _HashResult result,
+  ) {
+    entries[result.relPath] = ManifestEntry.file(
+      size: result.size,
+      mtimeMs: result.mtimeMs,
+      hash: result.hash,
+      textHash: result.textHash,
+    );
+  }
+
+  static int _workerCount(int pending, int? configured) {
+    if (pending < 32) return 1;
+    final count = configured ?? min(Platform.numberOfProcessors, 8);
+    return count.clamp(1, 8);
+  }
+
+  static List<List<_HashJob>> _splitJobs(List<_HashJob> jobs, int size) {
+    final chunks = <List<_HashJob>>[];
+    for (var offset = 0; offset < jobs.length; offset += size) {
+      chunks.add(jobs.sublist(offset, min(offset + size, jobs.length)));
+    }
+    return chunks;
   }
 
   static String _normalizeSubPath(String? subPath) {
@@ -200,61 +335,41 @@ final class LocalScanner {
     if (relative == '.' || relative.isEmpty) return '';
     return p.posix.joinAll(p.split(relative));
   }
-
-  /// Hashes the raw bytes and, for text files, the LF-normalized bytes.
-  ///
-  /// A file is treated as text when its first 8 KiB contain no NUL byte. This
-  /// is the same heuristic Git uses. The normalized hash lets CRLF and LF
-  /// copies of the same document compare equal without transferring them.
-  static Future<({String hash, String? textHash})> _hashFile(
-    String path,
-  ) async {
-    final file = await File(path).open();
-    try {
-      final probe = await file.read(8192);
-      final isText = !probe.contains(0);
-      await file.setPosition(0);
-
-      final rawSink = _DigestSink();
-      final rawInput = sha256.startChunkedConversion(rawSink);
-      final normalizer = isText ? LineEndingNormalizer() : null;
-      final textSink = isText ? _DigestSink() : null;
-      final textInput = textSink == null
-          ? null
-          : sha256.startChunkedConversion(textSink);
-
-      while (true) {
-        final chunk = await file.read(64 * 1024);
-        if (chunk.isEmpty) break;
-        rawInput.add(chunk);
-        if (textInput != null) {
-          final normalized = normalizer!.add(chunk);
-          if (normalized.isNotEmpty) textInput.add(normalized);
-        }
-      }
-
-      rawInput.close();
-      if (textInput != null) {
-        final tail = normalizer!.finish();
-        if (tail.isNotEmpty) textInput.add(tail);
-        textInput.close();
-      }
-      return (
-        hash: rawSink.value!.toString(),
-        textHash: textSink?.value?.toString(),
-      );
-    } finally {
-      await file.close();
-    }
-  }
 }
 
-final class _DigestSink implements Sink<Digest> {
-  Digest? value;
+typedef _HashJob = ({String path, String relPath, int size, int mtimeMs});
 
-  @override
-  void add(Digest data) => value = data;
+typedef _HashResult = ({
+  String path,
+  String relPath,
+  int size,
+  int mtimeMs,
+  String hash,
+  String? textHash,
+});
 
-  @override
-  void close() {}
+Future<List<_HashResult>> _hashChunk(List<_HashJob> jobs) async {
+  final results = <_HashResult>[];
+  for (final job in jobs) {
+    final fingerprint = await fingerprintFile(job.path, size: job.size);
+    results.add((
+      path: job.path,
+      relPath: job.relPath,
+      size: job.size,
+      mtimeMs: job.mtimeMs,
+      hash: fingerprint.hash,
+      textHash: fingerprint.textHash,
+    ));
+  }
+  return results;
+}
+
+/// Runs one chunk in a worker isolate.
+///
+/// This wrapper exists so the isolate closure only captures [jobs]. Inlining
+/// `Isolate.run` inside `scan` would capture the enclosing scope, including
+/// `onProgress` callbacks that may hold widget state and cannot be sent
+/// across isolates.
+Future<List<_HashResult>> _runHashChunk(List<_HashJob> jobs) {
+  return Isolate.run(() => _hashChunk(jobs));
 }

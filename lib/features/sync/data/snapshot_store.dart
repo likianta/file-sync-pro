@@ -21,13 +21,14 @@ final class SnapshotLoadResult {
     this.backupPath,
   });
 
+  /// A usable snapshot. When an old hash algorithm was found, this is the
+  /// freshly written seed that keeps `ignores` but drops the stale entries.
   final SideSnapshot? snapshot;
 
-  /// True when the file existed but was not in the current format and no
-  /// backup directory was configured, so the caller must handle it.
+  /// True when the stored file could not be used as-is.
   final bool legacy;
 
-  /// Where a legacy file was copied before it was removed from its origin.
+  /// Where the original file was copied before it was rewritten or removed.
   final String? backupPath;
 
   bool get isMissing => snapshot == null && !legacy;
@@ -56,8 +57,10 @@ final class SnapshotStore {
 
   /// Reads this side's snapshot.
   ///
-  /// A missing, empty, corrupt or legacy file yields no snapshot. Legacy files
-  /// are copied to [backupDir] first, then removed from their origin.
+  /// A missing or empty file yields no snapshot. Files written with a retired
+  /// hash algorithm are backed up when [backupDir] exists, then replaced with
+  /// an empty seed that keeps `ignores`. Corrupt files are backed up and
+  /// removed.
   Future<SnapshotLoadResult> load() async {
     if (!await store.exists(fileName)) {
       return const SnapshotLoadResult();
@@ -69,9 +72,12 @@ final class SnapshotStore {
     }
     final bytes = builder.takeBytes();
 
-    final snapshot = _parse(bytes);
-    if (snapshot != null) {
-      return SnapshotLoadResult(snapshot: snapshot);
+    final parsed = _parse(bytes);
+    if (parsed != null) {
+      if (parsed.algorithm == snapshotHashAlgorithm) {
+        return SnapshotLoadResult(snapshot: parsed.snapshot);
+      }
+      return _migrateAlgorithm(parsed.snapshot, bytes);
     }
 
     final backupDir = this.backupDir;
@@ -79,6 +85,36 @@ final class SnapshotStore {
       return const SnapshotLoadResult(legacy: true);
     }
 
+    final backupPath = await _writeBackup(bytes, backupDir);
+    await store.deleteFile(fileName);
+    return SnapshotLoadResult(legacy: true, backupPath: backupPath);
+  }
+
+  /// Replaces a snapshot written by a retired hash algorithm with an empty
+  /// seed so the next scan can rebuild `base` and `current` with the current
+  /// algorithm while keeping the user's ignore rules.
+  Future<SnapshotLoadResult> _migrateAlgorithm(
+    SideSnapshot old,
+    Uint8List bytes,
+  ) async {
+    final seed = SideSnapshot(
+      base: SnapshotState.empty(),
+      current: SnapshotState.empty(),
+      ignores: old.ignores,
+    );
+    final backupDir = this.backupDir;
+    final backupPath = backupDir == null
+        ? null
+        : await _writeBackup(bytes, backupDir);
+    await save(seed);
+    return SnapshotLoadResult(
+      snapshot: seed,
+      legacy: true,
+      backupPath: backupPath,
+    );
+  }
+
+  Future<String> _writeBackup(Uint8List bytes, String backupDir) async {
     final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
       RegExp('[:.]'),
       '-',
@@ -89,8 +125,7 @@ final class SnapshotStore {
     );
     await target.parent.create(recursive: true);
     await target.writeAsBytes(bytes, flush: true);
-    await store.deleteFile(fileName);
-    return SnapshotLoadResult(legacy: true, backupPath: target.path);
+    return target.path;
   }
 
   Future<void> save(SideSnapshot snapshot) async {
@@ -104,14 +139,19 @@ final class SnapshotStore {
     );
   }
 
-  static SideSnapshot? _parse(Uint8List bytes) {
+  static ({SideSnapshot snapshot, String algorithm})? _parse(Uint8List bytes) {
     if (bytes.isEmpty) return null;
     try {
       final text = utf8.decode(bytes);
       if (text.trim().isEmpty) return null;
       final decoded = jsonDecode(text);
       if (decoded is! Map) return null;
-      return SideSnapshot.fromJson(decoded.cast<String, Object?>());
+      final json = decoded.cast<String, Object?>();
+      final algorithm = json['hash_algo'];
+      return (
+        snapshot: SideSnapshot.fromJson(json),
+        algorithm: algorithm is String ? algorithm : '',
+      );
     } catch (_) {
       return null;
     }

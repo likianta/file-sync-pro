@@ -29,7 +29,7 @@ abstract interface class SyncSource {
     String? subPath,
     bool createIfMissing = false,
     SnapshotIgnores? ignores,
-    void Function(int scanned)? onProgress,
+    void Function(int scanned, int? total)? onProgress,
   });
 
   /// Writes this side's `.file_sync_shot.json`.
@@ -79,7 +79,7 @@ final class LocalSyncSource implements SyncSource {
     String? subPath,
     bool createIfMissing = false,
     SnapshotIgnores? ignores,
-    void Function(int scanned)? onProgress,
+    void Function(int scanned, int? total)? onProgress,
   }) {
     return _snapshots.scan(
       subPath: subPath,
@@ -141,10 +141,10 @@ final class RemoteSyncSource implements SyncSource {
     String? subPath,
     bool createIfMissing = false,
     SnapshotIgnores? ignores,
-    void Function(int scanned)? onProgress,
+    void Function(int scanned, int? total)? onProgress,
   }) async {
     final scope = normalizeScope(subPath);
-    onProgress?.call(0);
+    onProgress?.call(0, null);
     final json = await _transport.postJson(
       ServerRoute.snapshot,
       query: {
@@ -159,7 +159,7 @@ final class RemoteSyncSource implements SyncSource {
       0,
       (sum, folder) => sum + folder.files.length,
     );
-    onProgress?.call(fileCount);
+    onProgress?.call(fileCount, fileCount);
     return snapshot;
   }
 

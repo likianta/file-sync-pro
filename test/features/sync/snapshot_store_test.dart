@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/data/file_store.dart';
@@ -72,6 +73,36 @@ void main() {
     expect(text, contains('"ignores"'));
     expect(text, contains('"text_hash"'));
     expect(text, contains('\n  "base"'));
+    expect(text, contains('"hash_algo": "xxh64-v1"'));
+  });
+
+  test('migrates a snapshot written by an old hash algorithm', () async {
+    final origin = File(p.join(temp.path, SnapshotStore.defaultFileName));
+    await origin.writeAsString(
+      jsonEncode({
+        'ignores': ['/skip/'],
+        'base': {'key': 'old', 'updated_at': 1, 'entries': {}},
+        'current': {'key': 'old', 'updated_at': 1, 'entries': {}},
+      }),
+    );
+    final backupDir = p.join(temp.path, 'chore');
+    final store = SnapshotStore(
+      LocalFileStore(temp.path),
+      backupDir: backupDir,
+      label: 'pair-local',
+    );
+
+    final loaded = await store.load();
+    expect(loaded.legacy, isTrue);
+    expect(loaded.snapshot, isNotNull);
+    expect(loaded.snapshot!.current.isEmpty, isTrue);
+    expect(loaded.snapshot!.ignores.patterns, ['/skip/']);
+    expect(loaded.backupPath, isNotNull);
+    expect(File(loaded.backupPath!).readAsStringSync(), contains('"old"'));
+
+    final text = await origin.readAsString();
+    expect(text, contains('"hash_algo": "xxh64-v1"'));
+    expect(text, contains('"ignores": ['));
   });
 
   test('moves a legacy snapshot to the backup directory', () async {

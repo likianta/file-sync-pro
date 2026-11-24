@@ -4,7 +4,6 @@ library;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../../transport/http_transport.dart';
@@ -198,17 +197,14 @@ final class PlanApplier {
     }
 
     final modified = DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs);
-    final isText = entry.textHash != null;
-    final digestSink = _DigestSink();
-    final hasher = sha256.startChunkedConversion(digestSink);
+    final textHash = entry.textHash;
 
-    if (!isText) {
+    if (textHash == null) {
       await to.writeAtomically(
         relPath,
-        _tee(from.openRead(relPath), hasher),
+        from.openRead(relPath),
         modified: modified,
       );
-      hasher.close();
       final info = await to.stat(relPath);
       if (info.size != entry.size) {
         throw StateError(
@@ -216,25 +212,23 @@ final class PlanApplier {
           'expected ${entry.size}, got ${info.size}',
         );
       }
+      // The copy is byte-identical, so the source fingerprint still applies.
       return AppliedFile(
         size: info.size,
         mtimeMs: info.mtimeMs,
-        hash: digestSink.value?.toString() ?? entry.hash ?? '',
+        hash: entry.hash ?? '',
       );
     }
 
     // Text files are normalized to LF on the destination so CRLF copies are
-    // gradually replaced every time they are overwritten.
+    // gradually replaced every time they are overwritten. The normalized hash
+    // is identical on both sides, which keeps later comparisons stable.
     var written = 0;
     await to.writeAtomically(
       relPath,
-      _tee(
-        _normalizeText(from.openRead(relPath), (bytes) => written += bytes),
-        hasher,
-      ),
+      _normalizeText(from.openRead(relPath), (bytes) => written += bytes),
       modified: modified,
     );
-    hasher.close();
 
     final info = await to.stat(relPath);
     if (info.size != written) {
@@ -243,23 +237,12 @@ final class PlanApplier {
         'expected $written, got ${info.size}',
       );
     }
-    final hash = digestSink.value?.toString() ?? '';
     return AppliedFile(
       size: info.size,
       mtimeMs: info.mtimeMs,
-      hash: hash,
-      textHash: hash,
+      hash: textHash,
+      textHash: textHash,
     );
-  }
-
-  static Stream<List<int>> _tee(
-    Stream<List<int>> input,
-    Sink<List<int>> hasher,
-  ) async* {
-    await for (final chunk in input) {
-      hasher.add(chunk);
-      yield chunk;
-    }
   }
 
   static Stream<List<int>> _normalizeText(
@@ -282,16 +265,4 @@ final class PlanApplier {
   }
 
   static int _depth(String path) => path.split('/').length;
-}
-
-final class _DigestSink implements Sink<Digest> {
-  Digest? value;
-
-  @override
-  void add(Digest data) {
-    value = data;
-  }
-
-  @override
-  void close() {}
 }

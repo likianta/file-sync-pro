@@ -38,10 +38,10 @@ final class ManifestEntry {
   final int size;
   final int mtimeMs;
 
-  /// SHA-256 of the file content. Directories have no hash.
+  /// Content fingerprint. Directories have no hash.
   final String? hash;
 
-  /// SHA-256 of the file content after normalizing line endings to LF.
+  /// Fingerprint of the file content after normalizing line endings to LF.
   ///
   /// Only text files have this; binary files leave it null.
   final String? textHash;

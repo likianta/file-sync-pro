@@ -40,7 +40,7 @@ final class FileHashCache implements HashCache {
     _load();
   }
 
-  static const version = 2;
+  static const version = 3;
 
   final String path;
   final Map<String, _Entry> _entries = {};
