@@ -31,6 +31,8 @@ final class SyncDashboardController extends ChangeNotifier {
   int _scanned = 0;
   FileHashCache? _hashCache;
   final List<String> _log = [];
+  final Stopwatch _scanWatch = Stopwatch();
+  final Stopwatch _phaseWatch = Stopwatch();
   bool _disposed = false;
 
   SyncDashboardStatus get status => _status;
@@ -108,7 +110,9 @@ final class SyncDashboardController extends ChangeNotifier {
     final engine = _createEngine();
     try {
       await Directory(config.localRoot).create(recursive: true);
+      _startScanTiming();
       _preview = await engine.preview(onProgress: _onScanProgress);
+      _logScanFinished();
       _status = SyncDashboardStatus.idle;
     } catch (error) {
       _fail(error);
@@ -139,10 +143,12 @@ final class SyncDashboardController extends ChangeNotifier {
 
     final engine = _createEngine();
     try {
+      _startScanTiming();
       final preview = await engine.preview(
         subPath: scope,
         onProgress: _onScanProgress,
       );
+      _logScanFinished();
       _diffPreview = preview;
       if (scope == null) {
         _preview = preview;
@@ -212,7 +218,9 @@ final class SyncDashboardController extends ChangeNotifier {
         );
       }
       _status = SyncDashboardStatus.idle;
+      _startScanTiming();
       _preview = await engine.preview(onProgress: _onScanProgress);
+      _logScanFinished();
       _diffPreview = null;
       _diffSubPath = null;
     } catch (error) {
@@ -277,15 +285,41 @@ final class SyncDashboardController extends ChangeNotifier {
     final phaseChanged = _scanPhase != phase;
     if (!phaseChanged && scanned == _scanned) return;
     if (phaseChanged) {
+      if (phase == ScanPhase.local) {
+        _phaseWatch
+          ..reset()
+          ..start();
+        _appendLog('Scanning local files...');
+      } else {
+        final localMs = _phaseWatch.elapsedMilliseconds;
+        _phaseWatch
+          ..reset()
+          ..start();
+        _appendLog(
+          'Local scan finished in $localMs ms. Scanning remote files...',
+        );
+      }
+    } else if (phase == ScanPhase.remote && scanned > 0) {
+      _phaseWatch.stop();
       _appendLog(
-        phase == ScanPhase.local
-            ? 'Scanning local files...'
-            : 'Local scan finished. Scanning remote files...',
+        'Remote scan finished in ${_phaseWatch.elapsedMilliseconds} ms.',
       );
     }
     _scanPhase = phase;
     _scanned = scanned;
     _notify();
+  }
+
+  void _startScanTiming() {
+    _scanWatch
+      ..reset()
+      ..start();
+    _phaseWatch.reset();
+  }
+
+  void _logScanFinished() {
+    _scanWatch.stop();
+    _appendLog('Scan finished in ${_scanWatch.elapsedMilliseconds} ms.');
   }
 
   FileHashCache _cache() {

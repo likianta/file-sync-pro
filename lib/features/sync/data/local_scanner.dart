@@ -51,6 +51,10 @@ final class LocalScanner {
     String? subPath,
     void Function(int scanned)? onProgress,
   }) async {
+    // Report the phase immediately so callers can time the scan from its
+    // actual start instead of the first progress batch.
+    onProgress?.call(0);
+
     final rootDirectory = Directory(root);
     if (!await rootDirectory.exists()) {
       throw StateError('Sync root does not exist: $root');
