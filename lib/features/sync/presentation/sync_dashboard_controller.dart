@@ -35,6 +35,8 @@ final class SyncDashboardController extends ChangeNotifier {
   ScanPhase? _scanPhase;
   int _scanned = 0;
   bool _needsInitialScan = false;
+  List<ConflictArchiveEntry> _lastConflictArchives = const [];
+  String? _lastConflictArchiveRoot;
   final List<String> _log = [];
   final Stopwatch _scanWatch = Stopwatch();
   final Stopwatch _phaseWatch = Stopwatch();
@@ -50,6 +52,14 @@ final class SyncDashboardController extends ChangeNotifier {
 
   /// True when at least one side has no usable `current` snapshot.
   bool get needsInitialScan => _needsInitialScan;
+
+  /// Conflicts resolved by the last sync, with archived remote copies.
+  List<ConflictArchiveEntry> get lastConflictArchives =>
+      List.unmodifiable(_lastConflictArchives);
+
+  String? get lastConflictArchiveRoot => _lastConflictArchiveRoot;
+
+  bool get hasConflictReview => _lastConflictArchives.isNotEmpty;
 
   /// The preview shown in the Check sheet. It is scoped when Check was run on
   /// a selected node.
@@ -99,7 +109,7 @@ final class SyncDashboardController extends ChangeNotifier {
     final apply = report.applyReport;
     if (apply == null) return 'Ready';
     return 'Last run: ${apply.total} actions · '
-        '${report.conflictCount} conflicts';
+        '${report.conflictCount} conflicts resolved';
   }
 
   String get _scanLabel {
@@ -314,6 +324,8 @@ final class SyncDashboardController extends ChangeNotifier {
     _errorMessage = null;
     _applied = 0;
     _currentPath = null;
+    _lastConflictArchives = const [];
+    _lastConflictArchiveRoot = null;
     _appendLog(
       '${_directionLabel(direction)} '
       '${subPath == null || subPath.isEmpty ? 'whole tree' : subPath}...',
@@ -341,6 +353,8 @@ final class SyncDashboardController extends ChangeNotifier {
       _report = report;
       _localSnapshot = report.aSnapshot ?? _localSnapshot;
       _remoteSnapshot = report.bSnapshot ?? _remoteSnapshot;
+      _lastConflictArchives = report.conflictArchives;
+      _lastConflictArchiveRoot = report.conflictArchiveRoot;
       _preview = engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
       _diffPreview = null;
       _diffSubPath = null;
@@ -356,8 +370,8 @@ final class SyncDashboardController extends ChangeNotifier {
       }
       if (report.hasConflicts) {
         _appendLog(
-          '${report.conflictCount} conflict(s) left untouched. '
-          'Backups: ${report.conflictBackupRoot}.',
+          '${report.conflictCount} conflict(s) resolved with local wins. '
+          'Remote copies: ${report.conflictArchiveRoot}.',
         );
       }
       _appendLog('Snapshots updated incrementally; no rescan performed.');
@@ -524,6 +538,7 @@ final class SyncDashboardController extends ChangeNotifier {
         snapshotLabel: '${config.pairName}-remote',
       ),
       stateDir: config.stateDir,
+      conflictRoot: config.conflictRoot.isEmpty ? null : config.conflictRoot,
     );
   }
 

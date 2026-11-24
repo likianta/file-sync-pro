@@ -336,11 +336,13 @@ final class SyncClientConfig {
     required this.token,
     required this.timeoutSeconds,
     required List<SyncDeviceEntry> devices,
+    this.projectRoot = '',
   }) : devices = List.of(devices);
 
   String token;
   int timeoutSeconds;
   final List<SyncDeviceEntry> devices;
+  final String projectRoot;
 
   static const schemaVersion = 4;
 
@@ -410,6 +412,7 @@ final class SyncClientConfig {
       token: token,
       timeoutSeconds: timeoutSeconds,
       devices: devices,
+      projectRoot: projectRoot,
     );
   }
 
@@ -418,6 +421,7 @@ final class SyncClientConfig {
       token: Platform.environment['FILE_SYNC_TOKEN'] ?? '',
       timeoutSeconds: 300,
       devices: const [],
+      projectRoot: Directory.current.path,
     );
   }
 
@@ -510,12 +514,16 @@ final class SyncClientConfig {
   }
 
   SyncPairConfig _runtimeFor(SyncDeviceEntry device, SyncPairEntry pair) {
+    final root = projectRoot.isEmpty ? Directory.current.path : projectRoot;
     return SyncPairConfig(
       name: pair.name,
+      deviceId: device.id,
+      pairId: pair.id,
       localRoot: pair.localRoot,
       remoteUrl: pair.remoteUrlFor(device),
       token: token,
       stateDir: pair.stateDir,
+      conflictRoot: p.join(root, 'data', 'conflicts', device.id, pair.id),
       timeoutSeconds: timeoutSeconds,
     );
   }

@@ -197,7 +197,7 @@ void main() {
     expect(await _exists(alice, 'keep.txt'), isTrue);
   });
 
-  test('reports conflicts and keeps them for the next check', () async {
+  test('resolves conflicts locally and archives the remote copy', () async {
     await _file(alice, 'doc.txt').writeAsString('base\n');
     await withEngine((engine) async {
       await scanBoth(engine);
@@ -214,30 +214,29 @@ void main() {
 
     expect(report.conflictCount, 1);
     expect(await _read(alice, 'doc.txt'), 'alice\n');
-    expect(await _read(bob, 'doc.txt'), 'bob\n');
-    expect(report.conflictBackupRoot, isNotNull);
-    expect(
-      File(p.join(report.conflictBackupRoot!, 'a', 'doc.txt')).existsSync(),
-      isTrue,
-    );
-    expect(
-      File(p.join(report.conflictBackupRoot!, 'b', 'doc.txt')).existsSync(),
-      isTrue,
-    );
+    expect(await _read(bob, 'doc.txt'), 'alice\n');
+    expect(report.conflictArchiveRoot, isNotNull);
+    expect(report.conflictArchives, hasLength(1));
+    final archive = report.conflictArchives.single;
+    expect(archive.path, 'doc.txt');
+    expect(archive.localExisted, isTrue);
+    expect(archive.remoteExisted, isTrue);
+    expect(archive.archivedRemotePath, isNotNull);
+    expect(File(archive.archivedRemotePath!).readAsStringSync(), 'bob\n');
 
     final next = await withEngine(planNow);
-    expect(next.plan.conflicts, hasLength(1));
+    expect(next.plan.conflicts, isEmpty);
   });
 
-  test('keeps a modified-vs-deleted conflict', () async {
+  test('local deletion wins over a remote modification', () async {
     await _file(alice, 'doc.txt').writeAsString('base\n');
     await withEngine((engine) async {
       await scanBoth(engine);
       await syncNow(engine);
     });
 
-    await _file(alice, 'doc.txt').writeAsString('still here\n');
-    await _file(bob, 'doc.txt').delete();
+    await _file(alice, 'doc.txt').delete();
+    await _file(bob, 'doc.txt').writeAsString('bob edit\n');
     final report = await withEngine((engine) async {
       await engine.scanSide(left: true);
       await engine.scanSide(left: false);
@@ -249,8 +248,35 @@ void main() {
       report.plan.conflicts.single.reason,
       ConflictReason.modifiedVsDeleted,
     );
-    expect(await _read(alice, 'doc.txt'), 'still here\n');
+    expect(await _exists(alice, 'doc.txt'), isFalse);
     expect(await _exists(bob, 'doc.txt'), isFalse);
+    final archive = report.conflictArchives.single;
+    expect(archive.localExisted, isFalse);
+    expect(archive.remoteExisted, isTrue);
+    expect(File(archive.archivedRemotePath!).readAsStringSync(), 'bob edit\n');
+  });
+
+  test('local modification wins over a remote deletion', () async {
+    await _file(alice, 'doc.txt').writeAsString('base\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'doc.txt').writeAsString('alice edit\n');
+    await _file(bob, 'doc.txt').delete();
+    final report = await withEngine((engine) async {
+      await engine.scanSide(left: true);
+      await engine.scanSide(left: false);
+      return syncNow(engine);
+    });
+
+    expect(report.conflictCount, 1);
+    expect(await _read(alice, 'doc.txt'), 'alice edit\n');
+    expect(await _read(bob, 'doc.txt'), 'alice edit\n');
+    final archive = report.conflictArchives.single;
+    expect(archive.remoteExisted, isFalse);
+    expect(archive.archivedRemotePath, isNull);
   });
 
   test('resolves a conflict from the selected side', () async {

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../application/sync_engine.dart';
 import '../domain/sync_plan.dart';
 import 'sync_dashboard_controller.dart';
 
@@ -100,11 +99,7 @@ class _DiffSheetBody extends StatelessWidget {
         Expanded(
           child: plan == null
               ? const Center(child: Text('Nothing to compare yet.'))
-              : _DiffList(
-                  plan: plan,
-                  controller: controller,
-                  scrollController: scrollController,
-                ),
+              : _DiffList(plan: plan, scrollController: scrollController),
         ),
       ],
     );
@@ -112,14 +107,9 @@ class _DiffSheetBody extends StatelessWidget {
 }
 
 class _DiffList extends StatelessWidget {
-  const _DiffList({
-    required this.plan,
-    required this.controller,
-    required this.scrollController,
-  });
+  const _DiffList({required this.plan, required this.scrollController});
 
   final SyncPlan plan;
-  final SyncDashboardController controller;
   final ScrollController scrollController;
 
   static const _limit = 500;
@@ -205,7 +195,6 @@ class _DiffList extends StatelessWidget {
           _ConflictRow(
             key: ValueKey<String>('diff.conflict.${conflict.path}'),
             conflict: conflict,
-            controller: controller,
           ),
         );
       }
@@ -320,19 +309,13 @@ class _ActionRow extends StatelessWidget {
 }
 
 class _ConflictRow extends StatelessWidget {
-  const _ConflictRow({
-    super.key,
-    required this.conflict,
-    required this.controller,
-  });
+  const _ConflictRow({super.key, required this.conflict});
 
   final SyncConflict conflict;
-  final SyncDashboardController controller;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final canResolve = !controller.busy;
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
       decoration: BoxDecoration(
@@ -368,32 +351,12 @@ class _ConflictRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          OutlinedButton(
-            onPressed: canResolve
-                ? () => controller.resolveConflict(
-                    conflict.path,
-                    ConflictSide.left,
-                  )
-                : null,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 30),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
+          Text(
+            'Sync keeps local',
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 11,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
-            child: const Text('Keep local'),
-          ),
-          const SizedBox(width: 6),
-          OutlinedButton(
-            onPressed: canResolve
-                ? () => controller.resolveConflict(
-                    conflict.path,
-                    ConflictSide.right,
-                  )
-                : null,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 30),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-            ),
-            child: const Text('Keep remote'),
           ),
         ],
       ),

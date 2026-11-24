@@ -11,18 +11,26 @@ import 'package:path/path.dart' as p;
 final class SyncPairConfig {
   const SyncPairConfig({
     this.name = '',
+    this.deviceId = '',
+    this.pairId = '',
     required this.localRoot,
     required this.remoteUrl,
     required this.token,
     required this.stateDir,
+    this.conflictRoot = '',
     this.timeoutSeconds = 300,
   });
 
   final String name;
+  final String deviceId;
+  final String pairId;
   final String localRoot;
   final String remoteUrl;
   final String token;
   final String stateDir;
+
+  /// Base folder for archived remote copies of conflicts.
+  final String conflictRoot;
   final int timeoutSeconds;
 
   String get pairName {

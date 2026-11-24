@@ -77,6 +77,10 @@ void main() {
       p.join(temp.path, 'data', 'sync_pairs', 'p-gitbook'),
     );
     expect(
+      runtime.conflictRoot,
+      p.join(temp.path, 'data', 'conflicts', 'd-phone', 'p-gitbook'),
+    );
+    expect(
       config.runtimeForPairId('p-notes')!.remoteUrl,
       'http://host:2160/notes',
     );

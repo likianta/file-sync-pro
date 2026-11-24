@@ -10,6 +10,7 @@ import '../application/sync_config_store.dart';
 import '../application/sync_engine.dart';
 import '../application/sync_pair_config.dart';
 import 'diff_sheet.dart';
+import 'conflict_review_dialog.dart';
 import 'sync_dashboard_controller.dart';
 import 'sync_tree.dart';
 import 'tree_panel.dart';
@@ -327,6 +328,12 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     await controller.run(
       direction: direction,
       subPath: _activePath.isEmpty ? null : _activePath,
+    );
+    if (!mounted || !controller.hasConflictReview) return;
+    await showConflictReviewDialog(
+      context,
+      controller,
+      controller.lastConflictArchives,
     );
   }
 
@@ -794,6 +801,25 @@ class _ActivityPanel extends StatelessWidget {
                       ),
                     ),
                     const Spacer(),
+                    if (controller?.hasConflictReview == true)
+                      TextButton.icon(
+                        key: const ValueKey<String>('sync.reviewConflicts'),
+                        onPressed: () => showConflictReviewDialog(
+                          context,
+                          controller!,
+                          controller!.lastConflictArchives,
+                        ),
+                        icon: const Icon(Icons.merge_type, size: 14),
+                        label: Text(
+                          'Review conflicts '
+                          '(${controller!.lastConflictArchives.length})',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 28),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                      ),
                     Icon(
                       expanded ? Icons.expand_more : Icons.expand_less,
                       size: 18,

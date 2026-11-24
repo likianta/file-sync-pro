@@ -57,7 +57,12 @@ Future<void> main(List<String> args) async {
     snapshotBackupDir: backupDir,
     snapshotLabel: '${config.pairName}-remote',
   );
-  final engine = SyncEngine(a: local, b: remote, stateDir: config.stateDir);
+  final engine = SyncEngine(
+    a: local,
+    b: remote,
+    stateDir: config.stateDir,
+    conflictRoot: config.conflictRoot,
+  );
 
   try {
     print('Local : ${local.id}');
@@ -133,16 +138,15 @@ Future<void> main(List<String> args) async {
       '${apply.removedDirectories} dirs removed.',
     );
     _printConflicts(report.plan.conflicts);
-    if (report.conflictBackupRoot != null) {
-      print('Conflict copies: ${report.conflictBackupRoot}');
+    if (report.conflictArchiveRoot != null) {
+      print('Conflict copies: ${report.conflictArchiveRoot}');
     }
     if (report.journalPath != null) {
       print('Journal: ${report.journalPath}');
     }
     if (report.hasConflicts) {
       print('');
-      print('Some files were left untouched because both sides changed.');
-      exitCode = 2;
+      print('${report.conflictCount} conflict(s) resolved with local wins.');
     }
   } on RemoteException catch (error) {
     stderr.writeln('Remote error: ${_describeRemoteError(error)}');
@@ -360,6 +364,8 @@ final class _SyncOptions {
 
     final config = SyncPairConfig(
       name: entry.name,
+      deviceId: entry.deviceId,
+      pairId: entry.id,
       localRoot: localArg == null
           ? entry.localRoot
           : _resolvePath(projectRoot, _expandUser(localArg)),
@@ -368,6 +374,13 @@ final class _SyncOptions {
       stateDir: stateArg == null
           ? runtime.stateDir
           : _resolvePath(projectRoot, _expandUser(stateArg)),
+      conflictRoot: p.join(
+        projectRoot,
+        'data',
+        'conflicts',
+        entry.deviceId,
+        entry.id,
+      ),
       timeoutSeconds: timeoutArg ?? client.timeoutSeconds,
     );
 

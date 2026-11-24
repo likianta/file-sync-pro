@@ -1,8 +1,11 @@
 /// Orchestrates snapshot loading -> plan -> apply -> snapshot update.
 library;
 
+import 'dart:io';
+
 import 'package:path/path.dart' as p;
 
+import '../data/file_store.dart';
 import '../data/snapshot_store.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
@@ -37,7 +40,8 @@ final class SyncReport {
     required this.plan,
     this.applyReport,
     this.journalPath,
-    this.conflictBackupRoot,
+    this.conflictArchiveRoot,
+    this.conflictArchives = const [],
     this.aSnapshot,
     this.bSnapshot,
   });
@@ -49,7 +53,12 @@ final class SyncReport {
   final SyncPlan plan;
   final ApplyReport? applyReport;
   final String? journalPath;
-  final String? conflictBackupRoot;
+
+  /// Directory that contains the archived remote copies for this run.
+  final String? conflictArchiveRoot;
+
+  /// Conflicts that were resolved with "local always wins" during this run.
+  final List<ConflictArchiveEntry> conflictArchives;
 
   /// Snapshots after the incremental update. No tree scan happens after a
   /// sync, so these are derived from the applied actions.
@@ -59,6 +68,31 @@ final class SyncReport {
   bool get hasConflicts => plan.conflicts.isNotEmpty;
 
   int get conflictCount => plan.conflicts.length;
+}
+
+/// One conflict resolved by keeping the local file and archiving the remote
+/// copy before it was overwritten or deleted.
+final class ConflictArchiveEntry {
+  const ConflictArchiveEntry({
+    required this.path,
+    required this.localExisted,
+    required this.remoteExisted,
+    this.localPath,
+    this.archivedRemotePath,
+  });
+
+  /// Relative POSIX path inside the sync root.
+  final String path;
+
+  final bool localExisted;
+  final bool remoteExisted;
+
+  /// Absolute path to the local winner, when the left side is a local folder.
+  final String? localPath;
+
+  /// Absolute path to the downloaded remote copy, or null when the remote
+  /// entry was missing or was not a file.
+  final String? archivedRemotePath;
 }
 
 enum ConflictSide { left, right }
@@ -96,8 +130,12 @@ final class SyncEngine {
     required this.a,
     required this.b,
     required String stateDir,
+    String? conflictRoot,
     this.onAction,
-  }) : _stateDir = p.normalize(p.absolute(stateDir));
+  }) : _stateDir = p.normalize(p.absolute(stateDir)),
+       _conflictRoot = p.normalize(
+         p.absolute(conflictRoot ?? p.join(stateDir, 'conflicts')),
+       );
 
   /// Convenience constructor for two local folders (used by tests and by
   /// "sync this Mac's folder to another local folder" scenarios).
@@ -105,6 +143,7 @@ final class SyncEngine {
     required String rootA,
     required String rootB,
     required String stateDir,
+    String? conflictRoot,
     String? snapshotBackupDir,
     String labelA = 'a',
     String labelB = 'b',
@@ -125,6 +164,7 @@ final class SyncEngine {
         defaultIgnores: defaultIgnores,
       ),
       stateDir: stateDir,
+      conflictRoot: conflictRoot,
       onAction: onAction,
     );
   }
@@ -133,6 +173,7 @@ final class SyncEngine {
   final SyncSource b;
   final ActionCallback? onAction;
   final String _stateDir;
+  final String _conflictRoot;
 
   /// Releases network resources held by the sources.
   Future<void> dispose() async {
@@ -235,16 +276,21 @@ final class SyncEngine {
       journal = null;
     }
 
-    final conflictRoot = p.join(_stateDir, 'conflicts', _timestamp());
+    final conflicts = plan.conflicts;
+    final archived = await _archiveConflicts(preview, conflicts);
+    final executionPlan = SyncPlan(
+      actions: [...plan.actions, ..._localWinsActions(preview, conflicts)],
+      conflicts: const [],
+    );
     final applier = PlanApplier(
       a: a.store,
       b: b.store,
-      conflictRoot: conflictRoot,
+      conflictRoot: p.join(_stateDir, 'conflicts'),
     );
 
     try {
       final applyReport = await applier.apply(
-        plan,
+        executionPlan,
         onAction: (action) {
           progress?.call(action);
           journal?.record(
@@ -258,14 +304,14 @@ final class SyncEngine {
       final now = DateTime.now().millisecondsSinceEpoch;
       final aCurrent = _applyActionsToCurrent(
         aSnapshot.current,
-        plan,
+        executionPlan,
         applyReport.written,
         targetsRight: false,
         updatedAt: now,
       );
       final bCurrent = _applyActionsToCurrent(
         bSnapshot.current,
-        plan,
+        executionPlan,
         applyReport.written,
         targetsRight: true,
         updatedAt: now,
@@ -273,14 +319,14 @@ final class SyncEngine {
       final aBase = _nextBase(
         previous: aSnapshot.base,
         current: aCurrent,
-        conflicts: plan.conflicts,
+        conflicts: const [],
         scope: subPath,
         updatedAt: now,
       );
       final bBase = _nextBase(
         previous: bSnapshot.base,
         current: bCurrent,
-        conflicts: plan.conflicts,
+        conflicts: const [],
         scope: subPath,
         updatedAt: now,
       );
@@ -301,8 +347,8 @@ final class SyncEngine {
       journal?.record(
         'commit',
         data: {
-          'actions': plan.actions.length,
-          'conflicts': plan.conflicts.length,
+          'actions': executionPlan.actions.length,
+          'conflicts': conflicts.length,
           'scope': ?subPath,
           if (direction != SyncDirection.both) 'direction': direction.name,
         },
@@ -313,7 +359,8 @@ final class SyncEngine {
         plan: plan,
         applyReport: applyReport,
         journalPath: journal?.path,
-        conflictBackupRoot: plan.conflicts.isEmpty ? null : conflictRoot,
+        conflictArchiveRoot: archived.root,
+        conflictArchives: archived.entries,
         aSnapshot: aAfter,
         bSnapshot: bAfter,
       );
@@ -460,6 +507,124 @@ final class SyncEngine {
       aSnapshot: aAfter,
       bSnapshot: bAfter,
     );
+  }
+
+  Future<({String? root, List<ConflictArchiveEntry> entries})>
+  _archiveConflicts(SyncPreview preview, List<SyncConflict> conflicts) async {
+    if (conflicts.isEmpty) {
+      return (root: null, entries: const <ConflictArchiveEntry>[]);
+    }
+    final root = p.join(_conflictRoot, _archiveTimestamp());
+    await Directory(root).create(recursive: true);
+    final entries = <ConflictArchiveEntry>[];
+    for (final conflict in conflicts) {
+      final aEntry = preview.a.entries[conflict.path];
+      final bEntry = preview.b.entries[conflict.path];
+      String? archivedPath;
+      if (bEntry != null && bEntry.isFile) {
+        archivedPath = p.joinAll([root, ...conflict.path.split('/')]);
+        await _copyStoreToFile(b.store, conflict.path, archivedPath);
+      }
+      entries.add(
+        ConflictArchiveEntry(
+          path: conflict.path,
+          localExisted: aEntry != null,
+          remoteExisted: bEntry != null,
+          localPath: aEntry == null ? null : _localPathFor(conflict.path),
+          archivedRemotePath: archivedPath,
+        ),
+      );
+    }
+    return (root: root, entries: entries);
+  }
+
+  String? _localPathFor(String relPath) {
+    if (!p.isAbsolute(a.id)) return null;
+    return p.joinAll([a.id, ...relPath.split('/')]);
+  }
+
+  static Future<void> _copyStoreToFile(
+    FileStore store,
+    String relPath,
+    String targetPath,
+  ) async {
+    final target = File(targetPath);
+    await target.parent.create(recursive: true);
+    final temp = File(
+      '$targetPath.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+    try {
+      final sink = temp.openWrite();
+      try {
+        await sink.addStream(store.openRead(relPath));
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      await temp.rename(targetPath);
+    } finally {
+      if (await temp.exists()) {
+        await temp.delete();
+      }
+    }
+  }
+
+  /// "Local always wins": turn each conflict into an action that overwrites or
+  /// deletes the remote entry. The remote copy has already been archived.
+  static List<SyncAction> _localWinsActions(
+    SyncPreview preview,
+    List<SyncConflict> conflicts,
+  ) {
+    final actions = <SyncAction>[];
+    for (final conflict in conflicts) {
+      final aEntry = preview.a.entries[conflict.path];
+      final bEntry = preview.b.entries[conflict.path];
+      if (aEntry == null && bEntry == null) continue;
+      if (aEntry == null) {
+        actions.add(
+          SyncAction(
+            kind: SyncActionKind.deleteRight,
+            path: conflict.path,
+            reason: ActionReason.deleted,
+            entry: bEntry,
+          ),
+        );
+        continue;
+      }
+      if (bEntry == null) {
+        actions.add(
+          SyncAction(
+            kind: SyncActionKind.createRight,
+            path: conflict.path,
+            reason: ActionReason.created,
+            entry: aEntry,
+          ),
+        );
+        continue;
+      }
+      if (aEntry.isDirectory != bEntry.isDirectory) {
+        throw StateError(
+          'Type conflict is not supported yet: ${conflict.path}',
+        );
+      }
+      if (aEntry.isDirectory) continue;
+      actions.add(
+        SyncAction(
+          kind: SyncActionKind.updateRight,
+          path: conflict.path,
+          reason: ActionReason.updated,
+          entry: aEntry,
+        ),
+      );
+    }
+    return actions;
+  }
+
+  String _archiveTimestamp() {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${now.year}${two(now.month)}${two(now.day)}-'
+        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
   }
 
   /// Builds the plan for a run: scoped two-way, or one-way.
