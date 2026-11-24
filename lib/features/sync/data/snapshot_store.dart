@@ -94,7 +94,9 @@ final class SnapshotStore {
   }
 
   Future<void> save(SideSnapshot snapshot) async {
-    final bytes = utf8.encode(jsonEncode(snapshot.toJson()));
+    final bytes = utf8.encode(
+      const JsonEncoder.withIndent('  ').convert(snapshot.toJson()),
+    );
     await store.writeAtomically(
       fileName,
       Stream.value(bytes),

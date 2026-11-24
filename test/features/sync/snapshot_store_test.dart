@@ -71,6 +71,7 @@ void main() {
     expect(text, contains('"current"'));
     expect(text, contains('"ignores"'));
     expect(text, contains('"text_hash"'));
+    expect(text, contains('\n  "base"'));
   });
 
   test('moves a legacy snapshot to the backup directory', () async {

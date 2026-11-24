@@ -203,7 +203,7 @@ final class SyncDeviceEntry {
     final rawId = json['id'] as String?;
     final id = SyncClientConfig._validDeviceId(rawId)
         ? rawId!
-        : SyncClientConfig.newDeviceId(seed: rawId ?? '$host-$port');
+        : SyncClientConfig.newDeviceId();
     final rawPairs = json['pairs'];
     final pairs = <SyncPairEntry>[];
     if (rawPairs is List) {
@@ -302,7 +302,7 @@ final class SyncPairEntry {
         : 'pair';
     final id = SyncClientConfig._validPairId(rawId)
         ? rawId!
-        : SyncClientConfig.newPairId(seed: name);
+        : SyncClientConfig.newPairId();
     final remoteRoot = SyncClientConfig._normalizeRemoteRoot(
       json['remote_root'] as String? ?? json['remoteRoot'] as String? ?? '/',
     );
@@ -549,27 +549,19 @@ final class SyncClientConfig {
     return '$trimmed $index';
   }
 
-  static String newDeviceId({String? seed}) {
-    return 'd-${_uniqueSuffix(seed)}';
-  }
+  static String newDeviceId() => _randomId('d-');
 
-  static String newPairId({String? seed}) {
-    return 'p-${_uniqueSuffix(seed)}';
-  }
+  static String newPairId() => _randomId('p-');
 
-  static String _uniqueSuffix(String? seed) {
-    final base = seed == null ? '' : _slug(seed);
-    final stamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-    final salt = Random().nextInt(1296).toRadixString(36).padLeft(2, '0');
-    final prefix = base.isEmpty
-        ? ''
-        : '${base.substring(0, min(base.length, 8))}-';
-    return '$prefix$stamp$salt';
-  }
+  static const _idAlphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-  static String _slug(String value) {
-    final slug = value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
-    return slug.isEmpty ? 'x' : slug;
+  static String _randomId(String prefix) {
+    final random = Random.secure();
+    final buffer = StringBuffer(prefix);
+    for (var i = 0; i < 8; i++) {
+      buffer.write(_idAlphabet[random.nextInt(_idAlphabet.length)]);
+    }
+    return buffer.toString();
   }
 
   static bool _validDeviceId(String? id) {
@@ -590,7 +582,7 @@ final class SyncClientConfig {
       for (final pair in device.pairs) {
         var id = pair.id;
         if (!seenPairIds.add(id)) {
-          id = newPairId(seed: pair.name);
+          id = newPairId();
           seenPairIds.add(id);
         }
         nextPairs.add(
@@ -614,7 +606,7 @@ final class SyncClientConfig {
     final uri = Uri.tryParse(remoteUrl);
     if (uri == null || uri.host.isEmpty) return null;
     return SyncDeviceEntry(
-      id: newDeviceId(seed: '${uri.host}-${uri.port}'),
+      id: newDeviceId(),
       name: uri.host,
       hostType: uri.host == '127.0.0.1' || uri.host == 'localhost'
           ? SyncHostType.local
@@ -638,7 +630,7 @@ final class SyncClientConfig {
         : (path == '/' ? 'pair' : p.posix.basename(path));
     final rawState = json['stateDir'] as String?;
     return SyncPairEntry(
-      id: newPairId(seed: name),
+      id: newPairId(),
       name: name,
       localRoot: _resolve(
         projectRoot,
