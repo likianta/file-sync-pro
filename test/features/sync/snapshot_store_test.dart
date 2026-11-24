@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/data/file_store.dart';
 import 'package:file_sync_pro/features/sync/data/snapshot_store.dart';
-import 'package:file_sync_pro/features/sync/domain/manifest.dart';
+import 'package:file_sync_pro/features/sync/domain/sync_snapshot.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -17,38 +17,107 @@ void main() {
     await temp.delete(recursive: true);
   });
 
-  test('round-trips a manifest through the snapshot file', () async {
+  test('round-trips base and current snapshots', () async {
     final store = SnapshotStore(LocalFileStore(temp.path));
-    expect(await store.load(), isNull);
+    expect((await store.load()).isMissing, isTrue);
 
-    final manifest = Manifest(
-      root: '',
-      scannedAt: DateTime.utc(2026, 1, 1),
-      entries: {
-        'docs/readme.md': ManifestEntry.file(
-          size: 5,
-          mtimeMs: 123,
-          hash: 'abc',
-          textHash: 'abd',
-        ),
-        'empty': ManifestEntry.directory(mtimeMs: 456),
-      },
+    final current = SnapshotState.fromEntries({
+      '.': FolderSnapshot(
+        mtimeMs: 111,
+        dirs: ['docs'],
+        files: {
+          'root.txt': const FileSnapshot(
+            size: 3,
+            mtimeMs: 112,
+            hash: 'raw-root',
+            textHash: 'text-root',
+          ),
+        },
+      ),
+      'docs': FolderSnapshot(
+        mtimeMs: 222,
+        files: {
+          'readme.md': const FileSnapshot(
+            size: 5,
+            mtimeMs: 223,
+            hash: 'raw-doc',
+            textHash: 'text-doc',
+          ),
+        },
+      ),
+    }, updatedAt: 1234);
+    final snapshot = SideSnapshot(
+      base: SnapshotState.empty(),
+      current: current,
     );
-    await store.save(manifest, committedAt: DateTime.utc(2026, 1, 2));
+    await store.save(snapshot);
 
     final loaded = await store.load();
-    expect(loaded, isNotNull);
-    expect(loaded!.entries.keys, ['docs/readme.md', 'empty']);
-    expect(loaded.entries['docs/readme.md']!.hash, 'abc');
-    expect(loaded.entries['docs/readme.md']!.textHash, 'abd');
-    expect(loaded.entries['empty']!.isDirectory, isTrue);
+    final result = loaded.snapshot!;
+    expect(result.base.isEmpty, isTrue);
+    expect(result.current.updatedAt, 1234);
+    expect(result.current.key, current.key);
+    expect(result.current.entries.keys, ['.', 'docs']);
+    expect(
+      result.current.entries['docs']!.files['readme.md']!.textHash,
+      'text-doc',
+    );
+
+    final text = await File(p.join(temp.path, SnapshotStore.defaultFileName))
+        .readAsString();
+    expect(text, contains('"base"'));
+    expect(text, contains('"current"'));
+    expect(text, contains('"text_hash"'));
   });
 
-  test('treats a corrupt snapshot as missing', () async {
-    final store = SnapshotStore(LocalFileStore(temp.path));
-    await File(p.join(temp.path, SnapshotStore.defaultFileName))
-        .writeAsString('not json');
+  test('moves a legacy snapshot to the backup directory', () async {
+    final origin = File(p.join(temp.path, SnapshotStore.defaultFileName));
+    await origin.writeAsString(
+      '{"schema":1,"committedAt":"2026-01-01T00:00:00Z","entries":{}}',
+    );
+    final backupDir = p.join(temp.path, 'chore');
+    final store = SnapshotStore(
+      LocalFileStore(temp.path),
+      backupDir: backupDir,
+      label: 'pair-local',
+    );
 
-    expect(await store.load(), isNull);
+    final loaded = await store.load();
+    expect(loaded.snapshot, isNull);
+    expect(loaded.legacy, isTrue);
+    expect(loaded.backupPath, isNotNull);
+    expect(File(loaded.backupPath!).existsSync(), isTrue);
+    expect(await origin.exists(), isFalse);
+    expect(
+      await File(loaded.backupPath!).readAsString(),
+      contains('"schema":1'),
+    );
+  });
+
+  test('reports legacy without a backup directory', () async {
+    final origin = File(p.join(temp.path, SnapshotStore.defaultFileName));
+    await origin.writeAsString('not json');
+    final store = SnapshotStore(LocalFileStore(temp.path));
+
+    final loaded = await store.load();
+    expect(loaded.snapshot, isNull);
+    expect(loaded.legacy, isTrue);
+    expect(loaded.backupPath, isNull);
+    expect(await origin.exists(), isTrue);
+  });
+
+  test('changes the key when entries change', () {
+    FolderSnapshot folder(String hash) {
+      return FolderSnapshot(
+        mtimeMs: 1,
+        files: {'a.txt': FileSnapshot(size: 1, mtimeMs: 1, hash: hash)},
+      );
+    }
+
+    final first = SnapshotState.fromEntries({'.': folder('one')}, updatedAt: 1);
+    final second = SnapshotState.fromEntries({
+      '.': folder('two'),
+    }, updatedAt: 2);
+    expect(first.key, isNot(second.key));
   });
 }

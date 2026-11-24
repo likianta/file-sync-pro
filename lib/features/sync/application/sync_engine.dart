@@ -1,4 +1,4 @@
-/// Orchestrates scan -> plan -> apply -> commit for a sync pair.
+/// Orchestrates snapshot loading -> plan -> apply -> snapshot update.
 library;
 
 import 'package:path/path.dart' as p;
@@ -7,6 +7,7 @@ import '../data/snapshot_store.dart';
 import '../domain/ignore_rules.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
+import '../domain/sync_snapshot.dart';
 import 'plan_applier.dart';
 import 'sync_journal.dart';
 import 'sync_source.dart';
@@ -35,10 +36,11 @@ final class SyncReport {
   const SyncReport({
     required this.preview,
     required this.plan,
-    required this.dryRun,
     this.applyReport,
     this.journalPath,
     this.conflictBackupRoot,
+    this.aSnapshot,
+    this.bSnapshot,
   });
 
   final SyncPreview preview;
@@ -46,28 +48,18 @@ final class SyncReport {
   /// The plan that was actually executed. It can be a subtree or a one-way
   /// variant of [preview]'s full plan.
   final SyncPlan plan;
-  final bool dryRun;
   final ApplyReport? applyReport;
   final String? journalPath;
   final String? conflictBackupRoot;
 
+  /// Snapshots after the incremental update. No tree scan happens after a
+  /// sync, so these are derived from the applied actions.
+  final SideSnapshot? aSnapshot;
+  final SideSnapshot? bSnapshot;
+
   bool get hasConflicts => plan.conflicts.isNotEmpty;
 
   int get conflictCount => plan.conflicts.length;
-}
-
-final class SyncDivergenceException implements Exception {
-  SyncDivergenceException(this.paths);
-
-  final List<String> paths;
-
-  @override
-  String toString() {
-    final preview = paths.take(10).join(', ');
-    final suffix = paths.length > 10 ? '...' : '';
-    return 'SyncDivergenceException(${paths.length} paths): '
-        '$preview$suffix';
-  }
 }
 
 enum ConflictSide { left, right }
@@ -90,10 +82,14 @@ final class ConflictResolutionReport {
   const ConflictResolutionReport({
     required this.resolved,
     required this.remaining,
+    this.aSnapshot,
+    this.bSnapshot,
   });
 
   final int resolved;
   final int remaining;
+  final SideSnapshot? aSnapshot;
+  final SideSnapshot? bSnapshot;
 }
 
 final class SyncEngine {
@@ -112,11 +108,26 @@ final class SyncEngine {
     required String stateDir,
     IgnoreRules? ignores,
     bool computeHashes = true,
+    String? snapshotBackupDir,
+    String labelA = 'a',
+    String labelB = 'b',
     ActionCallback? onAction,
   }) {
     return SyncEngine(
-      a: LocalSyncSource(rootA, ignores: ignores, computeHashes: computeHashes),
-      b: LocalSyncSource(rootB, ignores: ignores, computeHashes: computeHashes),
+      a: LocalSyncSource(
+        rootA,
+        ignores: ignores,
+        computeHashes: computeHashes,
+        snapshotBackupDir: snapshotBackupDir,
+        snapshotLabel: labelA,
+      ),
+      b: LocalSyncSource(
+        rootB,
+        ignores: ignores,
+        computeHashes: computeHashes,
+        snapshotBackupDir: snapshotBackupDir,
+        snapshotLabel: labelB,
+      ),
       stateDir: stateDir,
       onAction: onAction,
     );
@@ -127,36 +138,61 @@ final class SyncEngine {
   final ActionCallback? onAction;
   final String _stateDir;
 
-  /// Per-side snapshots, stored inside each synced folder so any device that
-  /// can reach the folder can reuse them.
-  late final SnapshotStore _snapshotA = SnapshotStore(a.store);
-  late final SnapshotStore _snapshotB = SnapshotStore(b.store);
-
   /// Releases network resources held by the sources.
   Future<void> dispose() async {
     await a.close();
     await b.close();
   }
 
-  /// Scans both sides and builds a plan without touching the disk.
-  ///
-  /// When [subPath] is set, only that node's subtree is scanned and compared.
-  Future<SyncPreview> preview({
+  /// Reads both `.file_sync_shot.json` files. No folder is scanned here.
+  Future<({SnapshotLoadResult a, SnapshotLoadResult b})> loadSnapshots() async {
+    final results = await Future.wait([a.loadSnapshot(), b.loadSnapshot()]);
+    return (a: results[0], b: results[1]);
+  }
+
+  /// Scans only one side, either the whole root or one folder subtree.
+  Future<SideSnapshot> scanSide({
+    required bool left,
     String? subPath,
+    bool createIfMissing = false,
+    void Function(int scanned)? onProgress,
+  }) {
+    final source = left ? a : b;
+    return source.scanSnapshot(
+      subPath: subPath,
+      createIfMissing: createIfMissing,
+      onProgress: onProgress,
+    );
+  }
+
+  /// Scans both roots, used when the pair has no usable snapshot yet.
+  Future<({SideSnapshot a, SideSnapshot b})> scanBoth({
+    bool createIfMissing = false,
     void Function(ScanPhase phase, int scanned)? onProgress,
   }) async {
-    final scope = subPath == null || subPath.isEmpty ? null : subPath;
-    final snapshots = await _loadSnapshots();
-    final aManifest = await a.scan(
-      subPath: scope,
+    final aSnapshot = await scanSide(
+      left: true,
+      createIfMissing: createIfMissing,
       onProgress: (scanned) => onProgress?.call(ScanPhase.local, scanned),
     );
-    final bManifest = await b.scan(
-      subPath: scope,
+    final bSnapshot = await scanSide(
+      left: false,
+      createIfMissing: createIfMissing,
       onProgress: (scanned) => onProgress?.call(ScanPhase.remote, scanned),
     );
-    final baseA = _scopeSnapshot(snapshots.a, scope);
-    final baseB = _scopeSnapshot(snapshots.b, scope);
+    return (a: aSnapshot, b: bSnapshot);
+  }
+
+  /// Plans from snapshots only. Nothing is read from the filesystem here.
+  SyncPreview planFromSnapshots(
+    SideSnapshot aSnapshot,
+    SideSnapshot bSnapshot, {
+    String? subPath,
+  }) {
+    final aManifest = aSnapshot.current.toManifest(root: a.id);
+    final bManifest = bSnapshot.current.toManifest(root: b.id);
+    final baseA = aSnapshot.base.toManifest(root: a.id);
+    final baseB = bSnapshot.base.toManifest(root: b.id);
     final plan = SyncPlanner.plan(
       base: baseA,
       baseB: baseB,
@@ -168,42 +204,18 @@ final class SyncEngine {
       baseB: baseB,
       a: aManifest,
       b: bManifest,
-      plan: plan,
+      plan: _scopePlan(plan, subPath),
     );
   }
 
-  /// Applies the plan and writes a snapshot into each synced folder.
+  /// Applies the plan and updates both snapshots incrementally.
   ///
-  /// Conflicting paths are left untouched on both sides and their old snapshot
-  /// entries are preserved, so they keep showing up until resolved.
-  ///
-  /// [subPath] restricts the run to one node's subtree (a folder or a file).
-  /// [direction] turns the run into a one-way copy, ignoring conflicts.
-  Future<SyncReport> sync({
-    bool dryRun = false,
-    SyncDirection direction = SyncDirection.both,
-    String? subPath,
-    ActionCallback? onAction,
-  }) async {
-    final preview = await this.preview();
-    if (dryRun) {
-      return SyncReport(
-        preview: preview,
-        plan: _planFor(preview, direction: direction, subPath: subPath),
-        dryRun: true,
-      );
-    }
-    return execute(
-      preview,
-      direction: direction,
-      subPath: subPath,
-      onAction: onAction,
-    );
-  }
-
-  /// Executes a previously computed preview without scanning again.
+  /// The folders are not scanned again. File metadata comes from the write
+  /// result, and directory changes come from the plan itself.
   Future<SyncReport> execute(
     SyncPreview preview, {
+    required SideSnapshot aSnapshot,
+    required SideSnapshot bSnapshot,
     SyncDirection direction = SyncDirection.both,
     String? subPath,
     ActionCallback? onAction,
@@ -239,22 +251,41 @@ final class SyncEngine {
         },
       );
 
-      final aAfter = await a.scan();
-      final bAfter = await b.scan();
-      final conflictPaths = {
-        for (final conflict in plan.conflicts) conflict.path,
-      };
-      _verifyConvergence(aAfter, bAfter, conflictPaths, subPath: subPath);
-
-      final committedAt = DateTime.now();
-      await _saveSnapshots(
-        aAfter: aAfter,
-        bAfter: bAfter,
-        preview: preview,
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final aCurrent = _applyActionsToCurrent(
+        aSnapshot.current,
+        plan,
+        applyReport.written,
+        targetsRight: false,
+        updatedAt: now,
+      );
+      final bCurrent = _applyActionsToCurrent(
+        bSnapshot.current,
+        plan,
+        applyReport.written,
+        targetsRight: true,
+        updatedAt: now,
+      );
+      final aBase = _nextBase(
+        previous: aSnapshot.base,
+        current: aCurrent,
         conflicts: plan.conflicts,
         scope: subPath,
-        committedAt: committedAt,
+        updatedAt: now,
       );
+      final bBase = _nextBase(
+        previous: bSnapshot.base,
+        current: bCurrent,
+        conflicts: plan.conflicts,
+        scope: subPath,
+        updatedAt: now,
+      );
+
+      final aAfter = SideSnapshot(base: aBase, current: aCurrent);
+      final bAfter = SideSnapshot(base: bBase, current: bCurrent);
+      await a.saveSnapshot(aAfter);
+      await b.saveSnapshot(bAfter);
+
       journal?.record(
         'commit',
         data: {
@@ -268,10 +299,11 @@ final class SyncEngine {
       return SyncReport(
         preview: preview,
         plan: plan,
-        dryRun: false,
         applyReport: applyReport,
         journalPath: journal?.path,
         conflictBackupRoot: plan.conflicts.isEmpty ? null : conflictRoot,
+        aSnapshot: aAfter,
+        bSnapshot: bAfter,
       );
     } catch (error) {
       journal?.record('error', data: {'message': error.toString()});
@@ -290,9 +322,11 @@ final class SyncEngine {
   /// The unselected side's content is already preserved in the conflict
   /// backup folder created by the previous sync.
   Future<ConflictResolutionReport> resolveConflicts(
-    SyncPreview preview,
-    Map<String, ConflictSide> choices,
-  ) async {
+    SyncPreview preview, {
+    required SideSnapshot aSnapshot,
+    required SideSnapshot bSnapshot,
+    required Map<String, ConflictSide> choices,
+  }) async {
     final conflicts = {
       for (final conflict in preview.plan.conflicts) conflict.path: conflict,
     };
@@ -355,137 +389,63 @@ final class SyncEngine {
       resolvedPaths.add(path);
     }
 
+    var applyReport = const ApplyReport();
     if (actions.isNotEmpty) {
       final applier = PlanApplier(
         a: a.store,
         b: b.store,
         conflictRoot: p.join(_stateDir, 'conflicts', _timestamp()),
       );
-      await applier.apply(SyncPlan(actions: actions, conflicts: const []));
+      applyReport = await applier.apply(
+        SyncPlan(actions: actions, conflicts: const []),
+      );
     }
 
-    final aAfter = await a.scan();
-    final bAfter = await b.scan();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final plan = SyncPlan(actions: actions, conflicts: const []);
+    final aCurrent = _applyActionsToCurrent(
+      aSnapshot.current,
+      plan,
+      applyReport.written,
+      targetsRight: false,
+      updatedAt: now,
+    );
+    final bCurrent = _applyActionsToCurrent(
+      bSnapshot.current,
+      plan,
+      applyReport.written,
+      targetsRight: true,
+      updatedAt: now,
+    );
+
+    final aBaseEntries = _copyFolders(aSnapshot.base.entries);
+    final bBaseEntries = _copyFolders(bSnapshot.base.entries);
+    for (final path in resolvedPaths) {
+      _copyPath(aCurrent.entries, aBaseEntries, path);
+      _copyPath(bCurrent.entries, bBaseEntries, path);
+    }
+
+    final aAfter = SideSnapshot(
+      base: SnapshotState.fromEntries(aBaseEntries, updatedAt: now),
+      current: aCurrent,
+    );
+    final bAfter = SideSnapshot(
+      base: SnapshotState.fromEntries(bBaseEntries, updatedAt: now),
+      current: bCurrent,
+    );
+    await a.saveSnapshot(aAfter);
+    await b.saveSnapshot(bAfter);
+
     final remaining = conflicts.keys
         .where((path) => !resolvedPaths.contains(path))
         .toSet();
-    _verifyConvergence(aAfter, bAfter, remaining);
-
-    final unresolved = preview.plan.conflicts
-        .where((conflict) => remaining.contains(conflict.path))
-        .toList();
-    await _saveSnapshots(
-      aAfter: aAfter,
-      bAfter: bAfter,
-      preview: preview,
-      conflicts: unresolved,
-      scope: null,
-      committedAt: DateTime.now(),
-    );
 
     return ConflictResolutionReport(
       resolved: resolvedPaths.length,
       remaining: remaining.length,
+      aSnapshot: aAfter,
+      bSnapshot: bAfter,
     );
-  }
-
-  Future<({Manifest a, Manifest b})> _loadSnapshots() async {
-    final snapshotA = await _snapshotA.load();
-    final snapshotB = await _snapshotB.load();
-    return (
-      a: snapshotA ?? Manifest.empty(root: a.id),
-      b: snapshotB ?? Manifest.empty(root: b.id),
-    );
-  }
-
-  /// Writes each side's snapshot after a successful sync.
-  ///
-  /// Unlike a shared base, each snapshot is expressed in that device's own
-  /// manifest terms (hashes, mtimes and line endings as that device sees
-  /// them). Unresolved conflicts keep their old snapshot entries so they keep
-  /// showing up until resolved.
-  Future<void> _saveSnapshots({
-    required Manifest aAfter,
-    required Manifest bAfter,
-    required SyncPreview preview,
-    required List<SyncConflict> conflicts,
-    required String? scope,
-    required DateTime committedAt,
-  }) async {
-    await _snapshotA.save(
-      _nextSnapshot(
-        after: aAfter,
-        previous: preview.baseA,
-        conflicts: conflicts,
-        scope: scope,
-      ),
-      committedAt: committedAt,
-    );
-    await _snapshotB.save(
-      _nextSnapshot(
-        after: bAfter,
-        previous: preview.baseB,
-        conflicts: conflicts,
-        scope: scope,
-      ),
-      committedAt: committedAt,
-    );
-  }
-
-  /// Builds the next snapshot for one side.
-  ///
-  /// When [scope] is set only that subtree is replaced; entries outside it are
-  /// kept from the previous snapshot, because a partial sync must not mark
-  /// unrelated local changes as already synced.
-  Manifest _nextSnapshot({
-    required Manifest after,
-    required Manifest previous,
-    required List<SyncConflict> conflicts,
-    required String? scope,
-  }) {
-    final entries = Map<String, ManifestEntry>.of(previous.entries);
-    entries.removeWhere((path, _) => _inScope(path, scope));
-    for (final entry in after.entries.entries) {
-      if (_inScope(entry.key, scope)) {
-        entries[entry.key] = entry.value;
-      }
-    }
-    for (final conflict in conflicts) {
-      final old = previous.entries[conflict.path];
-      if (old == null) {
-        entries.remove(conflict.path);
-      } else {
-        entries[conflict.path] = old;
-      }
-    }
-    return Manifest(
-      root: after.root,
-      scannedAt: DateTime.now(),
-      entries: entries,
-    );
-  }
-
-  void _verifyConvergence(
-    Manifest aAfter,
-    Manifest bAfter,
-    Set<String> conflictPaths, {
-    String? subPath,
-  }) {
-    final paths = <String>{...aAfter.entries.keys, ...bAfter.entries.keys}
-      ..removeWhere(conflictPaths.contains)
-      ..removeWhere((path) => !_inScope(path, subPath));
-
-    final diverged = <String>[];
-    for (final path in paths) {
-      final aEntry = aAfter.entries[path];
-      final bEntry = bAfter.entries[path];
-      if (aEntry == null || bEntry == null || !aEntry.sameContent(bEntry)) {
-        diverged.add(path);
-      }
-    }
-    if (diverged.isNotEmpty) {
-      throw SyncDivergenceException(diverged..sort());
-    }
   }
 
   /// Builds the plan for a run: scoped two-way, or one-way.
@@ -591,22 +551,212 @@ final class SyncEngine {
     return SyncPlan(actions: actions, conflicts: const []);
   }
 
+  /// Applies executed actions to one side's `current` snapshot.
+  static SnapshotState _applyActionsToCurrent(
+    SnapshotState current,
+    SyncPlan plan,
+    Map<String, AppliedFile> written, {
+    required bool targetsRight,
+    required int updatedAt,
+  }) {
+    final entries = _copyFolders(current.entries);
+    for (final action in plan.actions) {
+      if (action.targetsRight != targetsRight) continue;
+      if (action.isDelete) {
+        if (action.isDirectory) {
+          _removeFolder(entries, action.path);
+        } else {
+          _removeFile(entries, action.path);
+        }
+        continue;
+      }
+      if (action.isDirectory) {
+        _ensureFolder(
+          entries,
+          action.path,
+          mtimeMs: action.entry?.mtimeMs ?? updatedAt,
+        );
+        continue;
+      }
+      final applied = written[action.path];
+      if (applied == null) continue;
+      _putFile(
+        entries,
+        action.path,
+        FileSnapshot(
+          size: applied.size,
+          mtimeMs: applied.mtimeMs,
+          hash: applied.hash,
+          textHash: applied.textHash,
+        ),
+      );
+    }
+    return SnapshotState.fromEntries(entries, updatedAt: updatedAt);
+  }
+
+  /// Advances `base` to the new state, keeping conflict paths at their old
+  /// baseline so they keep showing up until resolved.
+  static SnapshotState _nextBase({
+    required SnapshotState previous,
+    required SnapshotState current,
+    required List<SyncConflict> conflicts,
+    required String? scope,
+    required int updatedAt,
+  }) {
+    final entries = _copyFolders(previous.entries);
+    if (scope == null || scope.isEmpty) {
+      entries
+        ..clear()
+        ..addAll(_copyFolders(current.entries));
+    } else {
+      _removePath(entries, scope);
+      _copyPath(current.entries, entries, scope);
+    }
+
+    for (final conflict in conflicts) {
+      if (!_inScope(conflict.path, scope)) continue;
+      _removePath(entries, conflict.path);
+      _restorePath(entries, previous.entries, conflict.path);
+    }
+
+    return SnapshotState.fromEntries(entries, updatedAt: updatedAt);
+  }
+
+  static Map<String, FolderSnapshot> _copyFolders(
+    Map<String, FolderSnapshot> source,
+  ) {
+    return {
+      for (final entry in source.entries)
+        entry.key: entry.value.copyWith(
+          dirs: [...entry.value.dirs],
+          files: {...entry.value.files},
+        ),
+    };
+  }
+
+  static void _ensureFolder(
+    Map<String, FolderSnapshot> entries,
+    String path, {
+    int? mtimeMs,
+  }) {
+    if (path.isEmpty) {
+      entries.putIfAbsent('.', () => FolderSnapshot(mtimeMs: mtimeMs ?? 0));
+      return;
+    }
+    if (entries.containsKey(path)) return;
+
+    entries[path] = FolderSnapshot(mtimeMs: mtimeMs ?? 0);
+    final parent = parentScope(path);
+    _ensureFolder(entries, parent);
+    final parentKey = folderKey(parent);
+    final parentFolder = entries[parentKey]!;
+    entries[parentKey] = parentFolder.copyWith(
+      dirs: {...parentFolder.dirs, baseName(path)}.toList(),
+    );
+  }
+
+  static void _putFile(
+    Map<String, FolderSnapshot> entries,
+    String path,
+    FileSnapshot file,
+  ) {
+    final parent = parentScope(path);
+    _ensureFolder(entries, parent);
+    final parentKey = folderKey(parent);
+    final folder = entries[parentKey]!;
+    entries[parentKey] = folder.copyWith(
+      files: {...folder.files, baseName(path): file},
+    );
+  }
+
+  static void _removeFile(Map<String, FolderSnapshot> entries, String path) {
+    final parentKey = folderKey(parentScope(path));
+    final folder = entries[parentKey];
+    if (folder == null) return;
+    final files = {...folder.files}..remove(baseName(path));
+    entries[parentKey] = folder.copyWith(files: files);
+  }
+
+  static void _removeFolder(Map<String, FolderSnapshot> entries, String path) {
+    if (path.isEmpty) return;
+    entries.removeWhere(
+      (candidate, _) => candidate == path || candidate.startsWith('$path/'),
+    );
+    final parentKey = folderKey(parentScope(path));
+    final parent = entries[parentKey];
+    if (parent == null) return;
+    entries[parentKey] = parent.copyWith(
+      dirs: parent.dirs.where((name) => name != baseName(path)).toList(),
+    );
+  }
+
+  /// Removes either a file or a folder subtree at [path].
+  static void _removePath(Map<String, FolderSnapshot> entries, String path) {
+    if (entries.containsKey(folderKey(path))) {
+      _removeFolder(entries, path);
+    } else {
+      _removeFile(entries, path);
+    }
+  }
+
+  /// Copies [path] from [source] into [target], preserving its kind.
+  static void _copyPath(
+    Map<String, FolderSnapshot> source,
+    Map<String, FolderSnapshot> target,
+    String path,
+  ) {
+    final key = folderKey(path);
+    final folder = source[key];
+    if (folder != null) {
+      _removeFolder(target, path);
+      target[key] = folder.copyWith(
+        dirs: [...folder.dirs],
+        files: {...folder.files},
+      );
+      for (final entry in source.entries) {
+        if (entry.key.startsWith('$key/')) {
+          target[entry.key] = entry.value.copyWith(
+            dirs: [...entry.value.dirs],
+            files: {...entry.value.files},
+          );
+        }
+      }
+      _linkFolder(target, path);
+      return;
+    }
+
+    _removeFile(target, path);
+    final parent = parentScope(path);
+    final parentFolder = source[folderKey(parent)];
+    final file = parentFolder?.files[baseName(path)];
+    if (file == null) return;
+    _putFile(target, path, file);
+  }
+
+  /// Restores the old base entry for a conflict path, if it existed.
+  static void _restorePath(
+    Map<String, FolderSnapshot> target,
+    Map<String, FolderSnapshot> oldBase,
+    String path,
+  ) {
+    _copyPath(oldBase, target, path);
+  }
+
+  /// Adds [path] to its parent's `dirs` list when the folder exists.
+  static void _linkFolder(Map<String, FolderSnapshot> entries, String path) {
+    if (path.isEmpty) return;
+    final parentKey = folderKey(parentScope(path));
+    final parent = entries[parentKey];
+    if (parent == null) return;
+    entries[parentKey] = parent.copyWith(
+      dirs: {...parent.dirs, baseName(path)}.toList(),
+    );
+  }
+
   /// True when [path] is [scope] itself, or lives below it.
   static bool _inScope(String path, String? scope) {
     if (scope == null || scope.isEmpty) return true;
     return path == scope || path.startsWith('$scope/');
-  }
-
-  static Manifest _scopeSnapshot(Manifest manifest, String? scope) {
-    if (scope == null) return manifest;
-    return Manifest(
-      root: manifest.root,
-      scannedAt: manifest.scannedAt,
-      entries: {
-        for (final entry in manifest.entries.entries)
-          if (_inScope(entry.key, scope)) entry.key: entry.value,
-      },
-    );
   }
 
   static String _timestamp() {

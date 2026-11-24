@@ -14,7 +14,10 @@ import 'dart:math';
 import 'package:path/path.dart' as p;
 
 import '../../sync/data/file_hash_cache.dart';
+import '../../sync/data/file_store.dart';
 import '../../sync/data/local_scanner.dart';
+import '../../sync/data/snapshot_manager.dart';
+import '../../sync/data/snapshot_store.dart';
 import '../../sync/domain/ignore_rules.dart';
 import '../protocol.dart';
 
@@ -152,6 +155,9 @@ final class FileServer {
       case ServerRoute.manifest:
         _requireMethod(request, 'GET');
         return _manifest(request, mount, relPath);
+      case ServerRoute.snapshot:
+        _requireMethod(request, 'POST');
+        return _snapshot(request, mount, relPath);
       case ServerRoute.file:
         return _file(request, mount, relPath);
       case ServerRoute.directory:
@@ -161,6 +167,37 @@ final class FileServer {
         return _stat(request, mount, relPath);
       default:
         throw const _HttpError(404, 'Unknown operation');
+    }
+  }
+
+  Future<int> _snapshot(
+    HttpRequest request,
+    FileServerMount mount,
+    String relPath,
+  ) async {
+    await _resolve(mount, relPath, rejectLinks: true);
+    final mode = request.uri.queryParameters['mode'] ?? 'refresh';
+    final manager = LocalSnapshotManager(
+      root: mount.root,
+      store: SnapshotStore(LocalFileStore(mount.root)),
+      ignores: mount.ignores,
+      hashCache: _hashCache,
+    );
+    try {
+      final snapshot = await manager.scan(
+        subPath: relPath.isEmpty ? null : relPath,
+        createIfMissing: mode == 'init',
+      );
+      return await _sendJson(request, snapshot.toJson());
+    } on SnapshotLegacyException {
+      throw const _HttpError(
+        409,
+        'Legacy snapshot must be migrated by the client',
+      );
+    } on SnapshotMissingException {
+      throw const _HttpError(409, 'Snapshot missing');
+    } on SnapshotPathException catch (error) {
+      throw _HttpError(404, error.message);
     }
   }
 

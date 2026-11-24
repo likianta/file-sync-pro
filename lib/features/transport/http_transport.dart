@@ -69,6 +69,22 @@ final class HttpTransport {
     });
   }
 
+  Future<Map<String, Object?>> postJson(
+    String operation, {
+    Map<String, String>? query,
+  }) {
+    return _retry(() async {
+      final request = await _open('POST', operation, query: query);
+      request.contentLength = 0;
+      final response = await request.close().timeout(timeout);
+      final text = await _readText(response);
+      if (response.statusCode >= 400) {
+        throw RemoteException(response.statusCode, _errorMessage(text));
+      }
+      return _asJsonMap(text);
+    });
+  }
+
   /// Returns the status code for non-server errors so callers can treat
   /// "not found" or "directory not empty" as ordinary outcomes.
   Future<int> delete(String operation, {Map<String, String>? query}) {

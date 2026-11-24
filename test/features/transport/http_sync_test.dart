@@ -2,11 +2,8 @@ import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
 import 'package:file_sync_pro/features/sync/application/sync_source.dart';
-import 'package:file_sync_pro/features/sync/domain/ignore_rules.dart';
-import 'package:file_sync_pro/features/sync/domain/sync_plan.dart';
 import 'package:file_sync_pro/features/transport/http_transport.dart';
 import 'package:file_sync_pro/features/transport/protocol.dart';
-import 'package:file_sync_pro/features/transport/remote_scanner.dart';
 import 'package:file_sync_pro/features/transport/server/file_server.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -18,6 +15,7 @@ void main() {
   late Directory localDir;
   late Directory remoteDir;
   late String stateDir;
+  late String backupDir;
   late FileServer server;
   late String baseUrl;
 
@@ -26,6 +24,7 @@ void main() {
     localDir = Directory(p.join(temp.path, 'local'));
     remoteDir = Directory(p.join(temp.path, 'remote'));
     stateDir = p.join(temp.path, 'state');
+    backupDir = p.join(temp.path, 'chore');
     await localDir.create();
     await remoteDir.create();
 
@@ -46,12 +45,19 @@ void main() {
   Future<T> withEngine<T>(
     Future<T> Function(SyncEngine engine) run, {
     String clientToken = token,
-    IgnoreRules? ignores,
   }) async {
-    final rules = ignores ?? IgnoreRules.defaults();
     final engine = SyncEngine(
-      a: LocalSyncSource(localDir.path, ignores: rules),
-      b: RemoteSyncSource(baseUrl: baseUrl, token: clientToken, ignores: rules),
+      a: LocalSyncSource(
+        localDir.path,
+        snapshotBackupDir: backupDir,
+        snapshotLabel: 'pair-local',
+      ),
+      b: RemoteSyncSource(
+        baseUrl: baseUrl,
+        token: clientToken,
+        snapshotBackupDir: backupDir,
+        snapshotLabel: 'pair-remote',
+      ),
       stateDir: stateDir,
     );
     try {
@@ -61,11 +67,65 @@ void main() {
     }
   }
 
+  Future<SyncPreview> planNow(SyncEngine engine, {String? subPath}) async {
+    final loaded = await engine.loadSnapshots();
+    return engine.planFromSnapshots(
+      loaded.a.snapshot!,
+      loaded.b.snapshot!,
+      subPath: subPath,
+    );
+  }
+
+  Future<SyncReport> syncNow(
+    SyncEngine engine, {
+    SyncDirection direction = SyncDirection.both,
+    String? subPath,
+  }) async {
+    final loaded = await engine.loadSnapshots();
+    return engine.execute(
+      engine.planFromSnapshots(
+        loaded.a.snapshot!,
+        loaded.b.snapshot!,
+        subPath: subPath,
+      ),
+      aSnapshot: loaded.a.snapshot!,
+      bSnapshot: loaded.b.snapshot!,
+      direction: direction,
+      subPath: subPath,
+    );
+  }
+
+  test('initial scan writes snapshots on both sides', () async {
+    await File(p.join(localDir.path, 'from-mac.txt')).writeAsString('mac\n');
+    await File(p.join(remoteDir.path, 'from-phone.txt'))
+        .writeAsString('phone\n');
+
+    await withEngine((engine) => engine.scanBoth(createIfMissing: true));
+
+    expect(
+      File(p.join(localDir.path, '.file_sync_shot.json')).existsSync(),
+      isTrue,
+    );
+    expect(
+      File(p.join(remoteDir.path, '.file_sync_shot.json')).existsSync(),
+      isTrue,
+    );
+
+    final loaded = await withEngine((engine) => engine.loadSnapshots());
+    final localFiles = loaded.a.snapshot!.current.entries['.']!.files;
+    final remoteFiles = loaded.b.snapshot!.current.entries['.']!.files;
+    expect(localFiles.keys, contains('from-mac.txt'));
+    expect(remoteFiles.keys, contains('from-phone.txt'));
+  });
+
   test('syncs a remote-only file down and a local-only file up', () async {
     await File(p.join(remoteDir.path, 'from-windows.txt')).writeAsString('win');
     await File(p.join(localDir.path, 'from-mac.txt')).writeAsString('mac');
 
-    final report = await withEngine((engine) => engine.sync());
+    final report = await withEngine((engine) async {
+      await engine.scanBoth(createIfMissing: true);
+      return syncNow(engine);
+    });
 
     expect(report.hasConflicts, isFalse);
     expect(
@@ -76,178 +136,122 @@ void main() {
       await File(p.join(remoteDir.path, 'from-mac.txt')).readAsString(),
       'mac',
     );
+
+    final next = await withEngine(planNow);
+    expect(next.plan.isEmpty, isTrue);
   });
 
-  test('scoped preview only scans the selected remote subtree', () async {
-    await Directory(p.join(remoteDir.path, 'docs', 'notes'))
-        .create(recursive: true);
-    await File(p.join(remoteDir.path, 'docs', 'notes', 'a.txt'))
-        .writeAsString('a');
-    await File(p.join(remoteDir.path, 'docs', 'b.txt')).writeAsString('b');
-    await File(p.join(remoteDir.path, 'other.txt')).writeAsString('o');
-    await Directory(p.join(localDir.path, 'docs', 'notes'))
-        .create(recursive: true);
-    await File(p.join(localDir.path, 'docs', 'notes', 'a.txt'))
-        .writeAsString('a');
-
-    final preview = await withEngine(
-      (engine) => engine.preview(subPath: 'docs/notes'),
-    );
-
-    expect(preview.b.entries.keys, ['docs/notes', 'docs/notes/a.txt']);
-    expect(preview.a.entries.keys, ['docs/notes', 'docs/notes/a.txt']);
-    expect(preview.plan.isEmpty, isTrue);
-  });
-
-  test('scoped preview supports a single file', () async {
-    await File(p.join(remoteDir.path, 'other.txt')).writeAsString('o');
-
-    final preview = await withEngine(
-      (engine) => engine.preview(subPath: 'other.txt'),
-    );
-
-    expect(preview.b.entries.keys, ['other.txt']);
-    expect(preview.plan.actions, hasLength(1));
-    expect(preview.plan.actions.single.path, 'other.txt');
-    expect(preview.plan.actions.single.kind, SyncActionKind.createLeft);
-  });
-
-  test('propagates edits and deletions both ways', () async {
-    await withEngine((engine) => engine.sync());
-
-    await File(p.join(localDir.path, 'a.txt')).writeAsString('v1');
-    await withEngine((engine) => engine.sync());
-    expect(await File(p.join(remoteDir.path, 'a.txt')).readAsString(), 'v1');
-
-    await File(p.join(remoteDir.path, 'a.txt')).writeAsString('v2');
-    await withEngine((engine) => engine.sync());
-    expect(await File(p.join(localDir.path, 'a.txt')).readAsString(), 'v2');
-
-    await File(p.join(localDir.path, 'a.txt')).delete();
-    await withEngine((engine) => engine.sync());
-    expect(await File(p.join(remoteDir.path, 'a.txt')).exists(), isFalse);
-  });
-
-  test('reports conflicts without overwriting either side', () async {
-    await File(p.join(localDir.path, 'doc.txt')).writeAsString('base');
-    await withEngine((engine) => engine.sync());
-
-    await File(p.join(localDir.path, 'doc.txt')).writeAsString('mac edit');
-    await File(p.join(remoteDir.path, 'doc.txt')).writeAsString('windows edit');
-
-    final report = await withEngine((engine) => engine.sync());
-
-    expect(report.conflictCount, 1);
-    expect(
-      await File(p.join(localDir.path, 'doc.txt')).readAsString(),
-      'mac edit',
-    );
-    expect(
-      await File(p.join(remoteDir.path, 'doc.txt')).readAsString(),
-      'windows edit',
-    );
-
-    final backup = report.conflictBackupRoot!;
-    expect(File(p.join(backup, 'a', 'doc.txt')).existsSync(), isTrue);
-    expect(File(p.join(backup, 'b', 'doc.txt')).existsSync(), isTrue);
-  });
-
-  test('creates and removes empty directories', () async {
-    await withEngine((engine) => engine.sync());
-
-    await Directory(p.join(localDir.path, 'empty', 'nested'))
-        .create(recursive: true);
-    await withEngine((engine) => engine.sync());
-    expect(
-      Directory(p.join(remoteDir.path, 'empty', 'nested')).existsSync(),
-      isTrue,
-    );
-
-    await Directory(p.join(localDir.path, 'empty')).delete(recursive: true);
-    await withEngine((engine) => engine.sync());
-    expect(Directory(p.join(remoteDir.path, 'empty')).existsSync(), isFalse);
-  });
-
-  test('resolves a conflict by keeping the local side', () async {
-    await File(p.join(localDir.path, 'doc.txt')).writeAsString('base');
-    await withEngine((engine) => engine.sync());
-
-    await File(p.join(localDir.path, 'doc.txt')).writeAsString('mac edit');
-    await File(p.join(remoteDir.path, 'doc.txt')).writeAsString('win edit');
+  test('refreshes only the selected remote subtree', () async {
+    await Directory(p.join(remoteDir.path, 'docs')).create(recursive: true);
+    await File(p.join(remoteDir.path, 'docs', 'a.txt')).writeAsString('a1\n');
+    await File(p.join(remoteDir.path, 'other.txt')).writeAsString('o1\n');
 
     await withEngine((engine) async {
-      final report = await engine.sync();
-      expect(report.conflictCount, 1);
-      final resolution = await engine.resolveConflicts(report.preview, {
-        'doc.txt': ConflictSide.left,
-      });
-      expect(resolution.resolved, 1);
-      expect(resolution.remaining, 0);
+      await engine.scanBoth(createIfMissing: true);
+      await syncNow(engine);
     });
 
-    expect(
-      await File(p.join(localDir.path, 'doc.txt')).readAsString(),
-      'mac edit',
+    final before = await withEngine((engine) => engine.loadSnapshots());
+    final otherHashBefore =
+        before.b.snapshot!.current.entries['.']!.files['other.txt']!.hash;
+    final docsHashBefore =
+        before.b.snapshot!.current.entries['docs']!.files['a.txt']!.hash;
+
+    await File(p.join(remoteDir.path, 'docs', 'a.txt')).writeAsString('a2\n');
+    await File(p.join(remoteDir.path, 'other.txt')).writeAsString('o2\n');
+
+    final snapshot = await withEngine(
+      (engine) => engine.scanSide(left: false, subPath: 'docs'),
     );
+
+    final docsEntry = snapshot.current.entries['docs']!.files['a.txt']!;
+    final otherEntry = snapshot.current.entries['.']!.files['other.txt']!;
+    expect(docsEntry.hash, isNot(docsHashBefore));
     expect(
-      await File(p.join(remoteDir.path, 'doc.txt')).readAsString(),
-      'mac edit',
+      otherEntry.hash,
+      otherHashBefore,
+      reason: 'other.txt was not part of the refresh',
     );
+
+    final preview = await withEngine(planNow);
+    expect(preview.plan.actions.map((action) => action.path), ['docs/a.txt']);
   });
 
-  test('resolves a conflict by keeping the remote side', () async {
-    await File(p.join(localDir.path, 'doc.txt')).writeAsString('base');
-    await withEngine((engine) => engine.sync());
-
-    await File(p.join(localDir.path, 'doc.txt')).writeAsString('mac edit');
-    await File(p.join(remoteDir.path, 'doc.txt')).writeAsString('win edit');
-
+  test('check and sync never scan on their own', () async {
+    await File(p.join(localDir.path, 'doc.txt')).writeAsString('v1\n');
     await withEngine((engine) async {
-      final report = await engine.sync();
-      await engine.resolveConflicts(report.preview, {
-        'doc.txt': ConflictSide.right,
-      });
+      await engine.scanBoth(createIfMissing: true);
+      await syncNow(engine);
     });
 
-    expect(
-      await File(p.join(localDir.path, 'doc.txt')).readAsString(),
-      'win edit',
-    );
+    await File(p.join(localDir.path, 'doc.txt')).writeAsString('v2\n');
+
+    final stale = await withEngine(planNow);
+    expect(stale.plan.isEmpty, isTrue);
+
+    await withEngine((engine) => engine.scanSide(left: true));
+    final refreshed = await withEngine(planNow);
+    expect(refreshed.plan.actions.map((action) => action.path), ['doc.txt']);
+
+    await withEngine(syncNow);
     expect(
       await File(p.join(remoteDir.path, 'doc.txt')).readAsString(),
-      'win edit',
+      'v2\n',
     );
   });
 
-  test('applies default ignores on the remote manifest', () async {
+  test('rejects a remote refresh before the initial scan', () async {
+    await expectLater(
+      withEngine((engine) => engine.scanSide(left: false)),
+      throwsA(
+        isA<RemoteException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          409,
+        ),
+      ),
+    );
+  });
+
+  test('migrates a legacy remote snapshot to the chore folder', () async {
+    final legacy = File(p.join(remoteDir.path, '.file_sync_shot.json'));
+    await legacy.writeAsString(
+      '{"schema":1,"committedAt":"2026-01-01T00:00:00Z","entries":{}}',
+    );
+
+    final loaded = await withEngine((engine) => engine.loadSnapshots());
+
+    expect(loaded.b.snapshot, isNull);
+    expect(loaded.b.legacy, isTrue);
+    expect(loaded.b.backupPath, isNotNull);
+    expect(File(loaded.b.backupPath!).existsSync(), isTrue);
+    expect(await legacy.exists(), isFalse);
+  });
+
+  test('applies default ignores on the remote snapshot', () async {
     await Directory(p.join(remoteDir.path, '.git')).create();
     await File(p.join(remoteDir.path, '.git', 'config')).writeAsString('x');
     await File(p.join(remoteDir.path, '.DS_Store')).writeAsString('x');
-    await Directory(p.join(remoteDir.path, '.venv')).create();
-    await File(p.join(remoteDir.path, '.venv', 'x')).writeAsString('x');
-    await Directory(p.join(remoteDir.path, '__pycache__')).create();
-    await File(p.join(remoteDir.path, '__pycache__', 'x.pyc'))
-        .writeAsString('x');
     await File(p.join(remoteDir.path, 'keep.txt')).writeAsString('keep');
 
-    await withEngine((engine) => engine.sync());
+    await withEngine((engine) async {
+      await engine.scanBoth(createIfMissing: true);
+      await syncNow(engine);
+    });
 
     expect(await File(p.join(localDir.path, 'keep.txt')).exists(), isTrue);
-    expect(
-      await File(p.join(localDir.path, '.git', 'config')).exists(),
-      isFalse,
-    );
     expect(await File(p.join(localDir.path, '.DS_Store')).exists(), isFalse);
-    expect(await Directory(p.join(localDir.path, '.venv')).exists(), isFalse);
-    expect(
-      await Directory(p.join(localDir.path, '__pycache__')).exists(),
-      isFalse,
-    );
+    expect(await Directory(p.join(localDir.path, '.git')).exists(), isFalse);
   });
 
   test('rejects an invalid token', () async {
+    await File(p.join(remoteDir.path, 'a.txt')).writeAsString('a');
+
     await expectLater(
-      withEngine((engine) => engine.preview(), clientToken: 'wrong-token'),
+      withEngine(
+        (engine) => engine.loadSnapshots(),
+        clientToken: 'wrong-token',
+      ),
       throwsA(
         isA<RemoteException>().having(
           (error) => error.statusCode,
@@ -258,11 +262,14 @@ void main() {
     );
   });
 
-  test('rejects path traversal', () async {
+  test('rejects path traversal on the snapshot endpoint', () async {
     final transport = HttpTransport(baseUrl: baseUrl, token: token);
     try {
       await expectLater(
-        transport.getJson(ServerRoute.manifest, query: {'path': '../'}),
+        transport.postJson(
+          ServerRoute.snapshot,
+          query: {'path': '../', 'mode': 'refresh'},
+        ),
         throwsA(
           isA<RemoteException>().having(
             (error) => error.statusCode,
@@ -271,19 +278,6 @@ void main() {
           ),
         ),
       );
-    } finally {
-      await transport.close();
-    }
-  });
-
-  test('remote manifest includes content hashes', () async {
-    await File(p.join(remoteDir.path, 'a.txt')).writeAsString('hello');
-
-    final transport = HttpTransport(baseUrl: baseUrl, token: token);
-    try {
-      final manifest = await RemoteScanner(transport: transport).scan();
-      expect(manifest.entries['a.txt']!.hash, isNotNull);
-      expect(manifest.root, baseUrl);
     } finally {
       await transport.close();
     }

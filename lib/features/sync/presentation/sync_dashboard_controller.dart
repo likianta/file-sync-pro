@@ -8,18 +8,26 @@ import '../application/sync_engine.dart';
 import '../application/sync_pair_config.dart';
 import '../application/sync_source.dart';
 import '../data/file_hash_cache.dart';
+import '../data/snapshot_manager.dart';
+import '../data/snapshot_store.dart';
 import '../domain/ignore_rules.dart';
 import '../domain/sync_plan.dart';
+import '../domain/sync_snapshot.dart';
 
-enum SyncDashboardStatus { idle, scanning, applying, resolving, error }
+enum SyncDashboardStatus { idle, loading, scanning, applying, resolving, error }
 
 /// Drives one sync pair for the new tree-based dashboard.
+///
+/// Scans are user-triggered only. Check and Sync consume `.file_sync_shot.json`
+/// and never walk the filesystem on their own.
 final class SyncDashboardController extends ChangeNotifier {
   SyncDashboardController({required this.config});
 
   final SyncPairConfig config;
 
   SyncDashboardStatus _status = SyncDashboardStatus.idle;
+  SideSnapshot? _localSnapshot;
+  SideSnapshot? _remoteSnapshot;
   SyncPreview? _preview;
   SyncPreview? _diffPreview;
   String? _diffSubPath;
@@ -29,6 +37,7 @@ final class SyncDashboardController extends ChangeNotifier {
   String? _currentPath;
   ScanPhase? _scanPhase;
   int _scanned = 0;
+  bool _needsInitialScan = false;
   FileHashCache? _hashCache;
   final List<String> _log = [];
   final Stopwatch _scanWatch = Stopwatch();
@@ -38,6 +47,13 @@ final class SyncDashboardController extends ChangeNotifier {
   SyncDashboardStatus get status => _status;
 
   SyncPreview? get preview => _preview;
+
+  SideSnapshot? get localSnapshot => _localSnapshot;
+
+  SideSnapshot? get remoteSnapshot => _remoteSnapshot;
+
+  /// True when at least one side has no usable `current` snapshot.
+  bool get needsInitialScan => _needsInitialScan;
 
   /// The preview shown in the Check sheet. It is scoped when Check was run on
   /// a selected node.
@@ -59,6 +75,7 @@ final class SyncDashboardController extends ChangeNotifier {
   List<String> get log => List.unmodifiable(_log);
 
   bool get busy =>
+      _status == SyncDashboardStatus.loading ||
       _status == SyncDashboardStatus.scanning ||
       _status == SyncDashboardStatus.applying ||
       _status == SyncDashboardStatus.resolving;
@@ -68,6 +85,7 @@ final class SyncDashboardController extends ChangeNotifier {
   String get statusLabel {
     return switch (_status) {
       SyncDashboardStatus.idle => _idleLabel,
+      SyncDashboardStatus.loading => 'Loading snapshots...',
       SyncDashboardStatus.scanning => _scanLabel,
       SyncDashboardStatus.applying =>
         _applied == 0 ? 'Applying...' : 'Applying... $_applied actions',
@@ -77,8 +95,11 @@ final class SyncDashboardController extends ChangeNotifier {
   }
 
   String get _idleLabel {
+    if (_needsInitialScan) return 'Scan required';
     final report = _report;
-    if (report == null) return 'Ready';
+    if (report == null) {
+      return _preview == null ? 'Ready' : 'Snapshots loaded';
+    }
     final apply = report.applyReport;
     if (apply == null) return 'Ready';
     return 'Last run: ${apply.total} actions · '
@@ -87,32 +108,56 @@ final class SyncDashboardController extends ChangeNotifier {
 
   String get _scanLabel {
     return switch (_scanPhase) {
-      ScanPhase.local => 'Scanning local files... $_scanned',
+      ScanPhase.local =>
+        _scanned == 0
+            ? 'Scanning local files...'
+            : 'Scanning local files... $_scanned',
       ScanPhase.remote =>
         _scanned == 0
-            ? 'Downloading remote manifest...'
+            ? 'Scanning remote files...'
             : 'Scanning remote files... $_scanned',
       null => 'Starting scan...',
     };
   }
 
-  /// Re-scans both sides and rebuilds the trees without touching the disk.
-  Future<void> refresh() async {
+  /// Loads both snapshots without scanning any folder.
+  ///
+  /// When a snapshot is missing, [needsInitialScan] becomes true and the UI
+  /// must ask the user to run a full root scan before trees can be shown.
+  Future<void> load() async {
     if (busy) return;
+    _needsInitialScan = false;
     _diffPreview = null;
     _diffSubPath = null;
-    _status = SyncDashboardStatus.scanning;
+    _preview = null;
+    _report = null;
+    _applied = 0;
+    _currentPath = null;
+    _status = SyncDashboardStatus.loading;
     _errorMessage = null;
     _scanPhase = null;
     _scanned = 0;
+    _appendLog('Loading snapshots...');
     _notify();
 
     final engine = _createEngine();
     try {
-      await Directory(config.localRoot).create(recursive: true);
-      _startScanTiming();
-      _preview = await engine.preview(onProgress: _onScanProgress);
-      _logScanFinished();
+      final loaded = await engine.loadSnapshots();
+      _logSnapshotResult('local', loaded.a);
+      _logSnapshotResult('remote', loaded.b);
+
+      if (loaded.a.snapshot == null || loaded.b.snapshot == null) {
+        _localSnapshot = loaded.a.snapshot;
+        _remoteSnapshot = loaded.b.snapshot;
+        _needsInitialScan = true;
+        _appendLog('Scan required before trees can be loaded.');
+        _status = SyncDashboardStatus.idle;
+        return;
+      }
+
+      _localSnapshot = loaded.a.snapshot;
+      _remoteSnapshot = loaded.b.snapshot;
+      _preview = engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
       _status = SyncDashboardStatus.idle;
     } catch (error) {
       _fail(error);
@@ -122,38 +167,126 @@ final class SyncDashboardController extends ChangeNotifier {
     }
   }
 
-  /// Compares both sides and prepares the diff sheet.
-  ///
-  /// When [subPath] is set only that node's subtree is scanned and compared,
-  /// so checking one folder does not walk or hash the whole tree.
+  /// Scans both roots and creates the initial `current` snapshots.
+  Future<void> initializeSnapshots() async {
+    if (busy) return;
+    _status = SyncDashboardStatus.scanning;
+    _errorMessage = null;
+    _scanPhase = null;
+    _scanned = 0;
+    _appendLog('Scanning both roots to create snapshots...');
+    _startScanTiming();
+    _notify();
+
+    final engine = _createEngine();
+    try {
+      final result = await engine.scanBoth(
+        createIfMissing: true,
+        onProgress: _onInitialScanProgress,
+      );
+      _localSnapshot = result.a;
+      _remoteSnapshot = result.b;
+      _preview = engine.planFromSnapshots(result.a, result.b);
+      _needsInitialScan = false;
+      _logScanFinished();
+      _status = SyncDashboardStatus.idle;
+      _appendLog(
+        'Snapshots created. Local current: ${_shortKey(result.a)}; '
+        'remote current: ${_shortKey(result.b)}.',
+      );
+    } catch (error) {
+      _fail(error);
+    } finally {
+      await engine.dispose();
+      _notify();
+    }
+  }
+
+  /// Rescans only one side. [subPath] empty means the root.
+  Future<void> refreshSide({required bool left, String? subPath}) async {
+    if (busy) return;
+    if (_needsInitialScan ||
+        _localSnapshot == null ||
+        _remoteSnapshot == null) {
+      _needsInitialScan = true;
+      _notify();
+      return;
+    }
+
+    final side = left ? 'local' : 'remote';
+    final scope = subPath == null || subPath.isEmpty ? 'root' : subPath;
+    _status = SyncDashboardStatus.scanning;
+    _errorMessage = null;
+    _scanPhase = left ? ScanPhase.local : ScanPhase.remote;
+    _scanned = 0;
+    _appendLog('Scanning $side $scope...');
+    final watch = Stopwatch()..start();
+    _notify();
+
+    final engine = _createEngine();
+    try {
+      final snapshot = await engine.scanSide(
+        left: left,
+        subPath: subPath,
+        onProgress: (scanned) {
+          _scanned = scanned;
+          _notify();
+        },
+      );
+      if (left) {
+        _localSnapshot = snapshot;
+      } else {
+        _remoteSnapshot = snapshot;
+      }
+      _preview = engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
+      _diffPreview = null;
+      _diffSubPath = null;
+      _status = SyncDashboardStatus.idle;
+      watch.stop();
+      _appendLog(
+        '$side scan finished in ${watch.elapsedMilliseconds} ms. '
+        'Snapshot current updated.',
+      );
+    } catch (error) {
+      _fail(error);
+    } finally {
+      await engine.dispose();
+      _notify();
+    }
+  }
+
+  /// Builds a diff from the current snapshots without scanning.
   Future<void> check({String? subPath}) async {
     if (busy) return;
+    if (_needsInitialScan ||
+        _localSnapshot == null ||
+        _remoteSnapshot == null) {
+      _needsInitialScan = true;
+      _notify();
+      return;
+    }
+
     final scope = subPath == null || subPath.isEmpty ? null : subPath;
     _log.clear();
     _report = null;
     _applied = 0;
     _currentPath = null;
     _diffSubPath = scope;
-    _status = SyncDashboardStatus.scanning;
     _errorMessage = null;
-    _scanPhase = null;
-    _scanned = 0;
-    _appendLog('Checking ${scope ?? 'the whole tree'}...');
+    _appendLog('Checking ${scope ?? 'the whole tree'} from snapshots...');
     _notify();
 
     final engine = _createEngine();
     try {
-      _startScanTiming();
-      final preview = await engine.preview(
+      final preview = engine.planFromSnapshots(
+        _localSnapshot!,
+        _remoteSnapshot!,
         subPath: scope,
-        onProgress: _onScanProgress,
       );
-      _logScanFinished();
       _diffPreview = preview;
       if (scope == null) {
         _preview = preview;
       }
-      _status = SyncDashboardStatus.idle;
       final plan = preview.plan;
       _appendLog(
         'Plan${scope == null ? '' : ' ($scope)'}: '
@@ -173,9 +306,12 @@ final class SyncDashboardController extends ChangeNotifier {
   /// Runs a two-way or one-way sync for [subPath] (null means the whole tree).
   Future<void> run({required SyncDirection direction, String? subPath}) async {
     if (busy) return;
-    if (_preview == null) {
-      await refresh();
-      if (_preview == null || _status == SyncDashboardStatus.error) return;
+    if (_needsInitialScan ||
+        _localSnapshot == null ||
+        _remoteSnapshot == null) {
+      _needsInitialScan = true;
+      _notify();
+      return;
     }
 
     _status = SyncDashboardStatus.applying;
@@ -190,8 +326,13 @@ final class SyncDashboardController extends ChangeNotifier {
 
     final engine = _createEngine();
     try {
+      final preview =
+          _preview ??
+          engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
       final report = await engine.execute(
-        _preview!,
+        preview,
+        aSnapshot: _localSnapshot!,
+        bSnapshot: _remoteSnapshot!,
         direction: direction,
         subPath: subPath,
         onAction: (action) {
@@ -202,6 +343,12 @@ final class SyncDashboardController extends ChangeNotifier {
         },
       );
       _report = report;
+      _localSnapshot = report.aSnapshot ?? _localSnapshot;
+      _remoteSnapshot = report.bSnapshot ?? _remoteSnapshot;
+      _preview = engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
+      _diffPreview = null;
+      _diffSubPath = null;
+
       final apply = report.applyReport;
       if (apply != null) {
         _appendLog(
@@ -217,12 +364,8 @@ final class SyncDashboardController extends ChangeNotifier {
           'Backups: ${report.conflictBackupRoot}.',
         );
       }
+      _appendLog('Snapshots updated incrementally; no rescan performed.');
       _status = SyncDashboardStatus.idle;
-      _startScanTiming();
-      _preview = await engine.preview(onProgress: _onScanProgress);
-      _logScanFinished();
-      _diffPreview = null;
-      _diffSubPath = null;
     } catch (error) {
       _fail(error);
     } finally {
@@ -233,15 +376,18 @@ final class SyncDashboardController extends ChangeNotifier {
 
   /// Conflicts from the last check, or from the last executed run.
   List<SyncConflict> get conflicts {
-    return _preview?.plan.conflicts ??
+    return _diffPreview?.plan.conflicts ??
+        _preview?.plan.conflicts ??
         _report?.plan.conflicts ??
         const <SyncConflict>[];
   }
 
   Future<void> resolveConflict(String path, ConflictSide side) async {
     if (busy) return;
-    final preview = _diffPreview ?? _preview ?? _report?.preview;
-    if (preview == null) return;
+    final preview = _diffPreview ?? _preview;
+    if (preview == null || _localSnapshot == null || _remoteSnapshot == null) {
+      return;
+    }
 
     _status = SyncDashboardStatus.resolving;
     _errorMessage = null;
@@ -253,12 +399,23 @@ final class SyncDashboardController extends ChangeNotifier {
 
     final engine = _createEngine();
     try {
-      final result = await engine.resolveConflicts(preview, {path: side});
-      _preview = await engine.preview();
+      final result = await engine.resolveConflicts(
+        preview,
+        aSnapshot: _localSnapshot!,
+        bSnapshot: _remoteSnapshot!,
+        choices: {path: side},
+      );
+      _localSnapshot = result.aSnapshot ?? _localSnapshot;
+      _remoteSnapshot = result.bSnapshot ?? _remoteSnapshot;
+      _preview = engine.planFromSnapshots(_localSnapshot!, _remoteSnapshot!);
       final scope = _diffSubPath;
       _diffPreview = scope == null
           ? _preview
-          : await engine.preview(subPath: scope);
+          : engine.planFromSnapshots(
+              _localSnapshot!,
+              _remoteSnapshot!,
+              subPath: scope,
+            );
       _status = SyncDashboardStatus.idle;
       _appendLog(
         'Resolved ${result.resolved} conflict(s). '
@@ -281,7 +438,7 @@ final class SyncDashboardController extends ChangeNotifier {
     _notify();
   }
 
-  void _onScanProgress(ScanPhase phase, int scanned) {
+  void _onInitialScanProgress(ScanPhase phase, int scanned) {
     final phaseChanged = _scanPhase != phase;
     if (!phaseChanged && scanned == _scanned) return;
     if (phaseChanged) {
@@ -322,6 +479,35 @@ final class SyncDashboardController extends ChangeNotifier {
     _appendLog('Scan finished in ${_scanWatch.elapsedMilliseconds} ms.');
   }
 
+  void _logSnapshotResult(String side, SnapshotLoadResult result) {
+    if (result.snapshot != null) {
+      final current = result.snapshot!.current;
+      _appendLog(
+        'Loaded $side snapshot: current ${_shortKey(result.snapshot!)} '
+        '(${_formatTime(current.updatedAt)}).',
+      );
+      return;
+    }
+    if (result.backupPath != null) {
+      _appendLog('Legacy $side snapshot moved to ${result.backupPath}.');
+      return;
+    }
+    _appendLog('No $side snapshot found.');
+  }
+
+  String _shortKey(SideSnapshot snapshot) {
+    final key = snapshot.current.key;
+    return key.length <= 8 ? key : key.substring(0, 8);
+  }
+
+  static String _formatTime(int milliseconds) {
+    final time = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    return '${time.year}-${_two(time.month)}-${_two(time.day)} '
+        '${_two(time.hour)}:${_two(time.minute)}';
+  }
+
+  static String _two(int value) => value.toString().padLeft(2, '0');
+
   FileHashCache _cache() {
     return _hashCache ??= FileHashCache(
       p.normalize(p.absolute(p.join(config.stateDir, 'hash_cache.json'))),
@@ -330,17 +516,22 @@ final class SyncDashboardController extends ChangeNotifier {
 
   SyncEngine _createEngine() {
     final ignores = IgnoreRules.defaults(extra: config.extraIgnores);
+    final backupDir = defaultSnapshotBackupDir();
     return SyncEngine(
       a: LocalSyncSource(
         config.localRoot,
         ignores: ignores,
         hashCache: _cache(),
+        snapshotBackupDir: backupDir,
+        snapshotLabel: '${config.pairName}-local',
       ),
       b: RemoteSyncSource(
         baseUrl: config.remoteUrl,
         token: config.token,
         ignores: ignores,
         timeout: Duration(seconds: config.timeoutSeconds),
+        snapshotBackupDir: backupDir,
+        snapshotLabel: '${config.pairName}-remote',
       ),
       stateDir: config.stateDir,
     );
@@ -353,6 +544,16 @@ final class SyncDashboardController extends ChangeNotifier {
   }
 
   String _describe(Object error) {
+    if (error is SnapshotMissingException) {
+      return 'A snapshot is missing. Run the initial scan first.';
+    }
+    if (error is SnapshotPathException) {
+      return error.message;
+    }
+    if (error is SnapshotLegacyException) {
+      return 'This side uses an old snapshot format. Restart the pair so it '
+          'can be migrated.';
+    }
     if (error is RemoteException) {
       final hint = switch (error.statusCode) {
         401 => 'Authentication failed. Set the same token on both sides.',
@@ -360,8 +561,8 @@ final class SyncDashboardController extends ChangeNotifier {
           'Mount or path not found. The URL must include the mount name, '
               'for example http://host:2160/photolens.',
         409 =>
-          'The server refused the operation because the target is a '
-              'non-empty directory or a different kind of entry.',
+          'The server refused the operation. The snapshot may be missing, '
+              'or the target is a different kind of entry.',
         _ => 'The server returned an error.',
       };
       return '${error.statusCode} ${error.message}\n$hint';
@@ -369,9 +570,6 @@ final class SyncDashboardController extends ChangeNotifier {
     if (error is SocketException) {
       return 'Cannot reach ${config.remoteUrl}.\n'
           'Check that the peer file server is running and reachable.';
-    }
-    if (error is SyncDivergenceException) {
-      return 'Sync finished but the two sides diverged: $error';
     }
     return error.toString();
   }
@@ -393,23 +591,15 @@ final class SyncDashboardController extends ChangeNotifier {
   }
 
   static String _formatAction(SyncAction action) {
-    final symbol = switch (action.kind) {
-      SyncActionKind.createRight => '+>',
-      SyncActionKind.updateRight => '=>',
-      SyncActionKind.deleteRight => '->',
-      SyncActionKind.createLeft => '<+',
-      SyncActionKind.updateLeft => '<=',
-      SyncActionKind.deleteLeft => '<-',
+    final label = switch (action.kind) {
+      SyncActionKind.createRight => 'Create right',
+      SyncActionKind.updateRight => 'Update right',
+      SyncActionKind.deleteRight => 'Delete right',
+      SyncActionKind.createLeft => 'Create left',
+      SyncActionKind.updateLeft => 'Update left',
+      SyncActionKind.deleteLeft => 'Delete left',
     };
-    final verb = switch (action.kind) {
-      SyncActionKind.createRight => 'upload',
-      SyncActionKind.updateRight => 'upload',
-      SyncActionKind.deleteRight => 'delete remote',
-      SyncActionKind.createLeft => 'download',
-      SyncActionKind.updateLeft => 'download',
-      SyncActionKind.deleteLeft => 'delete local',
-    };
-    return '$symbol $verb  ${action.path}';
+    return '$label ${action.path}';
   }
 
   void _notify() {
@@ -419,7 +609,6 @@ final class SyncDashboardController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _hashCache?.flush();
     super.dispose();
   }
 }

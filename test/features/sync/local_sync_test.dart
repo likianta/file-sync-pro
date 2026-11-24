@@ -2,471 +2,479 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
+import 'package:file_sync_pro/features/sync/data/snapshot_manager.dart';
 import 'package:file_sync_pro/features/sync/domain/sync_plan.dart';
+import 'package:file_sync_pro/features/sync/domain/sync_snapshot.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
-  final fixturesAvailable =
-      Directory(p.join('test', 'local_sync_test', 'alice')).existsSync() &&
-      Directory(p.join('test', 'local_sync_test', 'bob')).existsSync();
+  late Directory temp;
+  late Directory alice;
+  late Directory bob;
+  late String stateDir;
+  late String snapshotBackupDir;
 
-  group(
-    'local sync (auxiliary)',
-    () {
-      late Directory temp;
-      late Directory alice;
-      late Directory bob;
-      late String stateDir;
+  setUp(() async {
+    temp = await Directory.systemTemp.createTemp('filesync-local-');
+    alice = Directory(p.join(temp.path, 'alice'));
+    bob = Directory(p.join(temp.path, 'bob'));
+    await alice.create();
+    await bob.create();
+    stateDir = p.join(temp.path, 'state');
+    snapshotBackupDir = p.join(temp.path, 'chore');
+  });
 
-      setUp(() async {
-        temp = await Directory.systemTemp.createTemp('filesync-local-');
-        alice = Directory(p.join(temp.path, 'alice'));
-        bob = Directory(p.join(temp.path, 'bob'));
-        await _copyTree(_fixture('alice'), alice);
-        await _copyTree(_fixture('bob'), bob);
-        stateDir = p.join(temp.path, 'state');
-      });
+  tearDown(() async {
+    await temp.delete(recursive: true);
+  });
 
-      tearDown(() async {
-        await temp.delete(recursive: true);
-      });
+  Future<T> withEngine<T>(Future<T> Function(SyncEngine engine) run) async {
+    final engine = SyncEngine.local(
+      rootA: alice.path,
+      rootB: bob.path,
+      stateDir: stateDir,
+      snapshotBackupDir: snapshotBackupDir,
+      labelA: 'alice',
+      labelB: 'bob',
+    );
+    try {
+      return await run(engine);
+    } finally {
+      await engine.dispose();
+    }
+  }
 
-      SyncEngine engine() {
-        return SyncEngine.local(
-          rootA: alice.path,
-          rootB: bob.path,
-          stateDir: stateDir,
-        );
-      }
+  Future<({SideSnapshot a, SideSnapshot b})> scanBoth(SyncEngine engine) {
+    return engine.scanBoth(createIfMissing: true);
+  }
 
-      test('first sync merges both sides and commits a base', () async {
-        final report = await engine().sync();
+  Future<SyncPreview> planNow(SyncEngine engine, {String? subPath}) async {
+    final loaded = await engine.loadSnapshots();
+    return engine.planFromSnapshots(
+      loaded.a.snapshot!,
+      loaded.b.snapshot!,
+      subPath: subPath,
+    );
+  }
 
-        expect(report.hasConflicts, isFalse);
-        expect(await _exists(bob, 'alice-only.txt'), isTrue);
-        expect(await _exists(alice, 'bob-only.txt'), isTrue);
-        expect(await _exists(bob, 'media/alice-note.md'), isTrue);
-        expect(await _exists(alice, 'media/bob-note.md'), isTrue);
+  Future<SyncReport> syncNow(
+    SyncEngine engine, {
+    SyncDirection direction = SyncDirection.both,
+    String? subPath,
+  }) async {
+    final loaded = await engine.loadSnapshots();
+    return engine.execute(
+      engine.planFromSnapshots(
+        loaded.a.snapshot!,
+        loaded.b.snapshot!,
+        subPath: subPath,
+      ),
+      aSnapshot: loaded.a.snapshot!,
+      bSnapshot: loaded.b.snapshot!,
+      direction: direction,
+      subPath: subPath,
+    );
+  }
 
-        final second = await engine().sync();
-        expect(second.preview.plan.isEmpty, isTrue);
-        expect(second.applyReport!.total, 0);
-      });
+  test('initial scan writes current with an empty base', () async {
+    await _file(alice, 'docs/readme.md').writeAsString('hello\n');
+    await _file(bob, 'notes.txt').writeAsString('bob\n');
 
-      test('propagates edits', () async {
-        await engine().sync();
-
-        await _file(alice, 'docs/readme.md').writeAsString('edited by alice\n');
-        await engine().sync();
-
-        expect(await _read(bob, 'docs/readme.md'), 'edited by alice\n');
-      });
-
-      test('propagates deletions', () async {
-        await engine().sync();
-
-        await _file(bob, 'shared/common.txt').delete();
-        await engine().sync();
-
-        expect(await _exists(alice, 'shared/common.txt'), isFalse);
-      });
-
-      test('treats a rename as delete plus create', () async {
-        await engine().sync();
-
-        await _file(
-          alice,
-          'docs/notes/todo.txt',
-        ).rename(_file(alice, 'docs/notes/done.txt').path);
-        await engine().sync();
-
-        expect(await _exists(bob, 'docs/notes/done.txt'), isTrue);
-        expect(await _exists(bob, 'docs/notes/todo.txt'), isFalse);
-        expect(
-          await _read(bob, 'docs/notes/done.txt'),
-          '- buy milk\n- ship the sync tool\n',
-        );
-      });
-
-      test('does not rewrite a file when only mtime changed', () async {
-        await engine().sync();
-
-        final path = 'docs/readme.md';
-        final content = await _read(alice, path);
-        await _file(alice, path).writeAsString(content);
-        await _file(
-          alice,
-          path,
-        ).setLastModified(DateTime.now().add(const Duration(hours: 1)));
-
-        final bobMtime = await _file(bob, path).lastModified();
-        final report = await engine().sync();
-
-        expect(report.preview.plan.actions, isEmpty);
-        expect(await _file(bob, path).lastModified(), bobMtime);
-      });
-
-      test('reports a conflict when both sides modify a file', () async {
-        await engine().sync();
-
-        await _file(alice, 'docs/readme.md').writeAsString('alice edit\n');
-        await _file(bob, 'docs/readme.md').writeAsString('bob edit\n');
-        await _file(alice, 'extra.txt').writeAsString('extra\n');
-
-        final report = await engine().sync();
-
-        expect(report.hasConflicts, isTrue);
-        expect(report.conflictCount, 1);
-        expect(
-          report.preview.plan.conflicts.single.reason,
-          ConflictReason.bothModified,
-        );
-
-        // Conflicting content is left untouched on both sides.
-        expect(await _read(alice, 'docs/readme.md'), 'alice edit\n');
-        expect(await _read(bob, 'docs/readme.md'), 'bob edit\n');
-
-        // Non-conflicting work still happens.
-        expect(await _read(bob, 'extra.txt'), 'extra\n');
-
-        final backup = report.conflictBackupRoot!;
-        expect(
-          await File(p.join(backup, 'a', 'docs', 'readme.md')).readAsString(),
-          'alice edit\n',
-        );
-        expect(
-          await File(p.join(backup, 'b', 'docs', 'readme.md')).readAsString(),
-          'bob edit\n',
-        );
-
-        // The same conflict is reported again on the next run.
-        final again = await engine().preview();
-        expect(again.plan.conflicts, hasLength(1));
-      });
-
-      test(
-        'reports a conflict when one side modifies and the other deletes',
-        () async {
-          await engine().sync();
-
-          await _file(bob, 'docs/readme.md').delete();
-          await _file(
-            alice,
-            'docs/readme.md',
-          ).writeAsString('alice keeps it\n');
-
-          final report = await engine().sync();
-
-          expect(report.conflictCount, 1);
-          expect(
-            report.preview.plan.conflicts.single.reason,
-            ConflictReason.modifiedVsDeleted,
-          );
-          expect(await _read(alice, 'docs/readme.md'), 'alice keeps it\n');
-          expect(await _exists(bob, 'docs/readme.md'), isFalse);
-
-          final backup = report.conflictBackupRoot!;
-          expect(
-            await File(p.join(backup, 'a', 'docs', 'readme.md')).exists(),
-            isTrue,
-          );
-        },
+    await withEngine((engine) async {
+      final snapshots = await scanBoth(engine);
+      expect(snapshots.a.base.isEmpty, isTrue);
+      expect(snapshots.b.base.isEmpty, isTrue);
+      expect(
+        snapshots.a.current.entries['.']!.files.containsKey('readme.md'),
+        isFalse,
       );
+      expect(
+        snapshots.a.current.entries['docs']!.files.keys,
+        contains('readme.md'),
+      );
+      expect(snapshots.a.current.key, isNotEmpty);
+      expect(snapshots.b.current.key, isNotEmpty);
+    });
 
-      test('resolves every conflict with one side in one call', () async {
-        await engine().sync();
+    final json = jsonDecode(
+      await _file(alice, '.file_sync_shot.json').readAsString(),
+    ) as Map<String, Object?>;
+    expect(json.keys, containsAll(['base', 'current']));
+    final base = json['base']! as Map<String, Object?>;
+    expect((base['entries']! as Map), isEmpty);
+    final current = json['current']! as Map<String, Object?>;
+    expect(current['key'], isA<String>());
+    expect(current['updated_at'], isA<int>());
+    final entries = current['entries']! as Map<String, Object?>;
+    expect(entries.keys, containsAll(['.', 'docs']));
+    expect(
+      ((entries['docs']! as Map)['files']! as Map).keys,
+      contains('readme.md'),
+    );
+    expect(entries.containsKey('.file_sync_shot.json'), isFalse);
+  });
 
-        await _file(alice, 'docs/readme.md').writeAsString('alice edit\n');
-        await _file(bob, 'docs/readme.md').writeAsString('bob edit\n');
-        await _file(
-          alice,
-          'media/alice-note.md',
-        ).writeAsString('alice note edit\n');
-        await _file(
-          bob,
-          'media/alice-note.md',
-        ).writeAsString('bob note edit\n');
+  test('first sync merges both sides and settles the snapshots', () async {
+    await _file(alice, 'alice-only.txt').writeAsString('a\n');
+    await _file(bob, 'bob-only.txt').writeAsString('b\n');
+    await _file(alice, 'shared.txt').writeAsString('same\n');
+    await _file(bob, 'shared.txt').writeAsString('same\n');
 
-        final report = await engine().sync();
-        expect(report.conflictCount, 2);
+    final report = await withEngine((engine) async {
+      await scanBoth(engine);
+      return syncNow(engine);
+    });
 
-        final resolving = engine();
-        final preview = await resolving.preview();
-        final result = await resolving.resolveConflicts(preview, {
-          for (final conflict in preview.plan.conflicts)
-            conflict.path: ConflictSide.left,
-        });
+    expect(report.hasConflicts, isFalse);
+    expect(await _exists(bob, 'alice-only.txt'), isTrue);
+    expect(await _exists(alice, 'bob-only.txt'), isTrue);
+    expect(await _read(bob, 'shared.txt'), 'same\n');
 
-        expect(result.resolved, 2);
-        expect(result.remaining, 0);
-        expect(await _read(bob, 'docs/readme.md'), 'alice edit\n');
-        expect(await _read(bob, 'media/alice-note.md'), 'alice note edit\n');
+    final next = await withEngine(planNow);
+    expect(next.plan.isEmpty, isTrue);
+  });
 
-        final after = await engine().preview();
-        expect(after.plan.conflicts, isEmpty);
+  test('sync never scans: edits stay invisible until refreshed', () async {
+    await _file(alice, 'doc.txt').writeAsString('v1\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'doc.txt').writeAsString('v2\n');
+
+    final stale = await withEngine(planNow);
+    expect(stale.plan.isEmpty, isTrue, reason: 'current is still v1');
+
+    await withEngine((engine) => engine.scanSide(left: true));
+    final refreshed = await withEngine(planNow);
+    expect(
+      refreshed.plan.actions.map((action) => action.path),
+      contains('doc.txt'),
+    );
+
+    await withEngine(syncNow);
+    expect(await _read(bob, 'doc.txt'), 'v2\n');
+  });
+
+  test('refreshes only the selected folder', () async {
+    await _file(alice, 'docs/readme.md').writeAsString('docs v1\n');
+    await _file(alice, 'media/photo.txt').writeAsString('media v1\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'docs/readme.md').writeAsString('docs v2\n');
+    await _file(alice, 'media/photo.txt').writeAsString('media v2\n');
+
+    await withEngine((engine) => engine.scanSide(left: true, subPath: 'docs'));
+
+    final preview = await withEngine(planNow);
+    expect(preview.plan.actions.map((action) => action.path), [
+      'docs/readme.md',
+    ]);
+
+    await withEngine((engine) => syncNow(engine, subPath: 'docs'));
+    expect(await _read(bob, 'docs/readme.md'), 'docs v2\n');
+    expect(await _read(bob, 'media/photo.txt'), 'media v1\n');
+  });
+
+  test('propagates deletions after the side is refreshed', () async {
+    await _file(alice, 'keep.txt').writeAsString('keep\n');
+    await _file(bob, 'remove.txt').writeAsString('bye\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(bob, 'remove.txt').delete();
+    await withEngine((engine) => engine.scanSide(left: false));
+    await withEngine(syncNow);
+
+    expect(await _exists(alice, 'remove.txt'), isFalse);
+    expect(await _exists(alice, 'keep.txt'), isTrue);
+  });
+
+  test('reports conflicts and keeps them for the next check', () async {
+    await _file(alice, 'doc.txt').writeAsString('base\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'doc.txt').writeAsString('alice\n');
+    await _file(bob, 'doc.txt').writeAsString('bob\n');
+    final report = await withEngine((engine) async {
+      await engine.scanSide(left: true);
+      await engine.scanSide(left: false);
+      return syncNow(engine);
+    });
+
+    expect(report.conflictCount, 1);
+    expect(await _read(alice, 'doc.txt'), 'alice\n');
+    expect(await _read(bob, 'doc.txt'), 'bob\n');
+    expect(report.conflictBackupRoot, isNotNull);
+    expect(
+      File(p.join(report.conflictBackupRoot!, 'a', 'doc.txt')).existsSync(),
+      isTrue,
+    );
+    expect(
+      File(p.join(report.conflictBackupRoot!, 'b', 'doc.txt')).existsSync(),
+      isTrue,
+    );
+
+    final next = await withEngine(planNow);
+    expect(next.plan.conflicts, hasLength(1));
+  });
+
+  test('keeps a modified-vs-deleted conflict', () async {
+    await _file(alice, 'doc.txt').writeAsString('base\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'doc.txt').writeAsString('still here\n');
+    await _file(bob, 'doc.txt').delete();
+    final report = await withEngine((engine) async {
+      await engine.scanSide(left: true);
+      await engine.scanSide(left: false);
+      return syncNow(engine);
+    });
+
+    expect(report.conflictCount, 1);
+    expect(
+      report.plan.conflicts.single.reason,
+      ConflictReason.modifiedVsDeleted,
+    );
+    expect(await _read(alice, 'doc.txt'), 'still here\n');
+    expect(await _exists(bob, 'doc.txt'), isFalse);
+  });
+
+  test('resolves a conflict from the selected side', () async {
+    await _file(alice, 'doc.txt').writeAsString('base\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'doc.txt').writeAsString('alice\n');
+    await _file(bob, 'doc.txt').writeAsString('bob\n');
+    final result = await withEngine((engine) async {
+      await engine.scanSide(left: true);
+      await engine.scanSide(left: false);
+      final loaded = await engine.loadSnapshots();
+      final preview = engine.planFromSnapshots(
+        loaded.a.snapshot!,
+        loaded.b.snapshot!,
+      );
+      return engine.resolveConflicts(
+        preview,
+        aSnapshot: loaded.a.snapshot!,
+        bSnapshot: loaded.b.snapshot!,
+        choices: {'doc.txt': ConflictSide.left},
+      );
+    });
+
+    expect(result.resolved, 1);
+    expect(result.remaining, 0);
+    expect(await _read(bob, 'doc.txt'), 'alice\n');
+
+    final next = await withEngine(planNow);
+    expect(next.plan.conflicts, isEmpty);
+    expect(next.plan.actions, isEmpty);
+  });
+
+  test('one-way push and pull copy only the selected subtree', () async {
+    await _file(alice, 'docs/readme.md').writeAsString('alice docs\n');
+    await _file(bob, 'shared/common.txt').writeAsString('bob shared\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'docs/readme.md').writeAsString('alice docs v2\n');
+    await _file(bob, 'shared/common.txt').writeAsString('bob shared v2\n');
+
+    await withEngine((engine) async {
+      await engine.scanSide(left: true, subPath: 'docs');
+      await syncNow(engine, direction: SyncDirection.push, subPath: 'docs');
+    });
+    expect(await _read(bob, 'docs/readme.md'), 'alice docs v2\n');
+    expect(await _read(bob, 'shared/common.txt'), 'bob shared v2\n');
+
+    await withEngine((engine) async {
+      await engine.scanSide(left: false, subPath: 'docs');
+      await syncNow(engine, direction: SyncDirection.pull, subPath: 'docs');
+    });
+    expect(await _read(alice, 'docs/readme.md'), 'alice docs v2\n');
+  });
+
+  test('refreshes and syncs empty directories', () async {
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await Directory(p.join(alice.path, 'empty', 'nested'))
+        .create(recursive: true);
+    await withEngine((engine) => engine.scanSide(left: true));
+    await withEngine(syncNow);
+    expect(Directory(p.join(bob.path, 'empty', 'nested')).existsSync(), isTrue);
+
+    await Directory(p.join(alice.path, 'empty')).delete(recursive: true);
+    await withEngine((engine) => engine.scanSide(left: true));
+    await withEngine(syncNow);
+    expect(Directory(p.join(bob.path, 'empty')).existsSync(), isFalse);
+  });
+
+  test(
+    'folder refresh fails without touching the snapshot when it is gone',
+    () async {
+      await _file(alice, 'docs/readme.md').writeAsString('v1\n');
+      final before = await withEngine((engine) async {
+        await scanBoth(engine);
+        final loaded = await engine.loadSnapshots();
+        return loaded.a.snapshot!.current.key;
       });
 
-      test('writes a snapshot into each synced folder', () async {
-        await engine().sync();
+      await Directory(p.join(alice.path, 'docs')).delete(recursive: true);
 
-        final aliceShot = File(p.join(alice.path, '.file_sync_shot.json'));
-        final bobShot = File(p.join(bob.path, '.file_sync_shot.json'));
-        expect(await aliceShot.exists(), isTrue);
-        expect(await bobShot.exists(), isTrue);
-
-        final json =
-            jsonDecode(await aliceShot.readAsString()) as Map<String, Object?>;
-        expect(json['schema'], 1);
-        final entries = (json['entries'] as Map).cast<String, Object?>();
-        expect(entries.containsKey('docs/readme.md'), isTrue);
-        expect(entries.containsKey('.file_sync_shot.json'), isFalse);
-
-        // Snapshots never take part in the sync itself.
-        final preview = await engine().preview();
-        expect(preview.a.entries.containsKey('.file_sync_shot.json'), isFalse);
-        expect(preview.b.entries.containsKey('.file_sync_shot.json'), isFalse);
-        expect(preview.plan.isEmpty, isTrue);
-      });
-
-      test('a new device reuses the peer snapshot after a sync', () async {
-        await engine().sync();
-
-        // Carol starts from Bob's last synced state, like a Windows machine
-        // that already has the same folder but has never run a sync.
-        final carol = Directory(p.join(temp.path, 'carol'));
-        await _copyTree(bob, carol);
-        await File(p.join(carol.path, '.file_sync_shot.json')).delete();
-
-        // Bob changes one file after the previous sync.
-        await _file(
-          bob,
-          'docs/readme.md',
-        ).writeAsString('bob after home sync\n');
-
-        final carolBob = SyncEngine.local(
-          rootA: carol.path,
-          rootB: bob.path,
-          stateDir: p.join(temp.path, 'state-carol'),
+      await withEngine((engine) async {
+        await expectLater(
+          engine.scanSide(left: true, subPath: 'docs'),
+          throwsA(isA<SnapshotPathException>()),
         );
-        final report = await carolBob.sync();
-
-        expect(report.preview.plan.conflicts, isEmpty);
-        expect(report.preview.baseA.isEmpty, isTrue);
-        expect(report.preview.baseB.isEmpty, isFalse);
-        expect(await _read(carol, 'docs/readme.md'), 'bob after home sync\n');
-        expect(
-          await File(p.join(carol.path, '.file_sync_shot.json')).exists(),
-          isTrue,
-        );
-        expect(
-          await File(p.join(bob.path, '.file_sync_shot.json')).exists(),
-          isTrue,
-        );
-      });
-
-      test('preview scopes scans and plan to one subtree', () async {
-        await engine().sync();
-
-        await _file(alice, 'docs/readme.md').writeAsString('docs edit\n');
-        await _file(alice, 'media/alice-note.md').writeAsString('media edit\n');
-
-        final preview = await engine().preview(subPath: 'docs');
-
-        bool inScope(String path) => path == 'docs' || path.startsWith('docs/');
-        expect(preview.a.entries.keys.every(inScope), isTrue);
-        expect(preview.b.entries.keys.every(inScope), isTrue);
-        expect(preview.baseA.entries.keys.every(inScope), isTrue);
-        expect(preview.baseB.entries.keys.every(inScope), isTrue);
-        expect(preview.plan.actions.map((action) => action.path), [
-          'docs/readme.md',
-        ]);
-      });
-
-      test('syncs only the selected subtree', () async {
-        await engine().sync();
-
-        await _file(alice, 'docs/readme.md').writeAsString('docs edit\n');
-        await _file(alice, 'media/alice-note.md').writeAsString('media edit\n');
-
-        final scoped = engine();
-        final preview = await scoped.preview();
-        final report = await scoped.execute(preview, subPath: 'docs');
-
-        expect(report.plan.actions, isNotEmpty);
-        expect(
-          report.plan.actions.every(
-            (action) => action.path.startsWith('docs/'),
-          ),
-          isTrue,
-        );
-        expect(await _read(bob, 'docs/readme.md'), 'docs edit\n');
-        expect(await _read(bob, 'media/alice-note.md'), isNot('media edit\n'));
-
-        // The untouched subtree is still pending, while docs is settled.
-        final after = await engine().preview();
-        expect(after.plan.actions.map((action) => action.path), [
-          'media/alice-note.md',
-        ]);
-      });
-
-      test('push copies the selected subtree from left to right', () async {
-        await engine().sync();
-
-        await _file(alice, 'docs/readme.md').writeAsString('alice docs\n');
-        await _file(bob, 'shared/common.txt').writeAsString('bob shared\n');
-
-        final pushing = engine();
-        final preview = await pushing.preview();
-        final report = await pushing.execute(
-          preview,
-          direction: SyncDirection.push,
-          subPath: 'docs',
-        );
-
-        expect(report.plan.conflicts, isEmpty);
-        expect(await _read(bob, 'docs/readme.md'), 'alice docs\n');
-        expect(await _read(bob, 'shared/common.txt'), 'bob shared\n');
-
-        final after = await engine().preview();
-        expect(after.plan.actions.map((action) => action.path), [
-          'shared/common.txt',
-        ]);
-        expect(after.plan.conflicts, isEmpty);
-      });
-
-      test('pull copies the selected subtree from right to left', () async {
-        await engine().sync();
-
-        await _file(bob, 'docs/readme.md').writeAsString('bob docs\n');
-
-        final pulling = engine();
-        final preview = await pulling.preview();
-        await pulling.execute(
-          preview,
-          direction: SyncDirection.pull,
-          subPath: 'docs',
-        );
-
-        expect(await _read(alice, 'docs/readme.md'), 'bob docs\n');
-      });
-
-      test('push resolves conflicts in favor of the left side', () async {
-        await engine().sync();
-
-        await _file(alice, 'docs/readme.md').writeAsString('alice wins\n');
-        await _file(bob, 'docs/readme.md').writeAsString('bob loses\n');
-
-        final pushing = engine();
-        final preview = await pushing.preview();
-        expect(preview.plan.conflicts, hasLength(1));
-
-        final report = await pushing.execute(
-          preview,
-          direction: SyncDirection.push,
-          subPath: 'docs',
-        );
-
-        expect(report.plan.conflicts, isEmpty);
-        expect(await _read(bob, 'docs/readme.md'), 'alice wins\n');
-
-        final after = await engine().preview();
-        expect(after.plan.conflicts, isEmpty);
-        expect(after.plan.actions, isEmpty);
-      });
-
-      test('syncs empty directories and removes them again', () async {
-        await engine().sync();
-
-        final emptyDir = Directory(p.join(alice.path, 'empty', 'nested'));
-        await emptyDir.create(recursive: true);
-
-        await engine().sync();
-        expect(
-          await Directory(p.join(bob.path, 'empty', 'nested')).exists(),
-          isTrue,
-        );
-
-        await Directory(p.join(alice.path, 'empty')).delete(recursive: true);
-        await engine().sync();
-
-        expect(await Directory(p.join(bob.path, 'empty')).exists(), isFalse);
-      });
-
-      test('respects default ignore rules', () async {
-        await engine().sync();
-
-        await Directory(p.join(alice.path, '.git')).create();
-        await File(p.join(alice.path, '.git', 'config')).writeAsString('x');
-        await File(p.join(alice.path, 'backup~')).writeAsString('x');
-        await File(p.join(alice.path, '.DS_Store')).writeAsString('x');
-
-        await engine().sync();
-
-        expect(await _exists(bob, '.git/config'), isFalse);
-        expect(await _exists(bob, 'backup~'), isFalse);
-        expect(await _exists(bob, '.DS_Store'), isFalse);
-
-        final preview = await engine().preview();
-        expect(preview.a.entries.containsKey('.git'), isFalse);
-        expect(preview.a.entries.containsKey('backup~'), isFalse);
-      });
-
-      test('dry run reports changes without touching the disk', () async {
-        await engine().sync();
-
-        await _file(alice, 'docs/readme.md').writeAsString('not applied yet\n');
-
-        final preview = await engine().sync(dryRun: true);
-        expect(preview.preview.plan.actions, isNotEmpty);
-        expect(await _read(bob, 'docs/readme.md'), isNot('not applied yet\n'));
-
-        await engine().sync();
-        expect(await _read(bob, 'docs/readme.md'), 'not applied yet\n');
-      });
-
-      test('verifies convergence after applying a plan', () async {
-        await engine().sync();
-
-        final report = await engine().sync();
-        expect(report.preview.plan.isEmpty, isTrue);
-        expect(report.applyReport!.created, 0);
-        expect(report.applyReport!.updated, 0);
-        expect(report.applyReport!.deleted, 0);
+        final loaded = await engine.loadSnapshots();
+        expect(loaded.a.snapshot!.current.key, before);
       });
     },
-    skip: fixturesAvailable
-        ? false
-        : 'test/local_sync_test fixtures are gitignored and not present.',
   );
-}
 
-Directory _fixture(String name) {
-  return Directory(p.join('test', 'local_sync_test', name));
+  test('rejects refresh before an initial scan', () async {
+    await withEngine((engine) async {
+      await expectLater(
+        engine.scanSide(left: true),
+        throwsA(isA<SnapshotMissingException>()),
+      );
+    });
+  });
+
+  test('a no-op sync still advances base to current', () async {
+    await _file(alice, 'doc.txt').writeAsString('v1\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    final report = await withEngine(syncNow);
+    expect(report.plan.isEmpty, isTrue);
+    expect(report.aSnapshot!.base.key, report.aSnapshot!.current.key);
+    expect(report.bSnapshot!.base.key, report.bSnapshot!.current.key);
+  });
+
+  test('scoped sync adds a new folder to both bases', () async {
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'newdir/a.txt').writeAsString('a\n');
+    final report = await withEngine((engine) async {
+      await engine.scanSide(left: true, subPath: 'newdir');
+      final loaded = await engine.loadSnapshots();
+      final preview = engine.planFromSnapshots(
+        loaded.a.snapshot!,
+        loaded.b.snapshot!,
+        subPath: 'newdir',
+      );
+      return engine.execute(
+        preview,
+        aSnapshot: loaded.a.snapshot!,
+        bSnapshot: loaded.b.snapshot!,
+        subPath: 'newdir',
+      );
+    });
+
+    expect(report.aSnapshot!.base.entries['.']!.dirs, contains('newdir'));
+    expect(report.bSnapshot!.base.entries['.']!.dirs, contains('newdir'));
+    expect(
+      report.aSnapshot!.base.entries['newdir']!.files.keys,
+      contains('a.txt'),
+    );
+    expect(await _read(bob, 'newdir/a.txt'), 'a\n');
+  });
+
+  test('scoped sync of a single file updates both bases', () async {
+    await _file(alice, 'doc.txt').writeAsString('v1\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    await _file(alice, 'doc.txt').writeAsString('v2\n');
+    final report = await withEngine((engine) async {
+      await engine.scanSide(left: true);
+      final loaded = await engine.loadSnapshots();
+      final preview = engine.planFromSnapshots(
+        loaded.a.snapshot!,
+        loaded.b.snapshot!,
+        subPath: 'doc.txt',
+      );
+      return engine.execute(
+        preview,
+        aSnapshot: loaded.a.snapshot!,
+        bSnapshot: loaded.b.snapshot!,
+        subPath: 'doc.txt',
+      );
+    });
+
+    expect(
+      report.aSnapshot!.base.entries['.']!.files['doc.txt']!.hash,
+      report.aSnapshot!.current.entries['.']!.files['doc.txt']!.hash,
+    );
+    expect(
+      report.bSnapshot!.base.entries['.']!.files['doc.txt']!.hash,
+      report.bSnapshot!.current.entries['.']!.files['doc.txt']!.hash,
+    );
+    expect(await _read(bob, 'doc.txt'), 'v2\n');
+  });
+
+  test('silently ignores snapshot files during a scan', () async {
+    await _file(alice, 'doc.txt').writeAsString('v1\n');
+    await withEngine((engine) async {
+      await scanBoth(engine);
+      await syncNow(engine);
+    });
+
+    final loaded = await withEngine((engine) => engine.loadSnapshots());
+    expect(
+      loaded.a.snapshot!.current.entries['.']!.files.containsKey(
+        '.file_sync_shot.json',
+      ),
+      isFalse,
+    );
+    expect(
+      loaded.b.snapshot!.current.entries['.']!.files.containsKey(
+        '.file_sync_shot.json',
+      ),
+      isFalse,
+    );
+  });
 }
 
 File _file(Directory root, String relPath) {
-  return File(p.joinAll([root.path, ...relPath.split('/')]));
+  final file = File(p.joinAll([root.path, ...relPath.split('/')]));
+  file.parent.createSync(recursive: true);
+  return file;
 }
 
 Future<String> _read(Directory root, String relPath) {
-  return _file(root, relPath).readAsString();
+  return File(p.joinAll([root.path, ...relPath.split('/')])).readAsString();
 }
 
 Future<bool> _exists(Directory root, String relPath) {
-  return _file(root, relPath).exists();
-}
-
-Future<void> _copyTree(Directory source, Directory target) async {
-  await target.create(recursive: true);
-  await for (final entity in source.list(recursive: true, followLinks: false)) {
-    final relPath = p.relative(entity.path, from: source.path);
-    final targetPath = p.join(target.path, relPath);
-    if (entity is Directory) {
-      await Directory(targetPath).create(recursive: true);
-    } else if (entity is File) {
-      await Directory(p.dirname(targetPath)).create(recursive: true);
-      await entity.copy(targetPath);
-    }
-  }
+  return File(p.joinAll([root.path, ...relPath.split('/')])).exists();
 }

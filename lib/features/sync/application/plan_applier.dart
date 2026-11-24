@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../../transport/http_transport.dart';
@@ -12,6 +13,21 @@ import '../domain/line_endings.dart';
 import '../domain/manifest.dart';
 import '../domain/sync_plan.dart';
 
+/// Metadata of a file after it was written to the target side.
+final class AppliedFile {
+  const AppliedFile({
+    required this.size,
+    required this.mtimeMs,
+    required this.hash,
+    this.textHash,
+  });
+
+  final int size;
+  final int mtimeMs;
+  final String hash;
+  final String? textHash;
+}
+
 final class ApplyReport {
   const ApplyReport({
     this.created = 0,
@@ -19,6 +35,7 @@ final class ApplyReport {
     this.deleted = 0,
     this.removedDirectories = 0,
     this.backedUpConflicts = 0,
+    this.written = const {},
   });
 
   final int created;
@@ -26,6 +43,10 @@ final class ApplyReport {
   final int deleted;
   final int removedDirectories;
   final int backedUpConflicts;
+
+  /// Files written to either side, keyed by path. Used to update snapshots
+  /// without scanning the tree again.
+  final Map<String, AppliedFile> written;
 
   int get total =>
       created + updated + deleted + removedDirectories + backedUpConflicts;
@@ -49,6 +70,7 @@ final class PlanApplier {
     var deleted = 0;
     var removedDirectories = 0;
     var backedUp = 0;
+    final written = <String, AppliedFile>{};
 
     final actions = plan.actions;
 
@@ -80,7 +102,7 @@ final class PlanApplier {
           ..sort((x, y) => x.path.compareTo(y.path));
     for (final action in fileWrites) {
       final sources = action.targetsRight ? (from: a, to: b) : (from: b, to: a);
-      await _copyWithRetry(
+      written[action.path] = await _copyWithRetry(
         sources.from,
         sources.to,
         action.path,
@@ -138,10 +160,11 @@ final class PlanApplier {
       deleted: deleted,
       removedDirectories: removedDirectories,
       backedUpConflicts: backedUp,
+      written: written,
     );
   }
 
-  Future<void> _copyWithRetry(
+  Future<AppliedFile> _copyWithRetry(
     FileStore from,
     FileStore to,
     String relPath,
@@ -150,8 +173,7 @@ final class PlanApplier {
     const maxAttempts = 3;
     for (var attempt = 1; ; attempt++) {
       try {
-        await _copy(from, to, relPath, entry);
-        return;
+        return await _copy(from, to, relPath, entry);
       } catch (error) {
         if (attempt >= maxAttempts || !_isRetryable(error)) rethrow;
         await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
@@ -173,7 +195,7 @@ final class PlanApplier {
     return false;
   }
 
-  Future<void> _copy(
+  Future<AppliedFile> _copy(
     FileStore from,
     FileStore to,
     String relPath,
@@ -186,13 +208,16 @@ final class PlanApplier {
 
     final modified = DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs);
     final isText = entry.textHash != null;
+    final digestSink = _DigestSink();
+    final hasher = sha256.startChunkedConversion(digestSink);
 
     if (!isText) {
       await to.writeAtomically(
         relPath,
-        from.openRead(relPath),
+        _tee(from.openRead(relPath), hasher),
         modified: modified,
       );
+      hasher.close();
       final info = await to.stat(relPath);
       if (info.size != entry.size) {
         throw StateError(
@@ -200,7 +225,11 @@ final class PlanApplier {
           'expected ${entry.size}, got ${info.size}',
         );
       }
-      return;
+      return AppliedFile(
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+        hash: digestSink.value?.toString() ?? entry.hash ?? '',
+      );
     }
 
     // Text files are normalized to LF on the destination so CRLF copies are
@@ -208,9 +237,13 @@ final class PlanApplier {
     var written = 0;
     await to.writeAtomically(
       relPath,
-      _normalizeText(from.openRead(relPath), (bytes) => written += bytes),
+      _tee(
+        _normalizeText(from.openRead(relPath), (bytes) => written += bytes),
+        hasher,
+      ),
       modified: modified,
     );
+    hasher.close();
 
     final info = await to.stat(relPath);
     if (info.size != written) {
@@ -218,6 +251,23 @@ final class PlanApplier {
         'Size mismatch after normalizing $relPath: '
         'expected $written, got ${info.size}',
       );
+    }
+    final hash = digestSink.value?.toString() ?? '';
+    return AppliedFile(
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      hash: hash,
+      textHash: hash,
+    );
+  }
+
+  static Stream<List<int>> _tee(
+    Stream<List<int>> input,
+    Sink<List<int>> hasher,
+  ) async* {
+    await for (final chunk in input) {
+      hasher.add(chunk);
+      yield chunk;
     }
   }
 
@@ -277,4 +327,16 @@ final class PlanApplier {
   }
 
   static int _depth(String path) => path.split('/').length;
+}
+
+final class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) {
+    value = data;
+  }
+
+  @override
+  void close() {}
 }

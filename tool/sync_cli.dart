@@ -6,6 +6,7 @@ import 'package:file_sync_pro/features/sync/application/sync_client_config.dart'
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
 import 'package:file_sync_pro/features/sync/application/sync_pair_config.dart';
 import 'package:file_sync_pro/features/sync/application/sync_source.dart';
+import 'package:file_sync_pro/features/sync/data/snapshot_store.dart';
 import 'package:file_sync_pro/features/sync/domain/ignore_rules.dart';
 import 'package:file_sync_pro/features/sync/domain/manifest.dart';
 import 'package:file_sync_pro/features/sync/domain/sync_plan.dart';
@@ -45,12 +46,20 @@ Future<void> main(List<String> args) async {
   }
 
   final ignores = IgnoreRules.defaults(extra: config.extraIgnores);
-  final local = LocalSyncSource(config.localRoot, ignores: ignores);
+  final backupDir = defaultSnapshotBackupDir();
+  final local = LocalSyncSource(
+    config.localRoot,
+    ignores: ignores,
+    snapshotBackupDir: backupDir,
+    snapshotLabel: '${config.pairName}-local',
+  );
   final remote = RemoteSyncSource(
     baseUrl: config.remoteUrl,
     token: config.token,
     ignores: ignores,
     timeout: Duration(seconds: config.timeoutSeconds),
+    snapshotBackupDir: backupDir,
+    snapshotLabel: '${config.pairName}-remote',
   );
   final engine = SyncEngine(a: local, b: remote, stateDir: config.stateDir);
 
@@ -60,14 +69,32 @@ Future<void> main(List<String> args) async {
     print('State : ${config.stateDir}');
     print('');
 
-    stdout.write('Scanning both sides...');
-    final dry = await engine.sync(
-      dryRun: true,
-      direction: options.direction,
+    if (options.scan) {
+      // Load once first so legacy snapshots are migrated before the server
+      // refuses to scan over an old format.
+      await engine.loadSnapshots();
+      stdout.write('Scanning both roots...');
+      await engine.scanBoth(createIfMissing: true);
+      stdout.writeln(' done.');
+    }
+
+    final loaded = await engine.loadSnapshots();
+    final aSnapshot = loaded.a.snapshot;
+    final bSnapshot = loaded.b.snapshot;
+    if (aSnapshot == null || bSnapshot == null) {
+      stderr.writeln(
+        'No snapshot on the ${aSnapshot == null ? 'local' : 'remote'} side. '
+        'Run once with --scan to create the initial snapshots.',
+      );
+      exitCode = 1;
+      return;
+    }
+
+    final preview = engine.planFromSnapshots(
+      aSnapshot,
+      bSnapshot,
       subPath: options.subPath,
     );
-    stdout.writeln(' done.');
-    final preview = dry.preview;
     _printPreviewSummary(preview);
     if (options.subPath != null) {
       print(
@@ -75,7 +102,7 @@ Future<void> main(List<String> args) async {
         '(${options.direction.name})',
       );
     }
-    final plan = dry.plan;
+    final plan = preview.plan;
 
     if (plan.isEmpty) {
       print('Nothing to sync.');
@@ -94,6 +121,8 @@ Future<void> main(List<String> args) async {
     print('Applying...');
     final report = await engine.execute(
       preview,
+      aSnapshot: aSnapshot,
+      bSnapshot: bSnapshot,
       direction: options.direction,
       subPath: options.subPath,
       onAction: _printAction,
@@ -129,14 +158,11 @@ Future<void> main(List<String> args) async {
       'forwards the public port to it.',
     );
     exitCode = 1;
-  } on SyncDivergenceException catch (error) {
-    stderr.writeln('Sync finished but the two sides diverged: $error');
-    exitCode = 1;
   } catch (error) {
     stderr.writeln('Sync failed: $error');
     exitCode = 1;
   } finally {
-    await remote.close();
+    await engine.dispose();
   }
 }
 
@@ -225,6 +251,7 @@ Options:
   --path <subpath>   Only sync this folder or file inside the pair
   --pull             Copy from the peer to this machine only
   --push             Copy from this machine to the peer only
+  --scan             Scan both roots before planning (writes snapshots)
   --dry-run          Show the plan without changing anything
   --config <path>    Config file (default: tool/sync.config.json)
   -h, --help         Show this help
@@ -235,6 +262,7 @@ final class _SyncOptions {
   const _SyncOptions({
     required this.config,
     required this.dryRun,
+    required this.scan,
     required this.showHelp,
     this.subPath,
     this.direction = SyncDirection.both,
@@ -249,6 +277,7 @@ final class _SyncOptions {
     String? subPath;
     int? timeoutArg;
     var dryRun = false;
+    var scan = false;
     var showHelp = false;
     var direction = SyncDirection.both;
     String? configPath;
@@ -286,6 +315,8 @@ final class _SyncOptions {
           timeoutArg = int.parse(next(arg));
         case '--dry-run':
           dryRun = true;
+        case '--scan':
+          scan = true;
         case '--config':
           configPath = next(arg);
         default:
@@ -294,7 +325,12 @@ final class _SyncOptions {
     }
 
     if (showHelp) {
-      return _SyncOptions(config: null, dryRun: dryRun, showHelp: true);
+      return _SyncOptions(
+        config: null,
+        dryRun: dryRun,
+        scan: scan,
+        showHelp: true,
+      );
     }
 
     final client = SyncClientConfig.load(
@@ -342,6 +378,7 @@ final class _SyncOptions {
     return _SyncOptions(
       config: config,
       dryRun: dryRun,
+      scan: scan,
       showHelp: false,
       subPath: subPath,
       direction: direction,
@@ -350,6 +387,7 @@ final class _SyncOptions {
 
   final SyncPairConfig? config;
   final bool dryRun;
+  final bool scan;
   final bool showHelp;
   final String? subPath;
   final SyncDirection direction;

@@ -38,6 +38,7 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
   String _activePath = '';
   bool _autoLocate = true;
   bool _logExpanded = false;
+  bool _initialScanDialogOpen = false;
 
   @override
   void initState() {
@@ -94,14 +95,83 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
       final controller = _controller;
       if (controller != null) {
         controller.addListener(_onControllerChanged);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) controller.refresh();
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (!mounted || controller != _controller) return;
+          await controller.load();
+          if (!mounted || controller != _controller) return;
+          await _promptInitialScanIfNeeded(controller);
         });
       }
       changed = true;
     }
 
     if (changed && mounted) setState(() {});
+  }
+
+  Future<bool> _ensureSnapshots(SyncDashboardController controller) async {
+    if (!controller.needsInitialScan) return true;
+    await _promptInitialScanIfNeeded(controller);
+    return !controller.needsInitialScan && controller.preview != null;
+  }
+
+  Future<void> _promptInitialScanIfNeeded(
+    SyncDashboardController controller,
+  ) async {
+    if (_initialScanDialogOpen || !controller.needsInitialScan) return;
+    _initialScanDialogOpen = true;
+    final pairName = _currentPair?.name ?? 'this pair';
+    final scan = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        key: const ValueKey<String>('sync.initial_scan.dialog'),
+        title: const Text('Snapshots required'),
+        content: Text(
+          '$pairName has no usable snapshot on one or both sides. '
+          'Scan both roots now to build the initial tree?',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey<String>('sync.initial_scan.cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey<String>('sync.initial_scan.confirm'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Scan both roots'),
+          ),
+        ],
+      ),
+    );
+    _initialScanDialogOpen = false;
+    if (!mounted || controller != _controller) return;
+    if (scan == true) {
+      await controller.initializeSnapshots();
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _refreshSide(bool left) async {
+    final controller = _controller;
+    if (controller == null || controller.busy) return;
+    if (!await _ensureSnapshots(controller)) return;
+
+    final tree = left ? _leftTree : _rightTree;
+    final selected = left ? _leftSelection : _rightSelection;
+    String? scope;
+    if (selected.isNotEmpty) {
+      final node = tree?.byPath[selected];
+      scope = node != null && !node.isDirectory
+          ? _parentPath(node.path)
+          : selected;
+    }
+    await controller.refreshSide(left: left, subPath: scope);
+  }
+
+  static String _parentPath(String path) {
+    final index = path.lastIndexOf('/');
+    return index < 0 ? '' : path.substring(0, index);
   }
 
   static String _keyOf(SyncPairConfig config) {
@@ -244,6 +314,7 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
   Future<void> _check() async {
     final controller = _controller;
     if (controller == null || controller.busy) return;
+    if (!await _ensureSnapshots(controller)) return;
     await controller.check(subPath: _activePath.isEmpty ? null : _activePath);
     if (!mounted || controller.diffPreview == null) return;
     await showSyncDiffSheet(context, controller);
@@ -252,6 +323,7 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
   Future<void> _run(SyncDirection direction) async {
     final controller = _controller;
     if (controller == null || controller.busy) return;
+    if (!await _ensureSnapshots(controller)) return;
     await controller.run(
       direction: direction,
       subPath: _activePath.isEmpty ? null : _activePath,
@@ -282,7 +354,9 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
 
         final controller = _controller;
         final busy = controller?.busy ?? false;
-        final scanning = controller?.status == SyncDashboardStatus.scanning;
+        final scanning =
+            controller?.status == SyncDashboardStatus.scanning ||
+            controller?.status == SyncDashboardStatus.loading;
         final canRun = controller != null && !busy;
 
         return Column(
@@ -340,7 +414,9 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
                         onBrowse: _currentPair == null
                             ? null
                             : _browseLocalRoot,
-                        onRefresh: controller?.refresh,
+                        onRefresh: controller == null
+                            ? null
+                            : () => _refreshSide(true),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -359,7 +435,9 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
                         onSelect: (node) =>
                             _selectNode(left: false, node: node),
                         onToggle: _toggleNode,
-                        onRefresh: controller?.refresh,
+                        onRefresh: controller == null
+                            ? null
+                            : () => _refreshSide(false),
                       ),
                     ),
                   ],
