@@ -83,28 +83,86 @@ final class PairIgnoresStore {
 
   /// Reads the stored form and the matching editor content.
   ///
-  /// The local snapshot wins over the remote one. Nothing is migrated or
-  /// rewritten here, so simply opening the dialog has no side effects.
+  /// The local snapshot wins over the remote one. When the local folder has no
+  /// `.gitignore` but the peer has one, the peer file is copied into the local
+  /// folder before it is shown. Nothing else is migrated or rewritten here, so
+  /// opening the editor has no other side effects.
   Future<IgnoresLoadResult> load() async {
     final problems = <String>[];
+    final localStore = LocalFileStore(localRoot);
 
+    String? localGitignore;
     try {
-      final store = LocalFileStore(localRoot);
-      final ignores = await _readIgnores(store);
-      if (ignores != null) {
-        return await _result(ignores, IgnoresSource.local, store, problems);
-      }
+      localGitignore = await _readText(localStore, gitignoreFile);
+    } catch (error) {
+      problems.add('Cannot read $gitignoreFile: $error');
+    }
+
+    SnapshotIgnores? localIgnores;
+    try {
+      localIgnores = await _readIgnores(localStore);
     } catch (error) {
       problems.add('Cannot read the local snapshot: $error');
     }
 
+    if (localIgnores != null && !localIgnores.useGitignore) {
+      return IgnoresLoadResult(
+        form: IgnoresForm.builtinList,
+        text: localIgnores.patterns.join('\n'),
+        source: IgnoresSource.local,
+        warning: _warning(problems),
+      );
+    }
+
+    if (localGitignore != null) {
+      return IgnoresLoadResult(
+        form: IgnoresForm.gitignore,
+        text: localGitignore,
+        source: IgnoresSource.local,
+        warning: _warning(problems),
+      );
+    }
+
+    // The local side has no .gitignore (and either no snapshot or a
+    // "$gitignore" marker). Ask the peer and mirror its file locally.
     if (remoteUrl.isNotEmpty) {
       final transport = _transport();
       try {
-        final store = HttpFileStore(transport);
-        final ignores = await _readIgnores(store);
-        if (ignores != null) {
-          return await _result(ignores, IgnoresSource.remote, store, problems);
+        final remoteStore = HttpFileStore(transport);
+        String? remoteGitignore;
+        try {
+          remoteGitignore = await _readText(remoteStore, gitignoreFile);
+        } catch (error) {
+          problems.add('Cannot read the remote $gitignoreFile: $error');
+        }
+        if (remoteGitignore != null) {
+          try {
+            await _writeText(localStore, gitignoreFile, remoteGitignore);
+          } catch (error) {
+            problems.add('Cannot save $gitignoreFile locally: $error');
+          }
+          return IgnoresLoadResult(
+            form: IgnoresForm.gitignore,
+            text: remoteGitignore,
+            source: IgnoresSource.remote,
+            warning: _warning(problems),
+          );
+        }
+
+        if (localIgnores == null) {
+          final remoteIgnores = await _readIgnores(remoteStore);
+          if (remoteIgnores != null) {
+            return IgnoresLoadResult(
+              form: remoteIgnores.useGitignore
+                  ? IgnoresForm.gitignore
+                  : IgnoresForm.builtinList,
+              text: remoteIgnores.useGitignore
+                  ? ''
+                  : remoteIgnores.patterns.join('\n'),
+              source: IgnoresSource.remote,
+              warning: _warning(problems),
+            );
+          }
         }
       } catch (error) {
         problems.add('Cannot read the remote snapshot: $error');
@@ -113,11 +171,24 @@ final class PairIgnoresStore {
       }
     }
 
+    if (localIgnores != null) {
+      return IgnoresLoadResult(
+        form: IgnoresForm.gitignore,
+        text: '',
+        source: IgnoresSource.local,
+        warning: _warning(problems),
+      );
+    }
+
     return IgnoresLoadResult(
       form: IgnoresForm.builtinList,
       text: '',
-      warning: problems.isEmpty ? null : problems.join('\n'),
+      warning: _warning(problems),
     );
+  }
+
+  static String? _warning(List<String> problems) {
+    return problems.isEmpty ? null : problems.join('\n');
   }
 
   /// Writes [text] back using the stored [form] on both sides.
@@ -167,36 +238,6 @@ final class PairIgnoresStore {
 
   HttpTransport _transport() {
     return HttpTransport(baseUrl: remoteUrl, token: token, timeout: timeout);
-  }
-
-  Future<IgnoresLoadResult> _result(
-    SnapshotIgnores ignores,
-    IgnoresSource source,
-    FileStore store,
-    List<String> problems,
-  ) async {
-    var warning = problems.isEmpty ? null : problems.join('\n');
-    if (!ignores.useGitignore) {
-      return IgnoresLoadResult(
-        form: IgnoresForm.builtinList,
-        text: ignores.patterns.join('\n'),
-        source: source,
-        warning: warning,
-      );
-    }
-
-    var text = '';
-    try {
-      text = await _readText(store, gitignoreFile) ?? '';
-    } catch (error) {
-      warning = [?warning, 'Cannot read $gitignoreFile: $error'].join('\n');
-    }
-    return IgnoresLoadResult(
-      form: IgnoresForm.gitignore,
-      text: text,
-      source: source,
-      warning: warning,
-    );
   }
 
   static Future<void> _saveSide({

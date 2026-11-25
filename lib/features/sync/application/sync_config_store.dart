@@ -136,13 +136,6 @@ final class SyncConfigStore extends ChangeNotifier {
     _notify();
   }
 
-  void updateToken(String token) {
-    if (_config.token == token) return;
-    _config.token = token;
-    _scheduleSave();
-    _notify();
-  }
-
   String _uniqueDeviceName(String base, {required String excludingId}) {
     final trimmed = base.trim().isEmpty ? 'Device' : base.trim();
     bool taken(String name) => _config.devices.any(

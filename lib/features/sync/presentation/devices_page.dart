@@ -400,7 +400,6 @@ class _DeviceCardState extends State<_DeviceCard> {
       _toast('A pair named "${result.entry.name}" already exists.');
       return;
     }
-    widget.store.updateToken(result.token);
     widget.store.upsertPair(result.entry);
   }
 
@@ -421,7 +420,6 @@ class _DeviceCardState extends State<_DeviceCard> {
       _toast('A pair named "${result.entry.name}" already exists.');
       return;
     }
-    widget.store.updateToken(result.token);
     widget.store.upsertPair(result.entry, previousName: pair.name);
   }
 

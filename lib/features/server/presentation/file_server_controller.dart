@@ -106,14 +106,25 @@ final class FileServerController extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> addMount() async {
-    var name = 'folder';
-    var index = 2;
-    while (config.mounts.any((mount) => mount.name == name)) {
-      name = 'folder$index';
-      index++;
+  /// Adds a mount with the given name and path.
+  ///
+  /// Returns an error message when the name is already taken.
+  Future<String?> addMount({required String name, required String path}) async {
+    if (config.mounts.any((mount) => mount.name == name)) {
+      return 'A folder named "$name" already exists.';
     }
-    config.mounts.add(FileServerMountConfig(name: name, path: ''));
+    config.mounts.add(FileServerMountConfig(name: name, path: path));
+    await save();
+    _notify();
+    return null;
+  }
+
+  /// Orders the shared folders by name and persists the new order.
+  Future<void> sortMountsByName() async {
+    if (config.mounts.length < 2) return;
+    config.mounts.sort(
+      (x, y) => x.name.toLowerCase().compareTo(y.name.toLowerCase()),
+    );
     await save();
     _notify();
   }

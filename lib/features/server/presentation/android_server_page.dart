@@ -79,9 +79,7 @@ class _AndroidServerPageState extends State<AndroidServerPage>
           p.join(external?.path ?? support.path, 'shared'),
         );
         await shared.create(recursive: true);
-        await controller.addMount();
-        await controller.renameMount(0, 'shared');
-        await controller.updateMountPath(0, shared.path);
+        await controller.addMount(name: 'shared', path: shared.path);
         dirty = true;
       }
       if (dirty) {
@@ -201,10 +199,7 @@ class _AndroidServerPageState extends State<AndroidServerPage>
     final path = await _pickDirectory(initialPath: _defaultBrowsePath);
     if (path == null || !mounted) return;
     final controller = _controller!;
-    await controller.addMount();
-    final index = controller.config.mounts.length - 1;
-    await controller.renameMount(index, _uniqueName(p.basename(path)));
-    await controller.updateMountPath(index, path);
+    await controller.addMount(name: _uniqueName(p.basename(path)), path: path);
   }
 
   String _uniqueName(String base) {

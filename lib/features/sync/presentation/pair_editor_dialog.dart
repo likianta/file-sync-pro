@@ -8,10 +8,9 @@ import '../application/pair_ignores.dart';
 import '../application/sync_client_config.dart';
 
 final class PairEditorResult {
-  const PairEditorResult({required this.entry, required this.token});
+  const PairEditorResult({required this.entry});
 
   final SyncPairEntry entry;
-  final String token;
 }
 
 Future<PairEditorResult?> showPairEditorDialog({
@@ -31,6 +30,14 @@ Future<PairEditorResult?> showPairEditorDialog({
       entry: entry,
     ),
   );
+}
+
+/// A folder the peer exposes as a mount.
+final class _PeerNode {
+  const _PeerNode({required this.root, required this.label});
+
+  final String root;
+  final String label;
 }
 
 class _PairEditorDialog extends StatefulWidget {
@@ -53,14 +60,16 @@ class _PairEditorDialog extends StatefulWidget {
 class _PairEditorDialogState extends State<_PairEditorDialog> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _localRoot = TextEditingController();
-  final TextEditingController _token = TextEditingController();
-  final TextEditingController _mount = TextEditingController();
-  final TextEditingController _subpath = TextEditingController();
   final TextEditingController _ignores = TextEditingController();
+  final FocusNode _localRootFocus = FocusNode();
 
   List<String> _mounts = const [];
   bool _loadingMounts = false;
   String? _mountError;
+
+  /// Remote root of the selected peer folder, e.g. `/asa-gui`.
+  String _selectedRoot = '';
+  bool _nameTouched = false;
 
   bool _loadingIgnores = false;
   bool _saving = false;
@@ -69,6 +78,8 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
   IgnoresForm _ignoresForm = IgnoresForm.builtinList;
   IgnoresSource? _ignoresSource;
   String _loadedIgnoresText = '';
+  int _ignoresRequest = 0;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -77,14 +88,8 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     if (entry != null) {
       _name.text = entry.name;
       _localRoot.text = entry.localRoot;
-      final segments = entry.remoteRoot
-          .split('/')
-          .where((segment) => segment.isNotEmpty)
-          .toList();
-      if (segments.isNotEmpty) {
-        _mount.text = segments.first;
-        _subpath.text = segments.skip(1).join('/');
-      }
+      _selectedRoot = entry.remoteRoot;
+      _nameTouched = true;
     } else {
       final defaultLocal = p.normalize(
         p.join(widget.projectRoot, '..', 'photolens'),
@@ -92,19 +97,22 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
       _localRoot.text = defaultLocal;
       _name.text = p.basename(defaultLocal);
     }
-    _token.text = widget.token;
+    _localRootFocus.addListener(() {
+      if (!_localRootFocus.hasFocus) {
+        _loadIgnores();
+      }
+    });
     _fetchMounts();
     _loadIgnores();
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _name.dispose();
     _localRoot.dispose();
-    _token.dispose();
-    _mount.dispose();
-    _subpath.dispose();
     _ignores.dispose();
+    _localRootFocus.dispose();
     super.dispose();
   }
 
@@ -115,7 +123,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     });
     final transport = HttpTransport(
       baseUrl: widget.device.baseUrl,
-      token: _token.text.trim(),
+      token: widget.token,
       timeout: const Duration(seconds: 20),
     );
     try {
@@ -138,6 +146,34 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     }
   }
 
+  /// Peer folders plus the current remote root when the peer no longer
+  /// advertises it (an old pair may point at a subfolder).
+  List<_PeerNode> get _peerNodes {
+    final nodes = <_PeerNode>[
+      for (final mount in _mounts) _PeerNode(root: '/$mount', label: mount),
+    ];
+    if (_selectedRoot.isNotEmpty &&
+        !nodes.any((node) => node.root == _selectedRoot)) {
+      nodes.insert(
+        0,
+        _PeerNode(root: _selectedRoot, label: _selectedRoot.substring(1)),
+      );
+    }
+    return nodes;
+  }
+
+  void _selectNode(_PeerNode node) {
+    if (_selectedRoot == node.root) return;
+    final label = p.posix.basename(node.root);
+    setState(() {
+      _selectedRoot = node.root;
+      if (!_nameTouched || _name.text.trim().isEmpty) {
+        _name.text = label;
+      }
+    });
+    _loadIgnores();
+  }
+
   Future<void> _browseLocalRoot() async {
     final path = await getDirectoryPath(
       initialDirectory: _localRoot.text.isEmpty
@@ -148,37 +184,36 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     if (path == null) return;
     setState(() {
       _localRoot.text = path;
-      if (_name.text.trim().isEmpty) {
+      if (!_nameTouched && _name.text.trim().isEmpty) {
         _name.text = p.basename(path);
       }
     });
+    _loadIgnores();
   }
 
-  /// The edited remote root, or an empty string when no mount is selected.
-  String get _remoteRoot {
-    final mount = _mount.text.trim().replaceAll(RegExp(r'^/+|/+$'), '');
-    if (mount.isEmpty) return '';
-    final subpath = _subpath.text.trim().replaceAll(RegExp(r'^/+|/+$'), '');
-    return subpath.isEmpty ? '/$mount' : '/$mount/$subpath';
-  }
-
+  /// Loads the ignore rules for the selected folder.
+  ///
+  /// Reloads are skipped once the editor has unsaved edits, so switching
+  /// folders never discards typed patterns.
   Future<void> _loadIgnores() async {
     final localRoot = _localRoot.text.trim();
     if (localRoot.isEmpty) return;
+    if (!_ignoresUnchanged) return;
+    final request = ++_ignoresRequest;
     setState(() {
       _loadingIgnores = true;
       _ignoresWarning = null;
     });
     final store = PairIgnoresStore(
       localRoot: p.normalize(localRoot),
-      remoteUrl: _remoteRoot.isEmpty
+      remoteUrl: _selectedRoot.isEmpty
           ? ''
-          : '${widget.device.baseUrl}$_remoteRoot',
-      token: _token.text.trim(),
+          : '${widget.device.baseUrl}$_selectedRoot',
+      token: widget.token,
       pairName: _name.text.trim().isEmpty ? 'pair' : _name.text.trim(),
     );
     final result = await store.load();
-    if (!mounted) return;
+    if (_disposed || !mounted || request != _ignoresRequest) return;
     setState(() {
       _loadingIgnores = false;
       _ignoresForm = result.form;
@@ -217,14 +252,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     final target = _ignoresForm == IgnoresForm.gitignore
         ? IgnoresForm.builtinList
         : IgnoresForm.gitignore;
-    final entry = SyncPairEntry(
-      id: widget.entry?.id ?? SyncClientConfig.newPairId(),
-      name: _name.text.trim(),
-      deviceId: widget.device.id,
-      localRoot: p.normalize(_localRoot.text.trim()),
-      remoteRoot: _remoteRoot,
-    );
-    final token = _token.text.trim();
+    final entry = _buildEntry();
 
     setState(() {
       _saving = true;
@@ -234,7 +262,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
       await PairIgnoresStore(
         localRoot: entry.localRoot,
         remoteUrl: entry.remoteUrlFor(widget.device),
-        token: token,
+        token: widget.token,
         pairName: entry.name,
       ).save(form: target, text: _ignores.text);
       if (!mounted) return;
@@ -256,19 +284,22 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     }
   }
 
-  Future<void> _save() async {
-    if (!_canSave || _saving) return;
-    final entry = SyncPairEntry(
+  SyncPairEntry _buildEntry() {
+    return SyncPairEntry(
       id: widget.entry?.id ?? SyncClientConfig.newPairId(),
       name: _name.text.trim(),
       deviceId: widget.device.id,
       localRoot: p.normalize(_localRoot.text.trim()),
-      remoteRoot: _remoteRoot,
+      remoteRoot: _selectedRoot,
     );
-    final token = _token.text.trim();
+  }
+
+  Future<void> _save() async {
+    if (!_canSave || _saving) return;
+    final entry = _buildEntry();
 
     if (_ignoresUnchanged) {
-      Navigator.of(context).pop(PairEditorResult(entry: entry, token: token));
+      Navigator.of(context).pop(PairEditorResult(entry: entry));
       return;
     }
 
@@ -280,11 +311,11 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
       await PairIgnoresStore(
         localRoot: entry.localRoot,
         remoteUrl: entry.remoteUrlFor(widget.device),
-        token: token,
+        token: widget.token,
         pairName: entry.name,
       ).save(form: _ignoresForm, text: _ignores.text);
       if (!mounted) return;
-      Navigator.of(context).pop(PairEditorResult(entry: entry, token: token));
+      Navigator.of(context).pop(PairEditorResult(entry: entry));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -297,7 +328,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
   bool get _canSave {
     return _name.text.trim().isNotEmpty &&
         _localRoot.text.trim().isNotEmpty &&
-        _mount.text.trim().isNotEmpty;
+        _selectedRoot.isNotEmpty;
   }
 
   @override
@@ -305,7 +336,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     final theme = Theme.of(context);
     return Dialog(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 660),
+        constraints: const BoxConstraints(maxWidth: 680, maxHeight: 760),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -346,7 +377,8 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Peer device: ${widget.device.name} · ${widget.device.baseUrl}',
+                      'Peer device: ${widget.device.name} · '
+                      '${widget.device.baseUrl}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -355,14 +387,20 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                       ),
                     ),
                     const SizedBox(height: 18),
+                    _buildPeerFolders(theme),
+                    const SizedBox(height: 18),
                     TextField(
                       key: const ValueKey<String>('sync.pair.name'),
                       controller: _name,
                       decoration: const InputDecoration(
                         labelText: 'Pair name',
-                        hintText: 'gitbook',
+                        hintText: 'asa-gui',
+                        helperText: 'Defaults to the selected peer folder',
                       ),
-                      onChanged: (_) => setState(() {}),
+                      onChanged: (_) {
+                        _nameTouched = true;
+                        setState(() {});
+                      },
                     ),
                     const SizedBox(height: 14),
                     Row(
@@ -372,10 +410,12 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                           child: TextField(
                             key: const ValueKey<String>('sync.pair.localRoot'),
                             controller: _localRoot,
+                            focusNode: _localRootFocus,
                             decoration: const InputDecoration(
                               labelText: 'Local folder',
                             ),
                             onChanged: (_) => setState(() {}),
+                            onSubmitted: (_) => _loadIgnores(),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -389,90 +429,6 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                           label: const Text('Browse'),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      key: const ValueKey<String>('sync.pair.token'),
-                      controller: _token,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Token (shared by all pairs)',
-                      ),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            key: const ValueKey<String>('sync.pair.mount'),
-                            controller: _mount,
-                            decoration: const InputDecoration(
-                              labelText: 'Remote mount',
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton.outlined(
-                          key: const ValueKey<String>(
-                            'sync.pair.refreshMounts',
-                          ),
-                          tooltip: 'Refresh mounts',
-                          onPressed: _loadingMounts ? null : _fetchMounts,
-                          icon: _loadingMounts
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.refresh, size: 16),
-                        ),
-                      ],
-                    ),
-                    if (_mounts.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final mount in _mounts)
-                            ActionChip(
-                              label: Text(mount),
-                              onPressed: () =>
-                                  setState(() => _mount.text = mount),
-                            ),
-                        ],
-                      ),
-                    ],
-                    if (_mountError != null) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.errorContainer.withValues(
-                            alpha: 0.5,
-                          ),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Cannot list remote mounts: $_mountError',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onErrorContainer,
-                          ),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    TextField(
-                      key: const ValueKey<String>('sync.pair.subpath'),
-                      controller: _subpath,
-                      decoration: const InputDecoration(
-                        labelText: 'Remote subfolder (optional)',
-                      ),
                     ),
                     const SizedBox(height: 18),
                     Row(
@@ -620,7 +576,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                     const SizedBox(height: 10),
                     Text(
                       'Remote URL: ${widget.device.baseUrl}'
-                      '${_remoteRoot.isEmpty ? '/' : _remoteRoot}',
+                      '${_selectedRoot.isEmpty ? '/' : _selectedRoot}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -661,6 +617,148 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPeerFolders(ThemeData theme) {
+    final nodes = _peerNodes;
+    return Column(
+      key: const ValueKey<String>('sync.pair.mount'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Peer folders',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _loadingMounts ? 'Loading...' : 'Click one to use its mount',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            IconButton(
+              key: const ValueKey<String>('sync.pair.refreshMounts'),
+              tooltip: 'Refresh peer folders',
+              onPressed: _loadingMounts ? null : _fetchMounts,
+              icon: _loadingMounts
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 16),
+            ),
+          ],
+        ),
+        if (nodes.isEmpty && !_loadingMounts)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              _mountError == null
+                  ? 'The peer shares no folders.'
+                  : 'Cannot list peer folders: $_mountError',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: _mountError == null
+                    ? theme.colorScheme.onSurfaceVariant
+                    : theme.colorScheme.error,
+              ),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final node in nodes)
+                  _PeerNodeCard(
+                    node: node,
+                    selected: node.root == _selectedRoot,
+                    onTap: () => _selectNode(node),
+                  ),
+              ],
+            ),
+          ),
+        if (_mountError != null && nodes.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Cannot refresh peer folders: $_mountError',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PeerNodeCard extends StatelessWidget {
+  const _PeerNodeCard({
+    required this.node,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _PeerNode node;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: selected
+          ? theme.colorScheme.primaryContainer
+          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(
+          color: selected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.outlineVariant,
+        ),
+      ),
+      child: InkWell(
+        key: ValueKey<String>('sync.pair.node.${node.root}'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                selected ? Icons.folder : Icons.folder_outlined,
+                size: 15,
+                color: selected
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                node.label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected
+                      ? theme.colorScheme.onPrimaryContainer
+                      : theme.colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

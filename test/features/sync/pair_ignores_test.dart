@@ -114,6 +114,24 @@ void main() {
     expect(afterRemote.current.isEmpty, isTrue);
   });
 
+  test('adopts the peer .gitignore when the local folder has none', () async {
+    const content = '# from peer\n*.log\n';
+    await File(p.join(remoteDir.path, PairIgnoresStore.gitignoreFile))
+        .writeAsString(content);
+
+    final loaded = await createStore().load();
+
+    expect(loaded.source, IgnoresSource.remote);
+    expect(loaded.form, IgnoresForm.gitignore);
+    expect(loaded.text, content);
+    expect(loaded.warning, isNull);
+    expect(
+      File(p.join(localDir.path, PairIgnoresStore.gitignoreFile))
+          .readAsStringSync(),
+      content,
+    );
+  });
+
   test('loads .gitignore and writes it back on both sides', () async {
     await File(p.join(localDir.path, PairIgnoresStore.gitignoreFile))
         .writeAsString('# keep\n*.log\n');
