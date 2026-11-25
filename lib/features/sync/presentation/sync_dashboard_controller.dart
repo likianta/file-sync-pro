@@ -113,13 +113,6 @@ final class SyncDashboardController extends ChangeNotifier {
         '${report.conflictCount} conflicts resolved';
   }
 
-  /// Fractional scan progress, or null when the total is not known yet.
-  double? get scanProgress {
-    final total = _scanTotal;
-    if (total == null || total <= 0) return null;
-    return (_scanned / total).clamp(0.0, 1.0);
-  }
-
   String get _scanLabel {
     final total = _scanTotal;
     final count = total == null ? '$_scanned' : '$_scanned / $total';
@@ -266,6 +259,57 @@ final class SyncDashboardController extends ChangeNotifier {
       _appendLog(
         '$side scan finished in ${watch.elapsedMilliseconds} ms. '
         'Snapshot current updated.',
+      );
+    } catch (error) {
+      _fail(error);
+    } finally {
+      await engine.dispose();
+      _notify();
+    }
+  }
+
+  /// Rescans the same folder on both sides in one pass.
+  Future<void> refreshBoth({String? subPath}) async {
+    if (busy) return;
+    if (_needsInitialScan ||
+        _localSnapshot == null ||
+        _remoteSnapshot == null) {
+      _needsInitialScan = true;
+      _notify();
+      return;
+    }
+
+    final scope = subPath == null || subPath.isEmpty ? 'root' : subPath;
+    _status = SyncDashboardStatus.scanning;
+    _errorMessage = null;
+    _scanPhase = ScanPhase.local;
+    _scanned = 0;
+    _scanTotal = null;
+    _appendLog('Scanning both sides $scope...');
+    final watch = Stopwatch()..start();
+    _notify();
+
+    final engine = _createEngine();
+    try {
+      final result = await engine.scanBoth(
+        subPath: subPath,
+        onProgress: (phase, scanned, total) {
+          _scanPhase = phase;
+          _scanned = scanned;
+          _scanTotal = total;
+          _notify();
+        },
+      );
+      _localSnapshot = result.a;
+      _remoteSnapshot = result.b;
+      _preview = engine.planFromSnapshots(result.a, result.b);
+      _diffPreview = null;
+      _diffSubPath = null;
+      _status = SyncDashboardStatus.idle;
+      watch.stop();
+      _appendLog(
+        'Both scans finished in ${watch.elapsedMilliseconds} ms. '
+        'Snapshots current updated.',
       );
     } catch (error) {
       _fail(error);

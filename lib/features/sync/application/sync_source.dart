@@ -1,8 +1,6 @@
 /// A sync participant: a local folder or a remote mount.
 library;
 
-import 'dart:convert';
-
 import 'package:path/path.dart' as p;
 
 import '../../transport/http_file_store.dart';
@@ -23,12 +21,9 @@ abstract interface class SyncSource {
   Future<SnapshotLoadResult> loadSnapshot();
 
   /// Scans one folder and merges it into this side's `current` snapshot.
-  ///
-  /// [ignores] is only used when the snapshot is created for the first time.
   Future<SideSnapshot> scanSnapshot({
     String? subPath,
     bool createIfMissing = false,
-    SnapshotIgnores? ignores,
     void Function(int scanned, int? total)? onProgress,
   });
 
@@ -46,7 +41,6 @@ final class LocalSyncSource implements SyncSource {
     String root, {
     String? snapshotBackupDir,
     String snapshotLabel = 'local',
-    SnapshotIgnores defaultIgnores = SnapshotIgnores.empty,
   }) : id = p.normalize(p.absolute(root)),
        _store = LocalFileStore(root) {
     _snapshotStore = SnapshotStore(
@@ -54,11 +48,7 @@ final class LocalSyncSource implements SyncSource {
       backupDir: snapshotBackupDir,
       label: snapshotLabel,
     );
-    _snapshots = LocalSnapshotManager(
-      root: id,
-      store: _snapshotStore,
-      defaultIgnores: defaultIgnores,
-    );
+    _snapshots = LocalSnapshotManager(root: id, store: _snapshotStore);
   }
 
   @override
@@ -78,13 +68,11 @@ final class LocalSyncSource implements SyncSource {
   Future<SideSnapshot> scanSnapshot({
     String? subPath,
     bool createIfMissing = false,
-    SnapshotIgnores? ignores,
     void Function(int scanned, int? total)? onProgress,
   }) {
     return _snapshots.scan(
       subPath: subPath,
       createIfMissing: createIfMissing,
-      ignores: ignores,
       onProgress: onProgress,
     );
   }
@@ -140,7 +128,6 @@ final class RemoteSyncSource implements SyncSource {
   Future<SideSnapshot> scanSnapshot({
     String? subPath,
     bool createIfMissing = false,
-    SnapshotIgnores? ignores,
     void Function(int scanned, int? total)? onProgress,
   }) async {
     final scope = normalizeScope(subPath);
@@ -150,8 +137,6 @@ final class RemoteSyncSource implements SyncSource {
       query: {
         if (scope.isNotEmpty) 'path': scope,
         'mode': createIfMissing ? 'init' : 'refresh',
-        if (createIfMissing && ignores != null)
-          'ignores': jsonEncode(ignores.toJson()),
       },
     );
     final snapshot = SideSnapshot.fromJson(json);

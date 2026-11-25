@@ -139,7 +139,6 @@ final class SyncEngine {
     String? snapshotBackupDir,
     String labelA = 'a',
     String labelB = 'b',
-    SnapshotIgnores defaultIgnores = SnapshotIgnores.empty,
     ActionCallback? onAction,
   }) {
     return SyncEngine(
@@ -147,13 +146,11 @@ final class SyncEngine {
         rootA,
         snapshotBackupDir: snapshotBackupDir,
         snapshotLabel: labelA,
-        defaultIgnores: defaultIgnores,
       ),
       b: LocalSyncSource(
         rootB,
         snapshotBackupDir: snapshotBackupDir,
         snapshotLabel: labelB,
-        defaultIgnores: defaultIgnores,
       ),
       conflictRoot: conflictRoot,
       onAction: onAction,
@@ -182,14 +179,12 @@ final class SyncEngine {
     required bool left,
     String? subPath,
     bool createIfMissing = false,
-    SnapshotIgnores? ignores,
     void Function(int scanned, int? total)? onProgress,
   }) {
     final source = left ? a : b;
     return source.scanSnapshot(
       subPath: subPath,
       createIfMissing: createIfMissing,
-      ignores: ignores,
       onProgress: onProgress,
     );
   }
@@ -200,32 +195,28 @@ final class SyncEngine {
     return source.refreshFile(path);
   }
 
-  /// Scans both roots concurrently, used when the pair has no usable snapshot.
+  /// Scans both sides concurrently, used for the initial scan and for
+  /// refreshing the same folder on both sides.
   ///
-  /// Both sides read the peer snapshot first so a new remote snapshot can use
-  /// the same ignores as the local one. Local progress is forwarded while it
-  /// runs; the remote scan is reported once the local side is done.
+  /// Local progress is forwarded while it runs; the remote scan is reported
+  /// once the local side is done.
   Future<({SideSnapshot a, SideSnapshot b})> scanBoth({
+    String? subPath,
     bool createIfMissing = false,
-    SnapshotIgnores defaultIgnores = SnapshotIgnores.empty,
     void Function(ScanPhase phase, int scanned, int? total)? onProgress,
   }) async {
-    final loaded = await Future.wait([a.loadSnapshot(), b.loadSnapshot()]);
-    final localIgnores = loaded[0].snapshot?.ignores ?? defaultIgnores;
-    final remoteIgnores = loaded[1].snapshot?.ignores ?? localIgnores;
-
     final localFuture = scanSide(
       left: true,
+      subPath: subPath,
       createIfMissing: createIfMissing,
-      ignores: localIgnores,
       onProgress: (scanned, total) {
         onProgress?.call(ScanPhase.local, scanned, total);
       },
     );
     final remoteFuture = scanSide(
       left: false,
+      subPath: subPath,
       createIfMissing: createIfMissing,
-      ignores: remoteIgnores,
     );
 
     SideSnapshot? local;

@@ -502,6 +502,29 @@ void main() {
     expect(snapshot.ignores.useGitignore, isTrue);
   });
 
+  test('new snapshots adopt \$gitignore when the root has one', () async {
+    await _file(alice, '.gitignore').writeAsString('/skip/\n');
+    await _file(alice, 'keep.txt').writeAsString('keep\n');
+
+    final snapshot = await withEngine(
+      (engine) => engine.scanSide(left: true, createIfMissing: true),
+    );
+
+    expect(snapshot.ignores.useGitignore, isTrue);
+    expect(snapshot.current.entries['.']!.files.keys, contains('keep.txt'));
+  });
+
+  test('new snapshots use an empty list without .gitignore', () async {
+    await _file(alice, 'keep.txt').writeAsString('keep\n');
+
+    final snapshot = await withEngine(
+      (engine) => engine.scanSide(left: true, createIfMissing: true),
+    );
+
+    expect(snapshot.ignores.useGitignore, isFalse);
+    expect(snapshot.ignores.patterns, isEmpty);
+  });
+
   test('refreshFile updates only the selected file', () async {
     await _file(alice, 'a.txt').writeAsString('a1\n');
     await _file(alice, 'b.txt').writeAsString('b1\n');

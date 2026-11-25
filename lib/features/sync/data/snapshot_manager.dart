@@ -52,18 +52,10 @@ final class SnapshotIgnoresException implements Exception {
 
 /// Owns the local filesystem side of snapshot scanning.
 final class LocalSnapshotManager {
-  LocalSnapshotManager({
-    required this.root,
-    required this.store,
-    this.defaultIgnores = SnapshotIgnores.empty,
-  });
+  LocalSnapshotManager({required this.root, required this.store});
 
   final String root;
   final SnapshotStore store;
-
-  /// Used only when creating a new snapshot. An existing snapshot keeps its
-  /// own [SnapshotIgnores].
-  final SnapshotIgnores defaultIgnores;
 
   Future<SnapshotLoadResult> load() => store.load();
 
@@ -77,7 +69,6 @@ final class LocalSnapshotManager {
   Future<SideSnapshot> scan({
     String? subPath,
     bool createIfMissing = false,
-    SnapshotIgnores? ignores,
     void Function(int scanned, int? total)? onProgress,
   }) async {
     final scope = normalizeScope(subPath);
@@ -112,7 +103,7 @@ final class LocalSnapshotManager {
       if (!createIfMissing) throw const SnapshotMissingException('local');
     }
 
-    final effectiveIgnores = existing?.ignores ?? ignores ?? defaultIgnores;
+    final effectiveIgnores = existing?.ignores ?? await _initialIgnores();
     final rules = await resolveSnapshotIgnores(effectiveIgnores, root);
     final cache = _memoryCacheFrom(existing?.current, root);
 
@@ -137,6 +128,13 @@ final class LocalSnapshotManager {
     );
     await store.save(snapshot);
     return snapshot;
+  }
+
+  /// New snapshots adopt `$gitignore` when the root already has a `.gitignore`.
+  Future<SnapshotIgnores> _initialIgnores() async {
+    return await store.store.exists('.gitignore')
+        ? const SnapshotIgnores.gitignore()
+        : SnapshotIgnores.empty;
   }
 
   /// Refreshes one file's entry in `current` without walking a folder.

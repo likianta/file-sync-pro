@@ -170,6 +170,20 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
     await controller.refreshSide(left: left, subPath: scope);
   }
 
+  Future<void> _refreshBoth() async {
+    final controller = _controller;
+    if (controller == null || controller.busy) return;
+    if (!await _ensureSnapshots(controller)) return;
+
+    final path = _activePath;
+    String? scope;
+    if (path.isNotEmpty) {
+      final node = _leftTree?.byPath[path] ?? _rightTree?.byPath[path];
+      scope = node != null && !node.isDirectory ? _parentPath(node.path) : path;
+    }
+    await controller.refreshBoth(subPath: scope);
+  }
+
   static String _parentPath(String path) {
     final index = path.lastIndexOf('/');
     return index < 0 ? '' : path.substring(0, index);
@@ -382,22 +396,12 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
               onSelectDevice: _selectDevice,
               onSelectPair: _selectPair,
               onToggleAutoLocate: _toggleAutoLocate,
+              onRefreshBoth: _refreshBoth,
               onCheck: _check,
               onPull: () => _run(SyncDirection.pull),
               onPush: () => _run(SyncDirection.push),
               onSync: () => _run(SyncDirection.both),
             ),
-            if (controller != null &&
-                controller.status == SyncDashboardStatus.scanning)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: LinearProgressIndicator(
-                  key: const ValueKey<String>('sync.scan.progress'),
-                  minHeight: 3,
-                  value: controller.scanProgress,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
             if (controller?.errorMessage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -492,6 +496,7 @@ class _TopRow extends StatelessWidget {
     required this.onSelectDevice,
     required this.onSelectPair,
     required this.onToggleAutoLocate,
+    required this.onRefreshBoth,
     required this.onCheck,
     required this.onPull,
     required this.onPush,
@@ -509,6 +514,7 @@ class _TopRow extends StatelessWidget {
   final ValueChanged<String> onSelectDevice;
   final ValueChanged<String> onSelectPair;
   final ValueChanged<bool> onToggleAutoLocate;
+  final VoidCallback onRefreshBoth;
   final VoidCallback onCheck;
   final VoidCallback onPull;
   final VoidCallback onPush;
@@ -581,7 +587,20 @@ class _TopRow extends StatelessWidget {
         icon: const Icon(Icons.sync, size: 16),
         label: const Text('Sync'),
       ),
-      _AutoLocateButton(value: autoLocate, onChanged: onToggleAutoLocate),
+      _ToolbarIconButton(
+        key: const ValueKey<String>('sync.autoLocate'),
+        tooltip: autoLocate ? 'Auto locate is on' : 'Auto locate is off',
+        selected: autoLocate,
+        icon: Icons.center_focus_weak,
+        selectedIcon: Icons.center_focus_strong,
+        onPressed: () => onToggleAutoLocate(!autoLocate),
+      ),
+      _ToolbarIconButton(
+        key: const ValueKey<String>('sync.refreshBoth'),
+        tooltip: 'Refresh the selected folder on both sides',
+        icon: Icons.refresh,
+        onPressed: canRun ? onRefreshBoth : null,
+      ),
     ];
 
     final peer = SizedBox(
@@ -638,35 +657,46 @@ class _TopRow extends StatelessWidget {
   }
 }
 
-/// Compact icon-only toggle used for auto-locate.
-class _AutoLocateButton extends StatelessWidget {
-  const _AutoLocateButton({required this.value, required this.onChanged});
+/// Compact icon-only button used by the sync toolbar.
+class _ToolbarIconButton extends StatelessWidget {
+  const _ToolbarIconButton({
+    super.key,
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.selectedIcon,
+    this.selected = false,
+  });
 
-  final bool value;
-  final ValueChanged<bool> onChanged;
+  final String tooltip;
+  final IconData icon;
+  final IconData? selectedIcon;
+  final bool selected;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Tooltip(
-      message: value ? 'Auto locate is on' : 'Auto locate is off',
+      message: tooltip,
       child: IconButton(
-        key: const ValueKey<String>('sync.autoLocate'),
-        isSelected: value,
-        selectedIcon: const Icon(Icons.center_focus_strong, size: 20),
-        icon: const Icon(Icons.center_focus_weak, size: 20),
+        isSelected: selected,
+        selectedIcon: selectedIcon == null
+            ? null
+            : Icon(selectedIcon, size: 20),
+        icon: Icon(icon, size: 20),
         style: IconButton.styleFrom(
           minimumSize: const Size(38, 38),
-          backgroundColor: value
+          backgroundColor: selected
               ? theme.colorScheme.primary.withValues(alpha: 0.12)
               : null,
-          foregroundColor: value
+          foregroundColor: selected
               ? theme.colorScheme.primary
               : theme.colorScheme.onSurfaceVariant,
           side: BorderSide(color: theme.colorScheme.outlineVariant),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
-        onPressed: () => onChanged(!value),
+        onPressed: onPressed,
       ),
     );
   }

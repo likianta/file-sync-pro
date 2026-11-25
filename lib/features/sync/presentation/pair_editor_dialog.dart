@@ -1,4 +1,5 @@
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
@@ -196,12 +197,63 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
         .join('\n');
   }
 
+  static String _trimTrailingNewline(String text) {
+    return text.endsWith('\n') ? text.substring(0, text.length - 1) : text;
+  }
+
   bool get _ignoresUnchanged {
     if (_ignoresForm == IgnoresForm.gitignore) {
-      return _ignores.text == _loadedIgnoresText;
+      return _trimTrailingNewline(_ignores.text) ==
+          _trimTrailingNewline(_loadedIgnoresText);
     }
     return _normalizedList(_ignores.text) ==
         _normalizedList(_loadedIgnoresText);
+  }
+
+  /// Writes the current editor content in the opposite storage form and keeps
+  /// the dialog open so the badges and hints update in place.
+  Future<void> _saveAsOtherForm() async {
+    if (!_canSave || _saving || _loadingIgnores) return;
+    final target = _ignoresForm == IgnoresForm.gitignore
+        ? IgnoresForm.builtinList
+        : IgnoresForm.gitignore;
+    final entry = SyncPairEntry(
+      id: widget.entry?.id ?? SyncClientConfig.newPairId(),
+      name: _name.text.trim(),
+      deviceId: widget.device.id,
+      localRoot: p.normalize(_localRoot.text.trim()),
+      remoteRoot: _remoteRoot,
+    );
+    final token = _token.text.trim();
+
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await PairIgnoresStore(
+        localRoot: entry.localRoot,
+        remoteUrl: entry.remoteUrlFor(widget.device),
+        token: token,
+        pairName: entry.name,
+      ).save(form: target, text: _ignores.text);
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _ignoresForm = target;
+        _loadedIgnoresText = target == IgnoresForm.gitignore
+            ? (_ignores.text.isEmpty || _ignores.text.endsWith('\n')
+                  ? _ignores.text
+                  : '${_ignores.text}\n')
+            : _normalizedList(_ignores.text);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _saveError = error.toString();
+      });
+    }
   }
 
   Future<void> _save() async {
@@ -439,42 +491,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      key: const ValueKey<String>('sync.pair.ignores'),
-                      controller: _ignores,
-                      enabled: !_loadingIgnores && !_saving,
-                      minLines: 4,
-                      maxLines: 6,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontFamily: 'monospace',
-                        fontFamilyFallback: const [
-                          'PingFang SC',
-                          'Heiti SC',
-                          'Noto Sans CJK SC',
-                          'Noto Sans SC',
-                          'Source Han Sans SC',
-                          'Microsoft YaHei',
-                        ],
-                      ),
-                      decoration: InputDecoration(
-                        labelText: 'Patterns',
-                        hintText: '/node_modules/\n*.tmp',
-                        helperText: _ignoresForm == IgnoresForm.gitignore
-                            ? 'Loaded from <root>/.gitignore and saved to both '
-                                  'sides; the next scan applies them.'
-                            : 'One pattern per line. Stored in '
-                                  '<root>/.file_sync_shot.json on both sides; '
-                                  'the next scan applies them.',
-                        helperMaxLines: 3,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
+                        const Spacer(),
                         if (_ignoresSource != null) ...[
                           _IgnoresBadge(
                             key: const ValueKey<String>(
@@ -504,7 +521,74 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                               ? const Color(0xFFD1FAE5)
                               : const Color(0xFFFEF3C7),
                         ),
+                        const SizedBox(width: 4),
+                        TextButton(
+                          key: const ValueKey<String>(
+                            'sync.pair.ignores.switchForm',
+                          ),
+                          onPressed: _canSave && !_saving && !_loadingIgnores
+                              ? _saveAsOtherForm
+                              : null,
+                          style: TextButton.styleFrom(
+                            foregroundColor: theme.colorScheme.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            minimumSize: const Size(0, 28),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            textStyle: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          child: Text(
+                            _ignoresForm == IgnoresForm.gitignore
+                                ? 'Save as builtin list'
+                                : 'Save as .gitignore',
+                          ),
+                        ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const ValueKey<String>('sync.pair.ignores'),
+                      controller: _ignores,
+                      enabled: !_loadingIgnores && !_saving,
+                      minLines: 4,
+                      maxLines: 6,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily:
+                            defaultTargetPlatform == TargetPlatform.macOS ||
+                                defaultTargetPlatform == TargetPlatform.iOS
+                            ? 'Menlo'
+                            : 'monospace',
+                        fontFamilyFallback: const [
+                          'SF Mono',
+                          'Monaco',
+                          'Consolas',
+                          'Courier New',
+                          'Roboto Mono',
+                          'Droid Sans Mono',
+                          'PingFang SC',
+                          'Heiti SC',
+                          'Noto Sans CJK SC',
+                          'Noto Sans SC',
+                          'Source Han Sans SC',
+                          'Microsoft YaHei',
+                        ],
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Patterns',
+                        hintText: '/node_modules/\n*.tmp',
+                        helperText: _ignoresForm == IgnoresForm.gitignore
+                            ? 'Loaded from <root>/.gitignore and saved to both '
+                                  'sides; the next scan applies them.'
+                            : 'One pattern per line. Stored in '
+                                  '<root>/.file_sync_shot.json on both sides; '
+                                  'the next scan applies them.',
+                        helperMaxLines: 3,
+                      ),
                     ),
                     if (_ignoresWarning != null) ...[
                       const SizedBox(height: 8),

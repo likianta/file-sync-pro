@@ -161,7 +161,10 @@ void main() {
 
     expect(find.text('Windows box'), findsWidgets);
     await tester.tap(edit);
-    await tester.pumpAndSettle();
+    // The editor loads ignores from disk in the background, so settle is not
+    // possible here: real file IO never finishes under FakeAsync.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(
       find.byKey(const ValueKey<String>('sync.pair.mount')),
