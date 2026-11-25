@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_sync_pro/features/sync/application/sync_engine.dart';
 import 'package:file_sync_pro/features/sync/data/snapshot_manager.dart';
+import 'package:file_sync_pro/features/sync/domain/sync_cancel.dart';
 import 'package:file_sync_pro/features/sync/domain/sync_plan.dart';
 import 'package:file_sync_pro/features/sync/domain/sync_snapshot.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -523,6 +524,42 @@ void main() {
 
     expect(snapshot.ignores.useGitignore, isFalse);
     expect(snapshot.ignores.patterns, isEmpty);
+  });
+
+  test('stopping a run keeps done files and skips snapshot updates', () async {
+    await _file(alice, 'a.txt').writeAsString('a\n');
+    await _file(alice, 'b.txt').writeAsString('b\n');
+    await _file(alice, 'c.txt').writeAsString('c\n');
+
+    await withEngine((engine) async {
+      final scanned = await engine.scanBoth(createIfMissing: true);
+      final preview = engine.planFromSnapshots(scanned.a, scanned.b);
+      final token = SyncCancelToken();
+      await expectLater(
+        engine.execute(
+          preview,
+          aSnapshot: scanned.a,
+          bSnapshot: scanned.b,
+          cancelToken: token,
+          onAction: (_) => token.cancel(),
+        ),
+        throwsA(isA<SyncCanceledException>()),
+      );
+    });
+
+    expect(File(p.join(bob.path, 'a.txt')).existsSync(), isTrue);
+    expect(File(p.join(bob.path, 'b.txt')).existsSync(), isFalse);
+    final leftovers = bob
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.contains('.filesync-'));
+    expect(leftovers, isEmpty, reason: 'partial temp files were cleaned up');
+
+    // Snapshots were not saved by the canceled run, so the next run plans the
+    // same files again and finishes normally.
+    final report = await withEngine(syncNow);
+    expect(report.applyReport!.created, 3);
+    expect(await _read(bob, 'c.txt'), 'c\n');
   });
 
   test('refreshFile updates only the selected file', () async {

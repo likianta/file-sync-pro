@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../data/file_store.dart';
 import '../data/snapshot_store.dart';
 import '../domain/manifest.dart';
+import '../domain/sync_cancel.dart';
 import '../domain/sync_plan.dart';
 import '../domain/sync_snapshot.dart';
 import 'plan_applier.dart';
@@ -275,7 +276,9 @@ final class SyncEngine {
     String? subPath,
     Set<String>? subPaths,
     ActionCallback? onAction,
+    SyncCancelToken? cancelToken,
   }) async {
+    cancelToken?.throwIfCanceled();
     final plan = _planFor(
       preview,
       direction: direction,
@@ -291,7 +294,11 @@ final class SyncEngine {
     );
     final applier = PlanApplier(a: a.store, b: b.store);
 
-    final applyReport = await applier.apply(executionPlan, onAction: progress);
+    final applyReport = await applier.apply(
+      executionPlan,
+      onAction: progress,
+      cancelToken: cancelToken,
+    );
 
     final now = DateTime.now().millisecondsSinceEpoch;
     final aCurrent = _applyActionsToCurrent(

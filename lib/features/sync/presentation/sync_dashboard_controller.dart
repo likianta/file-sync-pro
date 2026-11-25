@@ -8,6 +8,7 @@ import '../application/sync_pair_config.dart';
 import '../application/sync_source.dart';
 import '../data/snapshot_manager.dart';
 import '../data/snapshot_store.dart';
+import '../domain/sync_cancel.dart';
 import '../domain/sync_plan.dart';
 import '../domain/sync_snapshot.dart';
 
@@ -36,6 +37,8 @@ final class SyncDashboardController extends ChangeNotifier {
   int _scanned = 0;
   int? _scanTotal;
   bool _needsInitialScan = false;
+  bool _stopped = false;
+  SyncCancelToken? _runToken;
   List<ConflictArchiveEntry> _lastConflictArchives = const [];
   String? _lastConflictArchiveRoot;
   final List<String> _log = [];
@@ -103,6 +106,7 @@ final class SyncDashboardController extends ChangeNotifier {
 
   String get _idleLabel {
     if (_needsInitialScan) return 'Scan required';
+    if (_stopped) return 'Stopped after $_applied actions';
     final report = _report;
     if (report == null) {
       return _preview == null ? 'Ready' : 'Snapshots loaded';
@@ -136,6 +140,7 @@ final class SyncDashboardController extends ChangeNotifier {
   Future<void> load() async {
     if (busy) return;
     _needsInitialScan = false;
+    _stopped = false;
     _diffPreview = null;
     _diffSubPath = null;
     _preview = null;
@@ -180,6 +185,7 @@ final class SyncDashboardController extends ChangeNotifier {
   /// Scans both roots and creates the initial `current` snapshots.
   Future<void> initializeSnapshots() async {
     if (busy) return;
+    _stopped = false;
     _status = SyncDashboardStatus.scanning;
     _errorMessage = null;
     _scanPhase = null;
@@ -227,6 +233,7 @@ final class SyncDashboardController extends ChangeNotifier {
     final side = left ? 'local' : 'remote';
     final scope = subPath == null || subPath.isEmpty ? 'root' : subPath;
     _status = SyncDashboardStatus.scanning;
+    _stopped = false;
     _errorMessage = null;
     _scanPhase = left ? ScanPhase.local : ScanPhase.remote;
     _scanned = 0;
@@ -281,6 +288,7 @@ final class SyncDashboardController extends ChangeNotifier {
 
     final scope = subPath == null || subPath.isEmpty ? 'root' : subPath;
     _status = SyncDashboardStatus.scanning;
+    _stopped = false;
     _errorMessage = null;
     _scanPhase = ScanPhase.local;
     _scanned = 0;
@@ -328,6 +336,7 @@ final class SyncDashboardController extends ChangeNotifier {
       return;
     }
     _status = SyncDashboardStatus.scanning;
+    _stopped = false;
     _errorMessage = null;
     _scanPhase = left ? ScanPhase.local : ScanPhase.remote;
     _scanned = 0;
@@ -426,6 +435,7 @@ final class SyncDashboardController extends ChangeNotifier {
 
     final scope = subPath == null || subPath.isEmpty ? null : subPath;
     _log.clear();
+    _stopped = false;
     _report = null;
     _applied = 0;
     _currentPath = null;
@@ -476,8 +486,11 @@ final class SyncDashboardController extends ChangeNotifier {
     _errorMessage = null;
     _applied = 0;
     _currentPath = null;
+    _stopped = false;
     _lastConflictArchives = const [];
     _lastConflictArchiveRoot = null;
+    final token = SyncCancelToken();
+    _runToken = token;
     _appendLog(
       '${_directionLabel(direction)} '
       '${subPath == null || subPath.isEmpty ? 'whole tree' : subPath}...',
@@ -495,6 +508,7 @@ final class SyncDashboardController extends ChangeNotifier {
         bSnapshot: _remoteSnapshot!,
         direction: direction,
         subPath: subPath,
+        cancelToken: token,
         onAction: (action) {
           _applied++;
           _currentPath = action.path;
@@ -528,12 +542,38 @@ final class SyncDashboardController extends ChangeNotifier {
       }
       _appendLog('Snapshots updated incrementally; no rescan performed.');
       _status = SyncDashboardStatus.idle;
+    } on SyncCanceledException {
+      if (_disposed) return;
+      _status = SyncDashboardStatus.idle;
+      _stopped = true;
+      _currentPath = null;
+      _appendLog(
+        'Stopped after $_applied action(s). Files already copied stay, but '
+        'snapshots were not updated, so the next run plans them again.',
+      );
     } catch (error) {
       _fail(error);
     } finally {
+      _runToken = null;
       await engine.dispose();
       _notify();
     }
+  }
+
+  /// True while a sync is running and has not been stopped yet.
+  bool get canStop =>
+      _status == SyncDashboardStatus.applying &&
+      _runToken != null &&
+      !_runToken!.isCanceled;
+
+  /// Asks the running sync to stop. The current file chunk is aborted and
+  /// completed actions stay; snapshots are not updated.
+  void stop() {
+    final token = _runToken;
+    if (token == null || token.isCanceled) return;
+    token.cancel();
+    _appendLog('Stopping...');
+    _notify();
   }
 
   /// Conflicts from the last check, or from the last executed run.
@@ -773,6 +813,7 @@ final class SyncDashboardController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _runToken?.cancel();
     super.dispose();
   }
 }

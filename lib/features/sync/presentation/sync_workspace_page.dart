@@ -392,6 +392,7 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
               selectedPair: _pairName,
               autoLocate: _autoLocate,
               busy: busy,
+              running: controller?.status == SyncDashboardStatus.applying,
               canRun: canRun,
               onSelectDevice: _selectDevice,
               onSelectPair: _selectPair,
@@ -401,6 +402,7 @@ class _SyncWorkspacePageState extends State<SyncWorkspacePage> {
               onPull: () => _run(SyncDirection.pull),
               onPush: () => _run(SyncDirection.push),
               onSync: () => _run(SyncDirection.both),
+              onStop: (controller?.canStop ?? false) ? controller!.stop : null,
             ),
             if (controller?.errorMessage != null)
               Padding(
@@ -492,6 +494,7 @@ class _TopRow extends StatelessWidget {
     required this.selectedPair,
     required this.autoLocate,
     required this.busy,
+    required this.running,
     required this.canRun,
     required this.onSelectDevice,
     required this.onSelectPair,
@@ -501,6 +504,7 @@ class _TopRow extends StatelessWidget {
     required this.onPull,
     required this.onPush,
     required this.onSync,
+    required this.onStop,
   });
 
   final String hostname;
@@ -510,6 +514,7 @@ class _TopRow extends StatelessWidget {
   final String? selectedPair;
   final bool autoLocate;
   final bool busy;
+  final bool running;
   final bool canRun;
   final ValueChanged<String> onSelectDevice;
   final ValueChanged<String> onSelectPair;
@@ -519,6 +524,7 @@ class _TopRow extends StatelessWidget {
   final VoidCallback onPull;
   final VoidCallback onPush;
   final VoidCallback onSync;
+  final VoidCallback? onStop;
 
   @override
   Widget build(BuildContext context) {
@@ -561,6 +567,19 @@ class _TopRow extends StatelessWidget {
     );
 
     final actions = <Widget>[
+      if (running) ...[
+        FilledButton.icon(
+          key: const ValueKey<String>('sync.stop'),
+          onPressed: onStop,
+          style: FilledButton.styleFrom(
+            backgroundColor: theme.colorScheme.error,
+            foregroundColor: theme.colorScheme.onError,
+          ),
+          icon: const Icon(Icons.stop_rounded, size: 16),
+          label: Text(onStop == null ? 'Stopping...' : 'Stop'),
+        ),
+        const SizedBox(width: 8),
+      ],
       OutlinedButton.icon(
         key: const ValueKey<String>('sync.check'),
         onPressed: busy ? null : onCheck,
