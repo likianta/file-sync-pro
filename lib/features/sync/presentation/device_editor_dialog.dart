@@ -9,12 +9,16 @@ final class DeviceEditorResult {
     required this.host,
     required this.port,
     required this.hostType,
+    this.platform,
   });
 
   final String name;
   final String host;
   final int port;
   final SyncHostType hostType;
+
+  /// Platform reported by the peer while detecting access, if any.
+  final SyncDeviceType? platform;
 }
 
 Future<DeviceEditorResult?> showDeviceEditorDialog({
@@ -43,6 +47,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
   final TextEditingController _token = TextEditingController();
 
   List<String> _mounts = const [];
+  SyncDeviceType? _platform;
   bool _detecting = false;
   String? _detectError;
 
@@ -52,25 +57,6 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
     _address.dispose();
     _token.dispose();
     super.dispose();
-  }
-
-  (String host, int port) _parseAddress(String raw) {
-    final text = raw.trim();
-    if (text.isEmpty) return ('', SyncDeviceEntry.defaultPort);
-
-    final uri = Uri.tryParse(text.contains('://') ? text : 'http://$text');
-    if (uri != null && uri.hasPort) {
-      return (uri.host, uri.port);
-    }
-
-    final lastColon = text.lastIndexOf(':');
-    if (lastColon > 0 && !text.substring(lastColon + 1).contains(':')) {
-      final port = int.tryParse(text.substring(lastColon + 1));
-      if (port != null && port > 0 && port < 65536) {
-        return (text.substring(0, lastColon), port);
-      }
-    }
-    return (text, SyncDeviceEntry.defaultPort);
   }
 
   String? get _nameError {
@@ -85,7 +71,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
   String? get _addressError {
     final value = _address.text.trim();
     if (value.isEmpty) return 'Address is required.';
-    final (host, port) = _parseAddress(value);
+    final (host, port) = SyncDeviceEntry.parseAddress(value);
     if (host.isEmpty) return 'Invalid address.';
     if (port <= 0 || port > 65535) return 'Port must be between 1 and 65535.';
     return null;
@@ -100,7 +86,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
       return;
     }
 
-    final (host, port) = _parseAddress(_address.text);
+    final (host, port) = SyncDeviceEntry.parseAddress(_address.text);
     final transport = HttpTransport(
       baseUrl: 'http://$host:$port',
       token: _token.text.trim(),
@@ -117,6 +103,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
       if (!mounted) return;
       final mounts = json['mounts'];
       setState(() {
+        _platform = SyncDeviceType.tryParse(json['platform']);
         _mounts = mounts is List
             ? mounts.whereType<String>().toList(growable: false)
             : const [];
@@ -128,6 +115,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
             ? '${error.statusCode}: ${error.message}'
             : error.toString();
         _mounts = const [];
+        _platform = null;
       });
     } finally {
       await transport.close();
@@ -138,7 +126,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
   }
 
   void _confirm() {
-    final (host, port) = _parseAddress(_address.text);
+    final (host, port) = SyncDeviceEntry.parseAddress(_address.text);
     final hostType = host == '127.0.0.1' || host == 'localhost' || host == '::1'
         ? SyncHostType.local
         : SyncHostType.remote;
@@ -148,6 +136,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
         host: host,
         port: port,
         hostType: hostType,
+        platform: _platform,
       ),
     );
   }

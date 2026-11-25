@@ -71,18 +71,19 @@ final class SyncConfigStore extends ChangeNotifier {
     required String host,
     required int port,
     required SyncHostType hostType,
-    SyncDeviceType type = SyncDeviceType.windows,
-    SyncDeviceModel? model,
+    SyncDeviceType type = SyncDeviceType.unknown,
+    SyncDeviceType? platform,
   }) {
     final id = SyncClientConfig.newDeviceId();
     final entry = SyncDeviceEntry(
       id: id,
       name: _uniqueDeviceName(name, excludingId: id),
       type: type,
-      model: model,
+      platform: platform,
       hostType: hostType,
       host: host,
       port: port,
+      addresses: [if (host.trim().isNotEmpty) '${host.trim()}:$port'],
     );
     _config.devices.add(entry);
     _scheduleSave();

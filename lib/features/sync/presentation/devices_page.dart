@@ -1,11 +1,14 @@
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../transport/http_transport.dart';
 import '../application/sync_client_config.dart';
 import '../application/sync_config_store.dart';
+import 'device_advanced_dialog.dart';
 import 'device_editor_dialog.dart';
-import 'device_model_3d.dart';
 import 'pair_editor_dialog.dart';
 
 class DevicesPage extends StatefulWidget {
@@ -25,23 +28,14 @@ class _DevicesPageState extends State<DevicesPage> {
       existingNames: store.devices.map((d) => d.name).toSet(),
     );
     if (result == null) return;
-    final hostType = result.hostType;
-    final type = _inferTypeFromHost(hostType, result.host);
     store.addDeviceFromInput(
       name: result.name,
       host: result.host,
       port: result.port,
-      hostType: hostType,
-      type: type,
+      hostType: result.hostType,
+      type: result.platform ?? SyncDeviceType.unknown,
+      platform: result.platform,
     );
-  }
-
-  static SyncDeviceType _inferTypeFromHost(SyncHostType hostType, String host) {
-    // Best guess from address — localhost means this machine (assume macOS
-    // during development). Remote addresses stay as "windows" fallback until
-    // the model is edited.
-    if (hostType == SyncHostType.local) return SyncDeviceType.macos;
-    return SyncDeviceType.windows;
   }
 
   @override
@@ -80,35 +74,39 @@ class _DevicesPageState extends State<DevicesPage> {
                   ? _EmptyDevices(onAdd: _openAddDeviceDialog)
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        const minColumn = 240.0;
-                        const spacing = 14.0;
-                        final width = constraints.maxWidth;
-                        final crossAxisCount = math.max(
-                          1,
-                          ((width + spacing) / (minColumn + spacing)).floor(),
+                        const spacing = 16.0;
+                        const minCardWidth = 280.0;
+                        const maxCardWidth = 400.0;
+                        final available = math.max(
+                          0.0,
+                          constraints.maxWidth - 40,
                         );
-                        final cardWidth =
-                            (width - spacing * (crossAxisCount - 1)) /
-                            crossAxisCount;
+                        final columnCount = math.max(
+                          1,
+                          ((available + spacing) / (minCardWidth + spacing))
+                              .floor(),
+                        );
+                        var cardWidth =
+                            (available - spacing * (columnCount - 1)) /
+                            columnCount;
+                        if (cardWidth > maxCardWidth) cardWidth = maxCardWidth;
 
                         return SingleChildScrollView(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                            child: _MasonryFlow(
-                              crossAxisCount: crossAxisCount,
-                              spacing: spacing,
-                              cardWidth: cardWidth,
-                              children: [
-                                for (final device in devices)
-                                  _DeviceCard(
-                                    key: ValueKey<String>(
-                                      'devices.card.${device.id}',
-                                    ),
-                                    store: widget.store,
-                                    device: device,
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                          child: _MasonryFlow(
+                            crossAxisCount: columnCount,
+                            spacing: spacing,
+                            cardWidth: cardWidth,
+                            children: [
+                              for (final device in devices)
+                                _DeviceCard(
+                                  key: ValueKey<String>(
+                                    'devices.card.${device.id}',
                                   ),
-                              ],
-                            ),
+                                  store: widget.store,
+                                  device: device,
+                                ),
+                            ],
                           ),
                         );
                       },
@@ -150,9 +148,10 @@ class _PageHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Peers this machine syncs with, and the folders shared with '
-                  'each of them.',
-                  maxLines: 1,
+                  'Peer devices are stored as cards as below. The online '
+                  'status is not auto-detected; check it before pairing, '
+                  'scanning, or syncing with them.',
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
@@ -161,6 +160,7 @@ class _PageHeader extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(width: 12),
           OutlinedButton.icon(
             key: const ValueKey<String>('devices.add'),
             onPressed: onAdd,
@@ -184,57 +184,214 @@ class _DeviceCard extends StatefulWidget {
 }
 
 class _DeviceCardState extends State<_DeviceCard> {
-  late final TextEditingController _nameController;
+  late final TextEditingController _name;
+  late final TextEditingController _address;
+  late final FocusNode _nameFocus;
+  late final FocusNode _addressFocus;
+
+  bool _testing = false;
+  bool? _online;
+  String? _testDetail;
+
+  SyncDeviceEntry get _device => widget.device;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.device.name);
+    _name = TextEditingController(text: widget.device.name);
+    _address = TextEditingController(text: _addressText(widget.device));
+    _nameFocus = FocusNode()..addListener(_onNameFocusChanged);
+    _addressFocus = FocusNode()..addListener(_onAddressFocusChanged);
   }
 
   @override
   void didUpdateWidget(covariant _DeviceCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.device.id != widget.device.id) {
-      _nameController.text = widget.device.name;
+    if (!_nameFocus.hasFocus && _name.text != widget.device.name) {
+      _name.text = widget.device.name;
+    }
+    final address = _addressText(widget.device);
+    if (!_addressFocus.hasFocus && _address.text != address) {
+      _address.text = address;
     }
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _nameFocus.dispose();
+    _addressFocus.dispose();
+    _name.dispose();
+    _address.dispose();
     super.dispose();
   }
 
-  void _update(SyncDeviceEntry next) {
-    widget.store.updateDevice(next);
+  static String _addressText(SyncDeviceEntry device) {
+    return '${device.resolvedHost}:${device.port}';
   }
 
-  Future<void> _deleteDevice() async {
-    final confirmed = await _confirm(
-      context,
-      title: 'Remove device?',
-      message:
-          '"${widget.device.name}" and its ${widget.store.config.pairsForDevice(widget.device.id).length} '
-          'pair(s) will be removed from this device. Files are not deleted.',
-      confirmLabel: 'Remove',
-      confirmKey: const ValueKey<String>('devices.deleteConfirm'),
+  static List<String> _rememberAddress(List<String> history, String address) {
+    final next = [address, ...history.where((item) => item != address)];
+    if (next.length > 8) next.removeRange(8, next.length);
+    return next;
+  }
+
+  void _onNameFocusChanged() {
+    if (!_nameFocus.hasFocus) _commitName();
+  }
+
+  void _onAddressFocusChanged() {
+    if (!_addressFocus.hasFocus) _commitAddress();
+  }
+
+  void _commitName() {
+    final value = _name.text.trim();
+    final device = _latestDevice;
+    if (value.isEmpty) {
+      _name.text = device.name;
+      return;
+    }
+    if (value == device.name) return;
+    widget.store.updateDevice(device.copyWith(name: value));
+  }
+
+  void _commitAddress() {
+    final raw = _address.text.trim();
+    final device = _latestDevice;
+    if (raw.isEmpty) {
+      _address.text = _addressText(device);
+      return;
+    }
+    final (host, port) = SyncDeviceEntry.parseAddress(raw);
+    if (host.isEmpty) {
+      _address.text = _addressText(device);
+      return;
+    }
+    final address = '$host:$port';
+    if (_address.text != address) _address.text = address;
+    if (host == device.host && port == device.port) return;
+    setState(() {
+      _online = null;
+      _testDetail = null;
+    });
+    _applyAddress(device: device, host: host, port: port);
+  }
+
+  void _applyAddress({
+    required SyncDeviceEntry device,
+    required String host,
+    required int port,
+    SyncDeviceType? platform,
+  }) {
+    final address = '$host:$port';
+    widget.store.updateDevice(
+      device.copyWith(
+        host: host,
+        port: port,
+        type: platform,
+        platform: platform,
+        addresses: _rememberAddress(device.addresses, address),
+      ),
     );
-    if (confirmed) {
-      widget.store.removeDevice(widget.device.id);
+  }
+
+  void _selectAddress(String address) {
+    _address.text = address;
+    _commitAddress();
+  }
+
+  Future<void> _testReachability() async {
+    if (_testing) return;
+    final (host, port) = SyncDeviceEntry.parseAddress(_address.text);
+    if (host.isEmpty) {
+      _toast('Enter an address first.');
+      return;
+    }
+    final address = '$host:$port';
+    _address.text = address;
+
+    setState(() {
+      _testing = true;
+      _testDetail = null;
+    });
+    final transport = HttpTransport(
+      baseUrl: 'http://$address',
+      token: widget.store.config.token,
+      timeout: const Duration(seconds: 10),
+    );
+    try {
+      final json = await transport.getJson('');
+      final platform = SyncDeviceType.tryParse(json['platform']);
+      final mounts = json['mounts'] is List
+          ? (json['mounts'] as List).whereType<String>().toList()
+          : const <String>[];
+      if (!mounted) return;
+      final detail = [
+        'Online',
+        if (platform != null) platform.label,
+        '${mounts.length} mount${mounts.length == 1 ? '' : 's'}',
+      ].join(' · ');
+      setState(() {
+        _online = true;
+        _testDetail = detail;
+      });
+      _applyAddress(
+        device: _latestDevice,
+        host: host,
+        port: port,
+        platform: platform,
+      );
+      _toast('$_device.name: $detail');
+    } catch (error) {
+      if (!mounted) return;
+      final detail = error is RemoteException
+          ? '${error.statusCode}: ${error.message}'
+          : error.toString();
+      setState(() {
+        _online = false;
+        _testDetail = detail;
+      });
+      _toast('Cannot reach $address: $detail');
+    } finally {
+      await transport.close();
+      if (mounted) setState(() => _testing = false);
     }
   }
 
+  SyncDeviceEntry get _latestDevice {
+    for (final device in widget.store.config.devices) {
+      if (device.id == _device.id) return device;
+    }
+    return _device;
+  }
+
+  /// Applies pending inline edits before opening another surface, so dialogs
+  /// never operate on stale name or address values.
+  SyncDeviceEntry _commitInlineEdits() {
+    _commitName();
+    _commitAddress();
+    return _latestDevice;
+  }
+
+  Future<void> _openAdvancedSettings() async {
+    final device = _commitInlineEdits();
+    await showDeviceAdvancedDialog(
+      context: context,
+      store: widget.store,
+      device: device,
+    );
+  }
+
   Future<void> _addPair() async {
+    final device = _commitInlineEdits();
     final result = await showPairEditorDialog(
       context: context,
       projectRoot: widget.store.projectRoot,
-      device: widget.device,
+      device: device,
       token: widget.store.config.token,
     );
     if (result == null || !mounted) return;
     if (widget.store.config
-        .pairsForDevice(widget.device.id)
+        .pairsForDevice(device.id)
         .any((pair) => pair.name == result.entry.name)) {
       _toast('A pair named "${result.entry.name}" already exists.');
       return;
@@ -244,17 +401,18 @@ class _DeviceCardState extends State<_DeviceCard> {
   }
 
   Future<void> _editPair(SyncPairEntry pair) async {
+    final device = _commitInlineEdits();
     final result = await showPairEditorDialog(
       context: context,
       projectRoot: widget.store.projectRoot,
-      device: widget.device,
+      device: device,
       token: widget.store.config.token,
       entry: pair,
     );
     if (result == null || !mounted) return;
     if (result.entry.name != pair.name &&
         widget.store.config
-            .pairsForDevice(widget.device.id)
+            .pairsForDevice(device.id)
             .any((entry) => entry.name == result.entry.name)) {
       _toast('A pair named "${result.entry.name}" already exists.');
       return;
@@ -274,206 +432,240 @@ class _DeviceCardState extends State<_DeviceCard> {
       confirmKey: ValueKey<String>('devices.pair.deleteConfirm.${pair.name}'),
     );
     if (confirmed) {
-      widget.store.removePair(widget.device.id, pair.id);
+      widget.store.removePair(_device.id, pair.id);
     }
   }
 
   void _toast(String message) {
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final device = widget.device;
+    final device = _device;
     final pairs = widget.store.config.pairsForDevice(device.id);
+    final history = [
+      for (final address in device.addresses)
+        if (address != '${device.resolvedHost}:${device.port}') address,
+    ];
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Stack(
-              clipBehavior: Clip.none,
+            Row(
               children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 140),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        _CapsuleTag(
-                          label: device.type.label,
-                          color: const Color(0xFF2563EB),
-                          tint: const Color(0xFFDBEAFE),
-                        ),
-                        _CapsuleTag(
-                          label: device.hostType == SyncHostType.local
-                              ? 'Local'
-                              : 'Remote',
-                          color: const Color(0xFF7C3AED),
-                          tint: const Color(0xFFEDE9FE),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      key: ValueKey<String>('devices.name.${device.id}'),
-                      controller: _nameController,
-                      style: theme.textTheme.bodyMedium,
-                      decoration: const InputDecoration(
-                        hintText: 'Device name',
-                        isDense: true,
-                      ),
-                      onChanged: (value) =>
-                          _update(device.copyWith(name: value)),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.language,
-                          size: 13,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            device.baseUrl,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.devices,
+                    size: 17,
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  height: 150,
-                  child: DeviceModel3D(model: device.resolvedModel),
+                const SizedBox(width: 8),
+                _CapsuleTag(
+                  label: device.isLocal ? 'Local' : 'Remote',
+                  color: const Color(0xFF2563EB),
+                  tint: const Color(0xFFDBEAFE),
+                ),
+                const SizedBox(width: 6),
+                _CapsuleTag(
+                  label: _platformLabel(device),
+                  color: device.platform == null
+                      ? const Color(0xFF64748B)
+                      : const Color(0xFF0F766E),
+                  tint: device.platform == null
+                      ? const Color(0xFFE2E8F0)
+                      : const Color(0xFFCCFBF1),
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            Divider(height: 1, color: theme.colorScheme.outlineVariant),
-            const SizedBox(height: 8),
             Row(
               children: [
-                Text(
-                  'Pairs (${pairs.length})',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: TextField(
+                    key: ValueKey<String>('devices.name.${device.id}'),
+                    controller: _name,
+                    focusNode: _nameFocus,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: 'Device name',
+                      isDense: true,
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    onSubmitted: (_) => _commitName(),
                   ),
                 ),
-                const Spacer(),
-                OutlinedButton.icon(
-                  key: ValueKey<String>('devices.pair.add.${device.id}'),
-                  onPressed: _addPair,
-                  icon: const Icon(Icons.add, size: 14),
-                  label: const Text('Add'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 30),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    textStyle: const TextStyle(fontSize: 12),
+                IconButton(
+                  key: ValueKey<String>('devices.advanced.${device.id}'),
+                  tooltip: 'Advanced settings',
+                  onPressed: _openAdvancedSettings,
+                  icon: const Icon(Icons.tune, size: 17),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: ValueKey<String>('devices.address.${device.id}'),
+                    controller: _address,
+                    focusNode: _addressFocus,
+                    keyboardType: TextInputType.url,
+                    style: _monospace(theme, 12),
+                    decoration: const InputDecoration(
+                      hintText: 'host:port',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    onSubmitted: (_) => _commitAddress(),
                   ),
+                ),
+                PopupMenuButton<String>(
+                  key: ValueKey<String>('devices.address.history.${device.id}'),
+                  tooltip: 'Recent addresses',
+                  enabled: history.isNotEmpty,
+                  padding: EdgeInsets.zero,
+                  icon: Icon(
+                    Icons.arrow_drop_down,
+                    size: 18,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  onSelected: _selectAddress,
+                  itemBuilder: (context) => [
+                    if (history.isEmpty)
+                      const PopupMenuItem<String>(
+                        enabled: false,
+                        child: Text('No recent addresses'),
+                      )
+                    else
+                      for (final address in history)
+                        PopupMenuItem<String>(
+                          value: address,
+                          child: Text(address),
+                        ),
+                  ],
+                ),
+                IconButton(
+                  key: ValueKey<String>('devices.test.${device.id}'),
+                  tooltip: _testDetail ?? 'Test reachability',
+                  onPressed: _testing ? null : _testReachability,
+                  icon: _testing
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          _online == null
+                              ? Icons.wifi_tethering
+                              : (_online!
+                                    ? Icons.check_circle_outline
+                                    : Icons.error_outline),
+                          size: 18,
+                          color: _online == null
+                              ? theme.colorScheme.onSurfaceVariant
+                              : (_online!
+                                    ? const Color(0xFF059669)
+                                    : theme.colorScheme.error),
+                        ),
                 ),
               ],
             ),
             const SizedBox(height: 6),
-            Builder(
-              builder: (context) {
-                const maxRows = 5;
-                const rowHeight = 30.0;
-                final maxHeight = rowHeight * maxRows;
-
-                if (pairs.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Text(
-                      'No pairs yet.',
+            Divider(height: 20, color: theme.colorScheme.outlineVariant),
+            if (pairs.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  'No pairs yet.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              )
+            else
+              for (final pair in pairs)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _PairRow(
+                    key: ValueKey<String>(
+                      'devices.pair.${device.id}.${pair.name}',
+                    ),
+                    deviceId: device.id,
+                    pair: pair,
+                    onEdit: () => _editPair(pair),
+                    onDelete: () => _deletePair(pair),
+                  ),
+                ),
+            InkWell(
+              key: ValueKey<String>('devices.pair.add.${device.id}'),
+              borderRadius: BorderRadius.circular(6),
+              onTap: _addPair,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.add, size: 15, color: theme.colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Add pair',
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.primary,
                       ),
                     ),
-                  );
-                }
-
-                final column = Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (final pair in pairs)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: _PairRow(
-                          key: ValueKey<String>(
-                            'devices.pair.${device.id}.${pair.name}',
-                          ),
-                          deviceId: device.id,
-                          pair: pair,
-                          onEdit: () => _editPair(pair),
-                          onDelete: () => _deletePair(pair),
-                        ),
-                      ),
                   ],
-                );
-
-                if (pairs.length <= maxRows) return column;
-
-                return SizedBox(
-                  height: maxHeight,
-                  child: SingleChildScrollView(child: column),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            Divider(height: 1, color: theme.colorScheme.outlineVariant),
-            const SizedBox(height: 8),
-            Row(
-              spacing: 6,
-              children: [
-                Icon(
-                  Icons.monitor_outlined,
-                  size: 13,
-                  color: theme.colorScheme.onSurfaceVariant,
                 ),
-                Expanded(
-                  child: _ModelDropdown(
-                    model: device.resolvedModel,
-                    onChanged: (value) {
-                      _update(device.copyWith(model: value));
-                    },
-                  ),
-                ),
-                IconButton(
-                  key: ValueKey<String>('devices.delete.${device.id}'),
-                  tooltip: 'Remove device',
-                  onPressed: _deleteDevice,
-                  icon: Icon(
-                    Icons.delete_outline,
-                    size: 17,
-                    color: theme.colorScheme.error,
-                  ),
-                ),
-              ],
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  static String _platformLabel(SyncDeviceEntry device) {
+    if (device.isLocal) {
+      final current = SyncDeviceType.tryParse(Platform.operatingSystem);
+      return (current ?? SyncDeviceType.unknown).label;
+    }
+    return (device.platform ?? device.type).label;
+  }
+
+  static TextStyle? _monospace(ThemeData theme, double size) {
+    return theme.textTheme.bodySmall?.copyWith(
+      fontSize: size,
+      fontFamily: defaultTargetPlatform == TargetPlatform.macOS
+          ? 'Menlo'
+          : 'monospace',
+      fontFamilyFallback: const [
+        'SF Mono',
+        'Menlo',
+        'Consolas',
+        'Courier New',
+        'Roboto Mono',
+        'Droid Sans Mono',
+        'PingFang SC',
+        'Noto Sans CJK SC',
+        'Noto Sans SC',
+      ],
     );
   }
 }
@@ -570,44 +762,6 @@ class _PairRow extends StatelessWidget {
   }
 }
 
-class _ModelDropdown extends StatelessWidget {
-  const _ModelDropdown({required this.model, required this.onChanged});
-
-  final SyncDeviceModel model;
-  final ValueChanged<SyncDeviceModel> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return DropdownButtonHideUnderline(
-      child: DropdownButton<String>(
-        value: model.name,
-        isDense: true,
-        isExpanded: true,
-        borderRadius: BorderRadius.circular(10),
-        style: theme.textTheme.bodySmall,
-        items: [
-          for (final item in SyncDeviceModel.values)
-            DropdownMenuItem<String>(
-              value: item.name,
-              child: Text(
-                item.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-        ],
-        onChanged: (value) {
-          if (value == null) return;
-          onChanged(
-            SyncDeviceModel.values.firstWhere((item) => item.name == value),
-          );
-        },
-      ),
-    );
-  }
-}
-
 class _EmptyDevices extends StatelessWidget {
   const _EmptyDevices({required this.onAdd});
 
@@ -628,7 +782,7 @@ class _EmptyDevices extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
-              Icons.router_outlined,
+              Icons.devices,
               size: 24,
               color: theme.colorScheme.onSurfaceVariant,
             ),

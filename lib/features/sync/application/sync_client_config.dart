@@ -44,16 +44,22 @@ enum SyncDeviceType {
   linux,
   android,
   ios,
-  ipad;
+  ipad,
+  unknown;
 
   static SyncDeviceType parse(Object? value) {
+    return tryParse(value) ?? SyncDeviceType.unknown;
+  }
+
+  static SyncDeviceType? tryParse(Object? value) {
     return switch (value) {
       'macos' => SyncDeviceType.macos,
       'linux' => SyncDeviceType.linux,
       'android' => SyncDeviceType.android,
       'ios' => SyncDeviceType.ios,
-      'ipad' => SyncDeviceType.ipad,
-      _ => SyncDeviceType.windows,
+      'ipad' || 'ipados' => SyncDeviceType.ipad,
+      'windows' => SyncDeviceType.windows,
+      _ => null,
     };
   }
 
@@ -66,46 +72,7 @@ enum SyncDeviceType {
     SyncDeviceType.android => 'Android',
     SyncDeviceType.ios => 'iOS',
     SyncDeviceType.ipad => 'iPadOS',
-  };
-}
-
-/// Physical device form factor used for the 3D illustration.
-enum SyncDeviceModel {
-  macbook,
-  windowsLaptop,
-  linuxDesktop,
-  iphone,
-  androidPhone;
-
-  static SyncDeviceModel parse(Object? value) {
-    return switch (value) {
-      'macbook' => SyncDeviceModel.macbook,
-      'windowsLaptop' || 'windowsDesktop' => SyncDeviceModel.windowsLaptop,
-      'linuxDesktop' => SyncDeviceModel.linuxDesktop,
-      'iphone' || 'ipad' => SyncDeviceModel.iphone,
-      'androidPhone' => SyncDeviceModel.androidPhone,
-      _ => SyncDeviceModel.windowsLaptop,
-    };
-  }
-
-  static SyncDeviceModel fallbackOf(SyncDeviceType type) {
-    return switch (type) {
-      SyncDeviceType.windows => SyncDeviceModel.windowsLaptop,
-      SyncDeviceType.macos => SyncDeviceModel.macbook,
-      SyncDeviceType.linux => SyncDeviceModel.linuxDesktop,
-      SyncDeviceType.android => SyncDeviceModel.androidPhone,
-      SyncDeviceType.ios || SyncDeviceType.ipad => SyncDeviceModel.iphone,
-    };
-  }
-
-  String get id => name;
-
-  String get label => switch (this) {
-    SyncDeviceModel.macbook => 'macOS',
-    SyncDeviceModel.windowsLaptop => 'Windows',
-    SyncDeviceModel.linuxDesktop => 'Linux',
-    SyncDeviceModel.iphone => 'iOS & iPadOS',
-    SyncDeviceModel.androidPhone => 'Android',
+    SyncDeviceType.unknown => 'Unknown',
   };
 }
 
@@ -125,28 +92,36 @@ final class SyncDeviceEntry {
   SyncDeviceEntry({
     required this.id,
     required this.name,
-    this.type = SyncDeviceType.windows,
-    this.model,
+    this.type = SyncDeviceType.unknown,
+    this.platform,
     this.hostType = SyncHostType.remote,
     this.host = '',
     this.port = defaultPort,
+    List<String> addresses = const [],
     List<SyncPairEntry> pairs = const [],
-  }) : pairs = List.of(pairs);
+  }) : addresses = List.of(addresses),
+       pairs = List.of(pairs);
 
   static const defaultPort = 2160;
 
   /// Unique and immutable. Format: `d-<[a-z0-9]+>`.
   final String id;
   final String name;
+
+  /// Declared fallback used while the peer has not been probed yet.
   final SyncDeviceType type;
-  final SyncDeviceModel? model;
+
+  /// Platform reported by the peer during the last reachability test.
+  final SyncDeviceType? platform;
+
   final SyncHostType hostType;
   final String host;
   final int port;
-  final List<SyncPairEntry> pairs;
 
-  SyncDeviceModel get resolvedModel =>
-      model ?? SyncDeviceModel.fallbackOf(type);
+  /// Recent addresses in `host:port` form, most recent first.
+  final List<String> addresses;
+
+  final List<SyncPairEntry> pairs;
 
   bool get isLocal => hostType == SyncHostType.local;
 
@@ -158,25 +133,46 @@ final class SyncDeviceEntry {
 
   String get baseUrl => 'http://$authority';
 
+  /// Parses `host`, `host:port` or a full URL into its parts.
+  static (String host, int port) parseAddress(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return ('', defaultPort);
+
+    final uri = Uri.tryParse(text.contains('://') ? text : 'http://$text');
+    if (uri != null && uri.hasPort) {
+      return (uri.host, uri.port);
+    }
+
+    final lastColon = text.lastIndexOf(':');
+    if (lastColon > 0 && !text.substring(lastColon + 1).contains(':')) {
+      final port = int.tryParse(text.substring(lastColon + 1));
+      if (port != null && port > 0 && port < 65536) {
+        return (text.substring(0, lastColon), port);
+      }
+    }
+    return (text, defaultPort);
+  }
+
   SyncDeviceEntry copyWith({
     String? id,
     String? name,
     SyncDeviceType? type,
-    SyncDeviceModel? model,
-    bool clearModel = false,
+    SyncDeviceType? platform,
     SyncHostType? hostType,
     String? host,
     int? port,
+    List<String>? addresses,
     List<SyncPairEntry>? pairs,
   }) {
     return SyncDeviceEntry(
       id: id ?? this.id,
       name: name ?? this.name,
       type: type ?? this.type,
-      model: clearModel ? null : (model ?? this.model),
+      platform: platform ?? this.platform,
       hostType: hostType ?? this.hostType,
       host: host ?? this.host,
       port: port ?? this.port,
+      addresses: addresses ?? this.addresses,
       pairs: pairs ?? this.pairs,
     );
   }
@@ -186,10 +182,11 @@ final class SyncDeviceEntry {
       'id': id,
       'name': name,
       'type': type.id,
-      if (model != null) 'model': model!.id,
+      if (platform != null) 'platform': platform!.id,
       'host_type': hostType.id,
       'host': host,
       'port': port,
+      if (addresses.isNotEmpty) 'addresses': addresses,
       'pairs': [for (final pair in pairs) pair.toJson()],
     };
   }
@@ -218,18 +215,27 @@ final class SyncDeviceEntry {
         );
       }
     }
+    final rawAddresses = json['addresses'];
+    final addresses = <String>[
+      if (rawAddresses is List)
+        for (final raw in rawAddresses)
+          if (raw is String && raw.trim().isNotEmpty) raw.trim(),
+    ];
+    final current = host.trim().isEmpty ? '' : '${host.trim()}:$port';
+    if (current.isNotEmpty && !addresses.contains(current)) {
+      addresses.insert(0, current);
+    }
     return SyncDeviceEntry(
       id: id,
       name: (json['name'] as String?)?.trim().isNotEmpty == true
           ? (json['name'] as String).trim()
           : (host.isEmpty ? 'Device' : host),
       type: SyncDeviceType.parse(json['type']),
-      model: json['model'] == null
-          ? null
-          : SyncDeviceModel.parse(json['model']),
+      platform: SyncDeviceType.tryParse(json['platform']),
       hostType: SyncHostType.parse(json['host_type'] ?? json['hostType']),
       host: host,
       port: port,
+      addresses: addresses,
       pairs: pairs,
     );
   }
