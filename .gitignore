@@ -3,7 +3,7 @@
 /.venv/
 /build/**
 /data/conflicts/*
-/data/downloads/*
+/data/snapshots/
 /design/sparkle-inspirations/
 /readme.b64.html
 /refs/
