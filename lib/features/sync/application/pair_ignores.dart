@@ -1,7 +1,12 @@
-/// Reads and updates the ignore rules stored in `.file_sync_shot.json`.
+/// Reads and updates the ignore rules used by one sync pair.
 ///
-/// Ignore rules travel with the synced folder, so the pair editor shows the
-/// ones from the local snapshot and writes the edited list back to both sides.
+/// Two forms are supported, mirroring `.file_sync_shot.json`:
+/// - `"$gitignore"`: the editor shows `<root>/.gitignore` and saves back to it.
+/// - a list of patterns: the editor shows one pattern per line and saves the
+///   list inside the snapshot.
+///
+/// The snapshot is the single source of truth for the form, so opening the
+/// editor has no side effects and editing always writes the same form back.
 library;
 
 import 'dart:convert';
@@ -16,10 +21,27 @@ import '../domain/sync_snapshot.dart';
 /// Side that supplied the ignore rules shown by the editor.
 enum IgnoresSource { local, remote }
 
-final class IgnoresLoadResult {
-  const IgnoresLoadResult({required this.ignores, this.source, this.warning});
+/// How the ignore rules are stored.
+enum IgnoresForm {
+  /// A `"$gitignore"` marker; the rules live in `<root>/.gitignore`.
+  gitignore,
 
-  final SnapshotIgnores ignores;
+  /// A plain list of patterns inside `.file_sync_shot.json`.
+  builtinList,
+}
+
+final class IgnoresLoadResult {
+  const IgnoresLoadResult({
+    required this.form,
+    required this.text,
+    this.source,
+    this.warning,
+  });
+
+  final IgnoresForm form;
+
+  /// Multiline editor content: `.gitignore` lines or one pattern per line.
+  final String text;
 
   /// Null when neither side has a snapshot yet.
   final IgnoresSource? source;
@@ -36,7 +58,7 @@ final class IgnoresSaveException implements Exception {
   final Object cause;
 
   @override
-  String toString() => 'Cannot update the $side snapshot: $cause';
+  String toString() => 'Cannot update the $side ignores: $cause';
 }
 
 /// Loads and saves one pair's ignore rules without scanning any folder.
@@ -49,6 +71,8 @@ final class PairIgnoresStore {
     this.timeout = const Duration(seconds: 20),
   });
 
+  static const gitignoreFile = '.gitignore';
+
   final String localRoot;
 
   /// Empty while the dialog has no remote mount yet.
@@ -57,21 +81,18 @@ final class PairIgnoresStore {
   final String pairName;
   final Duration timeout;
 
-  /// Reads ignores from the local snapshot, falling back to the remote one.
+  /// Reads the stored form and the matching editor content.
   ///
-  /// Nothing is migrated or rewritten here, so simply opening the dialog has
-  /// no side effects. Unusable snapshots only produce a warning.
+  /// The local snapshot wins over the remote one. Nothing is migrated or
+  /// rewritten here, so simply opening the dialog has no side effects.
   Future<IgnoresLoadResult> load() async {
     final problems = <String>[];
 
     try {
-      final local = await _readIgnores(LocalFileStore(localRoot));
-      if (local != null) {
-        return IgnoresLoadResult(
-          ignores: local,
-          source: IgnoresSource.local,
-          warning: problems.isEmpty ? null : problems.join('\n'),
-        );
+      final store = LocalFileStore(localRoot);
+      final ignores = await _readIgnores(store);
+      if (ignores != null) {
+        return await _result(ignores, IgnoresSource.local, store, problems);
       }
     } catch (error) {
       problems.add('Cannot read the local snapshot: $error');
@@ -80,13 +101,10 @@ final class PairIgnoresStore {
     if (remoteUrl.isNotEmpty) {
       final transport = _transport();
       try {
-        final remote = await _readIgnores(HttpFileStore(transport));
-        if (remote != null) {
-          return IgnoresLoadResult(
-            ignores: remote,
-            source: IgnoresSource.remote,
-            warning: problems.isEmpty ? null : problems.join('\n'),
-          );
+        final store = HttpFileStore(transport);
+        final ignores = await _readIgnores(store);
+        if (ignores != null) {
+          return await _result(ignores, IgnoresSource.remote, store, problems);
         }
       } catch (error) {
         problems.add('Cannot read the remote snapshot: $error');
@@ -96,24 +114,31 @@ final class PairIgnoresStore {
     }
 
     return IgnoresLoadResult(
-      ignores: SnapshotIgnores.empty,
+      form: IgnoresForm.builtinList,
+      text: '',
       warning: problems.isEmpty ? null : problems.join('\n'),
     );
   }
 
-  /// Writes [ignores] to both snapshots, creating empty seeds when needed.
+  /// Writes [text] back using the stored [form] on both sides.
   ///
-  /// Base and current entries are preserved; only `ignores` changes.
-  Future<void> save(SnapshotIgnores ignores) async {
+  /// In list form the snapshot keeps its base and current entries and only
+  /// `ignores` changes. In gitignore form `<root>/.gitignore` is rewritten and
+  /// the snapshot keeps the `"$gitignore"` marker.
+  Future<void> save({required IgnoresForm form, required String text}) async {
     final backupDir = defaultSnapshotBackupDir();
+
     try {
-      await _write(
-        SnapshotStore(
-          LocalFileStore(localRoot),
+      final store = LocalFileStore(localRoot);
+      await _saveSide(
+        store: store,
+        snapshot: SnapshotStore(
+          store,
           backupDir: backupDir,
           label: '$pairName-local',
         ),
-        ignores,
+        form: form,
+        text: text,
       );
     } catch (error) {
       throw IgnoresSaveException('local', error);
@@ -122,13 +147,16 @@ final class PairIgnoresStore {
     if (remoteUrl.isEmpty) return;
     final transport = _transport();
     try {
-      await _write(
-        SnapshotStore(
-          HttpFileStore(transport),
+      final store = HttpFileStore(transport);
+      await _saveSide(
+        store: store,
+        snapshot: SnapshotStore(
+          store,
           backupDir: backupDir,
           label: '$pairName-remote',
         ),
-        ignores,
+        form: form,
+        text: text,
       );
     } catch (error) {
       throw IgnoresSaveException('remote', error);
@@ -141,7 +169,57 @@ final class PairIgnoresStore {
     return HttpTransport(baseUrl: remoteUrl, token: token, timeout: timeout);
   }
 
-  static Future<void> _write(
+  Future<IgnoresLoadResult> _result(
+    SnapshotIgnores ignores,
+    IgnoresSource source,
+    FileStore store,
+    List<String> problems,
+  ) async {
+    var warning = problems.isEmpty ? null : problems.join('\n');
+    if (!ignores.useGitignore) {
+      return IgnoresLoadResult(
+        form: IgnoresForm.builtinList,
+        text: ignores.patterns.join('\n'),
+        source: source,
+        warning: warning,
+      );
+    }
+
+    var text = '';
+    try {
+      text = await _readText(store, gitignoreFile) ?? '';
+    } catch (error) {
+      warning = [?warning, 'Cannot read $gitignoreFile: $error'].join('\n');
+    }
+    return IgnoresLoadResult(
+      form: IgnoresForm.gitignore,
+      text: text,
+      source: source,
+      warning: warning,
+    );
+  }
+
+  static Future<void> _saveSide({
+    required FileStore store,
+    required SnapshotStore snapshot,
+    required IgnoresForm form,
+    required String text,
+  }) async {
+    switch (form) {
+      case IgnoresForm.gitignore:
+        await _writeText(store, gitignoreFile, text);
+        await _writeSnapshot(snapshot, const SnapshotIgnores.gitignore());
+      case IgnoresForm.builtinList:
+        final patterns = text
+            .split('\n')
+            .map((line) => line.trim())
+            .where((line) => line.isNotEmpty)
+            .toList();
+        await _writeSnapshot(snapshot, SnapshotIgnores.patterns(patterns));
+    }
+  }
+
+  static Future<void> _writeSnapshot(
     SnapshotStore store,
     SnapshotIgnores ignores,
   ) async {
@@ -158,16 +236,34 @@ final class PairIgnoresStore {
   }
 
   static Future<SnapshotIgnores?> _readIgnores(FileStore store) async {
-    if (!await store.exists(SnapshotStore.defaultFileName)) return null;
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in store.openRead(SnapshotStore.defaultFileName)) {
-      builder.add(chunk);
-    }
-    final bytes = builder.takeBytes();
-    if (bytes.isEmpty) return null;
-    final decoded = jsonDecode(utf8.decode(bytes));
+    final text = await _readText(store, SnapshotStore.defaultFileName);
+    if (text == null || text.trim().isEmpty) return null;
+    final decoded = jsonDecode(text);
     if (decoded is! Map) return null;
     final raw = decoded['ignores'];
     return raw == null ? SnapshotIgnores.empty : SnapshotIgnores.fromJson(raw);
+  }
+
+  static Future<String?> _readText(FileStore store, String relPath) async {
+    if (!await store.exists(relPath)) return null;
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in store.openRead(relPath)) {
+      builder.add(chunk);
+    }
+    final bytes = builder.takeBytes();
+    return bytes.isEmpty ? '' : utf8.decode(bytes);
+  }
+
+  static Future<void> _writeText(
+    FileStore store,
+    String relPath,
+    String text,
+  ) async {
+    final normalized = text.isEmpty || text.endsWith('\n') ? text : '$text\n';
+    await store.writeAtomically(
+      relPath,
+      Stream.value(utf8.encode(normalized)),
+      modified: DateTime.now(),
+    );
   }
 }

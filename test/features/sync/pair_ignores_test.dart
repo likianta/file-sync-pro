@@ -57,7 +57,7 @@ void main() {
     };
   }
 
-  test('loads local ignores and writes them to both snapshots', () async {
+  test('loads list ignores and writes them to both snapshots', () async {
     final local = SnapshotStore(LocalFileStore(localDir.path));
     final remote = SnapshotStore(LocalFileStore(remoteDir.path));
     await local.save(
@@ -77,11 +77,13 @@ void main() {
 
     final loaded = await createStore().load();
     expect(loaded.source, IgnoresSource.local);
-    expect(loaded.ignores.patterns, ['old-local']);
+    expect(loaded.form, IgnoresForm.builtinList);
+    expect(loaded.text, 'old-local');
     expect(loaded.warning, isNull);
 
     await createStore().save(
-      const SnapshotIgnores.patterns(['/skip/', '*.tmp']),
+      form: IgnoresForm.builtinList,
+      text: '/skip/\n\n*.tmp\n',
     );
 
     final afterLocal = (await local.load()).snapshot!;
@@ -95,9 +97,51 @@ void main() {
   test('creates seed snapshots when neither side has one', () async {
     final loaded = await createStore().load();
     expect(loaded.source, isNull);
-    expect(loaded.ignores.patterns, isEmpty);
+    expect(loaded.form, IgnoresForm.builtinList);
+    expect(loaded.text, isEmpty);
 
-    await createStore().save(const SnapshotIgnores.gitignore());
+    await createStore().save(form: IgnoresForm.builtinList, text: 'a\nb');
+
+    final afterLocal = (await SnapshotStore(
+      LocalFileStore(localDir.path),
+    ).load()).snapshot!;
+    final afterRemote = (await SnapshotStore(
+      LocalFileStore(remoteDir.path),
+    ).load()).snapshot!;
+    expect(afterLocal.ignores.patterns, ['a', 'b']);
+    expect(afterRemote.ignores.patterns, ['a', 'b']);
+    expect(afterLocal.current.isEmpty, isTrue);
+    expect(afterRemote.current.isEmpty, isTrue);
+  });
+
+  test('loads .gitignore and writes it back on both sides', () async {
+    await File(p.join(localDir.path, PairIgnoresStore.gitignoreFile))
+        .writeAsString('# keep\n*.log\n');
+    await SnapshotStore(LocalFileStore(localDir.path)).save(
+      SideSnapshot(
+        base: SnapshotState.empty(),
+        current: SnapshotState.empty(),
+        ignores: const SnapshotIgnores.gitignore(),
+      ),
+    );
+
+    final loaded = await createStore().load();
+    expect(loaded.source, IgnoresSource.local);
+    expect(loaded.form, IgnoresForm.gitignore);
+    expect(loaded.text, '# keep\n*.log\n');
+
+    await createStore().save(form: IgnoresForm.gitignore, text: '*.log\n/tmp/');
+
+    expect(
+      File(p.join(localDir.path, PairIgnoresStore.gitignoreFile))
+          .readAsStringSync(),
+      '*.log\n/tmp/\n',
+    );
+    expect(
+      File(p.join(remoteDir.path, PairIgnoresStore.gitignoreFile))
+          .readAsStringSync(),
+      '*.log\n/tmp/\n',
+    );
 
     final afterLocal = (await SnapshotStore(
       LocalFileStore(localDir.path),
@@ -107,7 +151,5 @@ void main() {
     ).load()).snapshot!;
     expect(afterLocal.ignores.useGitignore, isTrue);
     expect(afterRemote.ignores.useGitignore, isTrue);
-    expect(afterLocal.current.isEmpty, isTrue);
-    expect(afterRemote.current.isEmpty, isTrue);
   });
 }

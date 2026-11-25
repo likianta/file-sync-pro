@@ -5,7 +5,6 @@ import 'package:path/path.dart' as p;
 import '../../transport/http_transport.dart';
 import '../application/pair_ignores.dart';
 import '../application/sync_client_config.dart';
-import '../domain/sync_snapshot.dart';
 
 final class PairEditorResult {
   const PairEditorResult({required this.entry, required this.token});
@@ -62,13 +61,13 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
   bool _loadingMounts = false;
   String? _mountError;
 
-  bool _useGitignore = false;
   bool _loadingIgnores = false;
   bool _saving = false;
   String? _ignoresWarning;
-  String? _ignoresNote;
   String? _saveError;
-  SnapshotIgnores _loadedIgnores = SnapshotIgnores.empty;
+  IgnoresForm _ignoresForm = IgnoresForm.builtinList;
+  IgnoresSource? _ignoresSource;
+  String _loadedIgnoresText = '';
 
   @override
   void initState() {
@@ -168,7 +167,6 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     setState(() {
       _loadingIgnores = true;
       _ignoresWarning = null;
-      _ignoresNote = null;
     });
     final store = PairIgnoresStore(
       localRoot: p.normalize(localRoot),
@@ -182,38 +180,28 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     if (!mounted) return;
     setState(() {
       _loadingIgnores = false;
-      _loadedIgnores = result.ignores;
-      _useGitignore = result.ignores.useGitignore;
-      _ignores.text = result.ignores.useGitignore
-          ? ''
-          : result.ignores.patterns.join('\n');
+      _ignoresForm = result.form;
+      _ignoresSource = result.source;
+      _loadedIgnoresText = result.text;
+      _ignores.text = result.text;
       _ignoresWarning = result.warning;
-      _ignoresNote = switch (result.source) {
-        IgnoresSource.local => 'Loaded from the local snapshot.',
-        IgnoresSource.remote => 'Loaded from the remote snapshot.',
-        null => 'No snapshot yet. Saving creates one on both sides.',
-      };
     });
   }
 
-  SnapshotIgnores _collectIgnores() {
-    if (_useGitignore) return const SnapshotIgnores.gitignore();
-    final patterns = _ignores.text
+  static String _normalizedList(String text) {
+    return text
         .split('\n')
         .map((line) => line.trim())
         .where((line) => line.isNotEmpty)
-        .toList();
-    return SnapshotIgnores.patterns(patterns);
+        .join('\n');
   }
 
-  static bool _sameIgnores(SnapshotIgnores a, SnapshotIgnores b) {
-    if (a.useGitignore != b.useGitignore) return false;
-    if (a.useGitignore) return true;
-    if (a.patterns.length != b.patterns.length) return false;
-    for (var i = 0; i < a.patterns.length; i++) {
-      if (a.patterns[i] != b.patterns[i]) return false;
+  bool get _ignoresUnchanged {
+    if (_ignoresForm == IgnoresForm.gitignore) {
+      return _ignores.text == _loadedIgnoresText;
     }
-    return true;
+    return _normalizedList(_ignores.text) ==
+        _normalizedList(_loadedIgnoresText);
   }
 
   Future<void> _save() async {
@@ -226,9 +214,8 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
       remoteRoot: _remoteRoot,
     );
     final token = _token.text.trim();
-    final ignores = _collectIgnores();
 
-    if (_sameIgnores(ignores, _loadedIgnores)) {
+    if (_ignoresUnchanged) {
       Navigator.of(context).pop(PairEditorResult(entry: entry, token: token));
       return;
     }
@@ -243,7 +230,7 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
         remoteUrl: entry.remoteUrlFor(widget.device),
         token: token,
         pairName: entry.name,
-      ).save(ignores);
+      ).save(form: _ignoresForm, text: _ignores.text);
       if (!mounted) return;
       Navigator.of(context).pop(PairEditorResult(entry: entry, token: token));
     } catch (error) {
@@ -267,263 +254,304 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
     return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 660),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.swap_horiz,
-                      size: 18,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    widget.entry == null ? 'Add sync pair' : 'Edit sync pair',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Peer device: ${widget.device.name} · ${widget.device.baseUrl}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 18),
-              TextField(
-                key: const ValueKey<String>('sync.pair.name'),
-                controller: _name,
-                decoration: const InputDecoration(
-                  labelText: 'Pair name',
-                  hintText: 'gitbook',
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey<String>('sync.pair.localRoot'),
-                      controller: _localRoot,
-                      decoration: const InputDecoration(
-                        labelText: 'Local folder',
-                      ),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    key: const ValueKey<String>('sync.pair.browseLocal'),
-                    onPressed: _browseLocalRoot,
-                    icon: const Icon(Icons.folder_open_outlined, size: 16),
-                    label: const Text('Browse'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                key: const ValueKey<String>('sync.pair.token'),
-                controller: _token,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Token (shared by all pairs)',
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey<String>('sync.pair.mount'),
-                      controller: _mount,
-                      decoration: const InputDecoration(
-                        labelText: 'Remote mount',
-                      ),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.outlined(
-                    key: const ValueKey<String>('sync.pair.refreshMounts'),
-                    tooltip: 'Refresh mounts',
-                    onPressed: _loadingMounts ? null : _fetchMounts,
-                    icon: _loadingMounts
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh, size: 16),
-                  ),
-                ],
-              ),
-              if (_mounts.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 22, 22, 0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final mount in _mounts)
-                      ActionChip(
-                        label: Text(mount),
-                        onPressed: () => setState(() => _mount.text = mount),
-                      ),
-                  ],
-                ),
-              ],
-              if (_mountError != null) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.errorContainer.withValues(
-                      alpha: 0.5,
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary.withValues(
+                              alpha: 0.1,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.swap_horiz,
+                            size: 18,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          widget.entry == null
+                              ? 'Add sync pair'
+                              : 'Edit sync pair',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'Cannot list remote mounts: $_mountError',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onErrorContainer,
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 14),
-              TextField(
-                key: const ValueKey<String>('sync.pair.subpath'),
-                controller: _subpath,
-                decoration: const InputDecoration(
-                  labelText: 'Remote subfolder (optional)',
-                ),
-              ),
-              const SizedBox(height: 18),
-              Row(
-                children: [
-                  Text(
-                    'Ignore rules',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (_loadingIgnores) ...[
-                    const SizedBox(width: 8),
-                    const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ],
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _ignoresNote ?? '',
-                      textAlign: TextAlign.end,
+                    const SizedBox(height: 4),
+                    Text(
+                      'Peer device: ${widget.device.name} · ${widget.device.baseUrl}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 2),
-              CheckboxListTile(
-                key: const ValueKey<String>('sync.pair.ignores.gitignore'),
-                value: _useGitignore,
-                onChanged: _loadingIgnores || _saving
-                    ? null
-                    : (value) => setState(() => _useGitignore = value ?? false),
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: Text(
-                  'Use the root .gitignore',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ),
-              TextField(
-                key: const ValueKey<String>('sync.pair.ignores'),
-                controller: _ignores,
-                enabled: !_useGitignore && !_loadingIgnores && !_saving,
-                minLines: 3,
-                maxLines: 6,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Patterns',
-                  hintText: '/node_modules/\n*.tmp',
-                  helperText:
-                      'One pattern per line. Stored in '
-                      '<root>/.file_sync_shot.json on both sides; '
-                      'the next scan applies them.',
-                  helperMaxLines: 3,
-                ),
-              ),
-              if (_ignoresWarning != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  _ignoresWarning!,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
-                ),
-              ],
-              if (_saveError != null) ...[
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.errorContainer.withValues(
-                      alpha: 0.5,
+                    const SizedBox(height: 18),
+                    TextField(
+                      key: const ValueKey<String>('sync.pair.name'),
+                      controller: _name,
+                      decoration: const InputDecoration(
+                        labelText: 'Pair name',
+                        hintText: 'gitbook',
+                      ),
+                      onChanged: (_) => setState(() {}),
                     ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _saveError!,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onErrorContainer,
+                    const SizedBox(height: 14),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            key: const ValueKey<String>('sync.pair.localRoot'),
+                            controller: _localRoot,
+                            decoration: const InputDecoration(
+                              labelText: 'Local folder',
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          key: const ValueKey<String>('sync.pair.browseLocal'),
+                          onPressed: _browseLocalRoot,
+                          icon: const Icon(
+                            Icons.folder_open_outlined,
+                            size: 16,
+                          ),
+                          label: const Text('Browse'),
+                        ),
+                      ],
                     ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 10),
-              Text(
-                'Remote URL: ${widget.device.baseUrl}'
-                '${_remoteRoot.isEmpty ? '/' : _remoteRoot}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
-                  color: theme.colorScheme.onSurfaceVariant,
+                    const SizedBox(height: 14),
+                    TextField(
+                      key: const ValueKey<String>('sync.pair.token'),
+                      controller: _token,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Token (shared by all pairs)',
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            key: const ValueKey<String>('sync.pair.mount'),
+                            controller: _mount,
+                            decoration: const InputDecoration(
+                              labelText: 'Remote mount',
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.outlined(
+                          key: const ValueKey<String>(
+                            'sync.pair.refreshMounts',
+                          ),
+                          tooltip: 'Refresh mounts',
+                          onPressed: _loadingMounts ? null : _fetchMounts,
+                          icon: _loadingMounts
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.refresh, size: 16),
+                        ),
+                      ],
+                    ),
+                    if (_mounts.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final mount in _mounts)
+                            ActionChip(
+                              label: Text(mount),
+                              onPressed: () =>
+                                  setState(() => _mount.text = mount),
+                            ),
+                        ],
+                      ),
+                    ],
+                    if (_mountError != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.errorContainer.withValues(
+                            alpha: 0.5,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Cannot list remote mounts: $_mountError',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    TextField(
+                      key: const ValueKey<String>('sync.pair.subpath'),
+                      controller: _subpath,
+                      decoration: const InputDecoration(
+                        labelText: 'Remote subfolder (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Text(
+                          'Ignore rules',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (_loadingIgnores) ...[
+                          const SizedBox(width: 8),
+                          const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const ValueKey<String>('sync.pair.ignores'),
+                      controller: _ignores,
+                      enabled: !_loadingIgnores && !_saving,
+                      minLines: 4,
+                      maxLines: 6,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        fontFamilyFallback: const [
+                          'PingFang SC',
+                          'Heiti SC',
+                          'Noto Sans CJK SC',
+                          'Noto Sans SC',
+                          'Source Han Sans SC',
+                          'Microsoft YaHei',
+                        ],
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Patterns',
+                        hintText: '/node_modules/\n*.tmp',
+                        helperText: _ignoresForm == IgnoresForm.gitignore
+                            ? 'Loaded from <root>/.gitignore and saved to both '
+                                  'sides; the next scan applies them.'
+                            : 'One pattern per line. Stored in '
+                                  '<root>/.file_sync_shot.json on both sides; '
+                                  'the next scan applies them.',
+                        helperMaxLines: 3,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (_ignoresSource != null) ...[
+                          _IgnoresBadge(
+                            key: const ValueKey<String>(
+                              'sync.pair.ignores.side',
+                            ),
+                            label: _ignoresSource == IgnoresSource.local
+                                ? 'Local'
+                                : 'Remote',
+                            color: _ignoresSource == IgnoresSource.local
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFF7C3AED),
+                            tint: _ignoresSource == IgnoresSource.local
+                                ? const Color(0xFFDBEAFE)
+                                : const Color(0xFFEDE9FE),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        _IgnoresBadge(
+                          key: const ValueKey<String>('sync.pair.ignores.form'),
+                          label: _ignoresForm == IgnoresForm.gitignore
+                              ? 'Gitignore'
+                              : 'BuiltinList',
+                          color: _ignoresForm == IgnoresForm.gitignore
+                              ? const Color(0xFF059669)
+                              : const Color(0xFFD97706),
+                          tint: _ignoresForm == IgnoresForm.gitignore
+                              ? const Color(0xFFD1FAE5)
+                              : const Color(0xFFFEF3C7),
+                        ),
+                      ],
+                    ),
+                    if (_ignoresWarning != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _ignoresWarning!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    if (_saveError != null) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.errorContainer.withValues(
+                            alpha: 0.5,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _saveError!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Text(
+                      'Remote URL: ${widget.device.baseUrl}'
+                      '${_remoteRoot.isEmpty ? '/' : _remoteRoot}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                 ),
               ),
-              const SizedBox(height: 20),
-              Row(
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 12, 22, 18),
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
@@ -547,8 +575,40 @@ class _PairEditorDialogState extends State<_PairEditorDialog> {
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IgnoresBadge extends StatelessWidget {
+  const _IgnoresBadge({
+    super.key,
+    required this.label,
+    required this.color,
+    required this.tint,
+  });
+
+  final String label;
+  final Color color;
+  final Color tint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
         ),
       ),
     );
