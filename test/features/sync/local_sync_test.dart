@@ -526,41 +526,50 @@ void main() {
     expect(snapshot.ignores.patterns, isEmpty);
   });
 
-  test('stopping a run keeps done files and skips snapshot updates', () async {
-    await _file(alice, 'a.txt').writeAsString('a\n');
-    await _file(alice, 'b.txt').writeAsString('b\n');
-    await _file(alice, 'c.txt').writeAsString('c\n');
+  test(
+    'stopping a run keeps copied files and skips snapshot updates',
+    () async {
+      // More files than copy lanes, so a stop leaves queued work behind.
+      for (var i = 0; i < 10; i++) {
+        await _file(alice, 'f$i.txt').writeAsString('$i\n');
+      }
 
-    await withEngine((engine) async {
-      final scanned = await engine.scanBoth(createIfMissing: true);
-      final preview = engine.planFromSnapshots(scanned.a, scanned.b);
-      final token = SyncCancelToken();
-      await expectLater(
-        engine.execute(
-          preview,
-          aSnapshot: scanned.a,
-          bSnapshot: scanned.b,
-          cancelToken: token,
-          onAction: (_) => token.cancel(),
-        ),
-        throwsA(isA<SyncCanceledException>()),
-      );
-    });
+      var stoppedOn = '';
+      await withEngine((engine) async {
+        final scanned = await engine.scanBoth(createIfMissing: true);
+        final preview = engine.planFromSnapshots(scanned.a, scanned.b);
+        final token = SyncCancelToken();
+        await expectLater(
+          engine.execute(
+            preview,
+            aSnapshot: scanned.a,
+            bSnapshot: scanned.b,
+            cancelToken: token,
+            onAction: (action) {
+              stoppedOn = action.path;
+              token.cancel();
+            },
+          ),
+          throwsA(isA<SyncCanceledException>()),
+        );
+      });
 
-    expect(File(p.join(bob.path, 'a.txt')).existsSync(), isTrue);
-    expect(File(p.join(bob.path, 'b.txt')).existsSync(), isFalse);
-    final leftovers = bob
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((file) => file.path.contains('.filesync-'));
-    expect(leftovers, isEmpty, reason: 'partial temp files were cleaned up');
+      // The action that was reported as done is on disk; queued ones are not.
+      expect(await _exists(bob, stoppedOn), isTrue);
+      expect(bob.listSync().whereType<File>().length, lessThan(10));
+      final leftovers = bob
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => file.path.contains('.filesync-'));
+      expect(leftovers, isEmpty, reason: 'partial temp files were cleaned up');
 
-    // Snapshots were not saved by the canceled run, so the next run plans the
-    // same files again and finishes normally.
-    final report = await withEngine(syncNow);
-    expect(report.applyReport!.created, 3);
-    expect(await _read(bob, 'c.txt'), 'c\n');
-  });
+      // Snapshots were not saved by the canceled run, so the next run plans the
+      // same files again and finishes normally.
+      final report = await withEngine(syncNow);
+      expect(report.applyReport!.created, 10);
+      expect(await _read(bob, 'f9.txt'), '9\n');
+    },
+  );
 
   test('refreshFile updates only the selected file', () async {
     await _file(alice, 'a.txt').writeAsString('a1\n');

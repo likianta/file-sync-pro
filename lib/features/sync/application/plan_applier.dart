@@ -57,6 +57,14 @@ final class PlanApplier {
   final FileStore a;
   final FileStore b;
 
+  /// Files at or above this size are copied on a single lane: their duration
+  /// is dominated by bandwidth, so extra lanes only add interleaving.
+  static const int _parallelThresholdBytes = 8 * 1024 * 1024;
+
+  /// Maximum number of small files copied at the same time. The peer serves
+  /// requests from one isolate, so more lanes mostly add memory pressure.
+  static const int _parallelLanes = 4;
+
   Future<ApplyReport> apply(
     SyncPlan plan, {
     ActionCallback? onAction,
@@ -96,17 +104,19 @@ final class PlanApplier {
                   action.entry != null,
             )
             .toList()
-          ..sort((x, y) => x.path.compareTo(y.path));
-    for (final action in fileWrites) {
+          ..sort((x, y) => y.entry!.size.compareTo(x.entry!.size));
+
+    Future<void> copyFile(SyncAction action) async {
       cancelToken?.throwIfCanceled();
       final sources = action.targetsRight ? (from: a, to: b) : (from: b, to: a);
-      written[action.path] = await _copyWithRetry(
+      final applied = await _copyWithRetry(
         sources.from,
         sources.to,
         action.path,
         action.entry!,
         cancelToken,
       );
+      written[action.path] = applied;
       if (action.kind == SyncActionKind.createLeft ||
           action.kind == SyncActionKind.createRight) {
         created++;
@@ -114,6 +124,25 @@ final class PlanApplier {
         updated++;
       }
       onAction?.call(action);
+    }
+
+    // The list is sorted large-first, so the heaviest transfers start early and
+    // small files fill the remaining bandwidth. Files below the threshold run
+    // on several lanes to hide their per-file round trips.
+    final bulkWrites = fileWrites
+        .where((action) => action.entry!.size >= _parallelThresholdBytes)
+        .toList();
+    final smallWrites = fileWrites
+        .where((action) => action.entry!.size < _parallelThresholdBytes)
+        .toList();
+    final failure = _CopyFailure();
+    await Future.wait([
+      _runPool(bulkWrites, 1, copyFile, failure),
+      _runPool(smallWrites, _parallelLanes, copyFile, failure),
+    ]);
+    final copyError = failure.error;
+    if (copyError != null) {
+      Error.throwWithStackTrace(copyError, failure.stackTrace!);
     }
 
     final fileDeletes =
@@ -162,6 +191,37 @@ final class PlanApplier {
       removedDirectories: removedDirectories,
       written: written,
     );
+  }
+
+  /// Runs [run] over [items] with at most [lanes] in flight.
+  ///
+  /// The first failure recorded in [failure] stops both pools from starting new
+  /// copies, but in-flight copies are still awaited so that no write is left
+  /// dangling when the error propagates.
+  static Future<void> _runPool<T>(
+    List<T> items,
+    int lanes,
+    Future<void> Function(T item) run,
+    _CopyFailure failure,
+  ) async {
+    if (items.isEmpty) return;
+
+    var next = 0;
+    Future<void> worker() async {
+      while (failure.error == null && next < items.length) {
+        final item = items[next++];
+        try {
+          await run(item);
+        } catch (error, stack) {
+          failure.error ??= error;
+          failure.stackTrace ??= stack;
+        }
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < lanes && i < items.length; i++) worker(),
+    ]);
   }
 
   Future<AppliedFile> _copyWithRetry(
@@ -293,4 +353,10 @@ final class PlanApplier {
   }
 
   static int _depth(String path) => path.split('/').length;
+}
+
+/// First copy error shared by all lanes of one apply pass.
+final class _CopyFailure {
+  Object? error;
+  StackTrace? stackTrace;
 }
