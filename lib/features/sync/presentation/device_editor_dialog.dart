@@ -102,11 +102,18 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
       final json = await transport.getJson('');
       if (!mounted) return;
       final mounts = json['mounts'];
+      final names = mounts is List
+          ? mounts.whereType<String>().toList(growable: false)
+          : const <String>[];
+      var platform = SyncDeviceType.tryParse(json['platform']);
+      if (platform == null && names.isNotEmpty) {
+        final info = await transport.getJson('/${names.first}');
+        platform = SyncDeviceType.tryParse(info['platform']);
+      }
+      if (!mounted) return;
       setState(() {
-        _platform = SyncDeviceType.tryParse(json['platform']);
-        _mounts = mounts is List
-            ? mounts.whereType<String>().toList(growable: false)
-            : const [];
+        _platform = platform;
+        _mounts = names;
       });
     } catch (error) {
       if (!mounted) return;

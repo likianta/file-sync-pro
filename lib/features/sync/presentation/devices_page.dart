@@ -320,10 +320,14 @@ class _DeviceCardState extends State<_DeviceCard> {
     );
     try {
       final json = await transport.getJson('');
-      final platform = SyncDeviceType.tryParse(json['platform']);
       final mounts = json['mounts'] is List
           ? (json['mounts'] as List).whereType<String>().toList()
           : const <String>[];
+      var platform = SyncDeviceType.tryParse(json['platform']);
+      if (platform == null && mounts.isNotEmpty) {
+        final info = await transport.getJson('/${mounts.first}');
+        platform = SyncDeviceType.tryParse(info['platform']);
+      }
       if (!mounted) return;
       final detail = [
         'Online',
@@ -340,7 +344,7 @@ class _DeviceCardState extends State<_DeviceCard> {
         port: port,
         platform: platform,
       );
-      _toast('$_device.name: $detail');
+      _toast('${_device.name}: $detail');
     } catch (error) {
       if (!mounted) return;
       final detail = error is RemoteException
